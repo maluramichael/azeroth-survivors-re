@@ -62,8 +62,9 @@ minutes. **No server, no login, no account**: fully offline and self-contained.
   `Damage 20 » 26` or `Targets 2 » 3`.
 - **A class movement spell on F** from level 5, aimed at the cursor: Blink, Charge, Sprint, Dash,
   Fade, Ghost Wolf, Aspect of the Cheetah, Blessing of Freedom, Howl of Terror.
-- **A camera you can free:** locked top-down by default with the hero facing the cursor. **C**
-  unlocks it to swing and tilt, and the wheel zooms from over the shoulder out to 70 yards.
+- **A free camera:** a drag with either mouse button or the left and right arrows turn it
+  around the hero, as in WoW; WASD runs and strafes against it, and the wheel zooms from over
+  the shoulder out to 70 yards.
 - A light sharpen-and-colour pass over the picture (**G** toggles it).
 
 ## Play it
@@ -104,9 +105,9 @@ sets the window size. Without a data folder the game stops at launch and lists w
 
 ## Controls
 
-See [CONTROLS.md](CONTROLS.md). The short version: **WASD** to move, **Space** to jump, **F**
-for your class's movement spell, the **mouse wheel** to zoom, **C** to unlock the camera, **Esc**
-to pause, **1/2/3** to pick a level-up card.
+See [CONTROLS.md](CONTROLS.md). The short version: **WASD** to run and strafe, the **left/right arrows** to turn, **Space** to jump, **F**
+for your class's movement spell, the **mouse wheel** to zoom, a **mouse drag** to turn the camera, **V** for
+enemy health bars, **C** for the character window, **Esc** to pause, **1/2/3** to pick a level-up card.
 
 ## The game data (not in this repo)
 
