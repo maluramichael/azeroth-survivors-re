@@ -11,15 +11,28 @@ from-scratch WoW 1.12.1 client engine (Rust + [Bevy](https://bevy.org)).**
 
 </div>
 
+## What this fork adds
+
+This is [maluramichael/azeroth-survivors-re](https://github.com/maluramichael/azeroth-survivors-re),
+a fork of [OutThisLife/azeroth-survivors-re](https://github.com/OutThisLife/azeroth-survivors-re).
+The `features` branch is upstream plus everything below; each feature is also offered upstream
+as its own pull request. Newest first.
+
+| Feature | What it does | Screenshot | Upstream PR |
+| --- | --- | --- | --- |
+| Launcher flags | `--data <PATH>`, `--windowed` (`-w`) and `--size WxH` for `warcraft-survivors`. Without a data folder it stops at launch and lists where it looked, instead of opening an empty world. | <img src="docs/screenshots/fork-launcher-windowed.jpg" width="320" alt="The pick screen in a 1600x900 window, started with --data wow-data --windowed"> | [#19](https://github.com/OutThisLife/azeroth-survivors-re/pull/19) |
+| Rust 1.99 warning fix | `fetch_update` renamed to `try_update` in `benilla-ui`; no more deprecation warnings on Rust 1.99. | | [#20](https://github.com/OutThisLife/azeroth-survivors-re/pull/20) |
+
+
 > **Not an original project.** *Azeroth Survivors* is a free, fan-made WoW roguelike by
-> **Aethus** — play the original in the browser at **[wow.aethus.pl](https://wow.aethus.pl/)**
+> **Aethus**: play the original in the browser at **[wow.aethus.pl](https://wow.aethus.pl/)**
 > ([r/wowservers announcement](https://www.reddit.com/r/wowservers/comments/1x0yidl/azeroth_survivors_roguelike_wow_singleplayer_game/)
 > · [Discord](https://discord.gg/UzxaZuSAk)). This repository is a from-source local build of the
 > game, running on the [benilla](#how-its-built) / [wenilla](#how-its-built) engine, for personal use.
 
 Pick a class and a battleground, then survive: WASD to move, your abilities cast themselves,
 enemies swarm in waves, you level up and pick upgrades, and a boss shows up every couple of
-minutes. **No server, no login, no account** — fully offline and self-contained.
+minutes. **No server, no login, no account**: fully offline and self-contained.
 
 <table>
   <tr>
@@ -89,7 +102,7 @@ to pause, **1/2/3** to pick a level-up card.
 
 ## The game data (not in this repo)
 
-This repo ships **no Blizzard content** — no art, models, sounds, maps, MPQ contents, or
+This repo ships **no Blizzard content**: no art, models, sounds, maps, MPQ contents, or
 FrameXML. The game reads a WoW 1.12.1 client's `Data` folder at runtime, which you supply.
 
 `make build` (via `scripts/fetch-data.sh`) downloads the **English WoW 1.12.1 (build 5875)**
@@ -114,8 +127,8 @@ Or set it permanently by editing the single clearly-marked `DEFAULT_DATA_URL` li
 
 The survivors mode is `crates/benilla-app/src/survivors/`, running on two upstream projects:
 
-- [benilla](https://github.com/samwhosung/benilla) — a from-scratch WoW 1.12.1 client.
-- [wenilla](https://github.com/Arnesen/wenilla) — benilla compiled to WebAssembly, with a local
+- [benilla](https://github.com/samwhosung/benilla): a from-scratch WoW 1.12.1 client.
+- [wenilla](https://github.com/Arnesen/wenilla): benilla compiled to WebAssembly, with a local
   host and realm service.
 
 ## Legal
