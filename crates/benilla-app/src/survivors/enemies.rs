@@ -8,6 +8,7 @@ use benilla_world::world_point::WorldPoint;
 use bevy::prelude::*;
 
 use super::abilities::Hit;
+use super::chatlog::ChatLine;
 use super::data::{self, EnemyDef};
 use super::hero::{self, Hero, HERO_RADIUS};
 use super::nav::NavGrid;
@@ -177,6 +178,7 @@ pub(super) fn spawn_enemies(
     hero: Query<&Transform, With<Hero>>,
     enemies: Query<&Enemy>,
     world: WorldPoint,
+    mut chat: MessageWriter<ChatLine>,
 ) {
     let Ok(h) = hero.single() else { return };
     if run.dead_t.is_some() {
@@ -200,6 +202,10 @@ pub(super) fn spawn_enemies(
         spawn_enemy(&mut commands, &mut run, def, pos, hpos, true);
         run.bosses += 1;
         run.banner = Some((format!("{} approaches!", def.name), 4.0));
+        chat.write(ChatLine::text(
+            super::chatlog::ChatKind::Boss,
+            format!("{} approaches!", def.name),
+        ));
     }
 
     // Half way between bosses, a closing ring of the moment's weakest.
@@ -532,6 +538,7 @@ pub(super) fn collect_gems(
     mut next: ResMut<NextState<Phase>>,
     hero: Query<&Transform, (With<Hero>, Without<Gem>)>,
     mut gems: Query<(Entity, &mut Transform, &mut Gem)>,
+    mut chat: MessageWriter<ChatLine>,
 ) {
     let Ok(h) = hero.single() else { return };
     if run.dead_t.is_some() {
@@ -551,12 +558,18 @@ pub(super) fn collect_gems(
         }
         if dist < 0.9 {
             match g.kind {
-                GemKind::Xp(xp) => run.xp += xp as f32 * data::XP_RATE * stats.growth,
+                GemKind::Xp(xp) => {
+                    let gain = xp as f32 * data::XP_RATE * stats.growth;
+                    run.xp += gain;
+                    chat.write(ChatLine::Xp(gain));
+                }
                 GemKind::Heal(hp) => run.hp = (run.hp + hp).min(stats.max_hp),
                 GemKind::Gold(gold) => {
                     // Greed rounds at random, so a small pile still feels a +10 %.
                     let worth = gold as f32 * run.meta.greed;
-                    run.gold += worth.floor() as u32 + u32::from(rng.f32() < worth.fract());
+                    let looted = worth.floor() as u32 + u32::from(rng.f32() < worth.fract());
+                    run.gold += looted;
+                    chat.write(ChatLine::Gold(looted));
                 }
             }
             commands.entity(e).despawn();
@@ -569,9 +582,17 @@ pub(super) fn collect_gems(
         run.xp -= data::xp_to_next(run.level);
         run.level += 1;
         run.pending_levels += 1;
+        chat.write(ChatLine::system(format!(
+            "You have reached level {}.",
+            run.level
+        )));
         if run.level == super::mobility::LEARN_LEVEL {
             if let Some(m) = super::mobility::for_class(run.class.id) {
                 run.banner = Some((format!("You have learned {}! Press F.", m.name), 4.0));
+                chat.write(ChatLine::system(format!(
+                    "You have learned {}. Press F.",
+                    m.name
+                )));
             }
         }
     }

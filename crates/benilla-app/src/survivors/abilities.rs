@@ -717,6 +717,7 @@ pub(super) fn apply_hits(
     mut fx: Fx,
     mut loot: MessageWriter<Loot>,
     mut fields: MessageWriter<FieldChanged>,
+    mut chat: MessageWriter<super::chatlog::ChatLine>,
 ) {
     let dt = time.delta_secs();
     let now = run.elapsed;
@@ -767,6 +768,10 @@ pub(super) fn apply_hits(
             run.kills += 1;
             if en.boss {
                 run.banner = Some((format!("{} is slain!", en.def.name), 3.0));
+                chat.write(super::chatlog::ChatLine::text(
+                    super::chatlog::ChatKind::Combat,
+                    format!("{} dies.", en.def.name),
+                ));
             }
         };
 

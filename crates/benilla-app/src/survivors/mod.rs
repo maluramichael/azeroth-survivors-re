@@ -9,6 +9,7 @@ mod auto;
 mod barrier;
 mod cards;
 mod charpanel;
+mod chatlog;
 mod data;
 mod enemies;
 mod fill;
@@ -55,6 +56,7 @@ impl Plugin for SurvivorsPlugin {
                 charpanel::plugin,
                 nav::plugin,
                 focus::plugin,
+                chatlog::plugin,
             ))
             .init_state::<Phase>()
             .init_resource::<Rng>()

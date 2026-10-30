@@ -14,7 +14,8 @@ use std::collections::BTreeMap;
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use super::{data, Run, Selection};
+use super::chatlog::{ChatKind, ChatLine};
+use super::{data, hud, Run, Selection};
 
 /// The level cap, as in 1.12.
 pub(super) const MAX_LEVEL: u32 = 60;
@@ -265,7 +266,12 @@ pub(super) fn load_profile(mut commands: Commands) {
 
 /// `OnEnter(GameOver)`: pay out the run (experience to its class's character, its gold to the
 /// bank) and save.
-pub(super) fn award_run(run: Res<Run>, selection: Res<Selection>, mut profile: ResMut<Profile>) {
+pub(super) fn award_run(
+    run: Res<Run>,
+    selection: Res<Selection>,
+    mut profile: ResMut<Profile>,
+    mut chat: MessageWriter<ChatLine>,
+) {
     let Some(class) = data::CLASSES.iter().position(|c| c.id == run.class.id) else {
         return;
     };
@@ -276,6 +282,30 @@ pub(super) fn award_run(run: Res<Run>, selection: Res<Selection>, mut profile: R
     profile.gold += gold;
     profile.last_award = Some(Award { xp, levels, gold });
     profile.save();
+    if run.won {
+        chat.write(ChatLine::system("Victory!"));
+    } else {
+        chat.write(ChatLine::text(ChatKind::Combat, "You have died."));
+    }
+    chat.write(ChatLine::text(
+        ChatKind::Xp,
+        format!(
+            "Your {} gains {} experience.",
+            run.class.name,
+            hud::grouped(xp)
+        ),
+    ));
+    if levels > 0 {
+        chat.write(ChatLine::system(format!(
+            "Your {} has reached level {}.",
+            run.class.name,
+            profile.character(class).level
+        )));
+    }
+    chat.write(ChatLine::text(
+        ChatKind::Money,
+        format!("{} gold added to your bank.", hud::grouped(gold)),
+    ));
     info!(
         "survivors: run paid {xp} xp ({levels} levels, now {}) and {gold} gold (bank {})",
         profile.character(class).level,
