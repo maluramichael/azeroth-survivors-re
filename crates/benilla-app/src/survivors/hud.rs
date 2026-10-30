@@ -14,6 +14,7 @@ use bevy::window::PrimaryWindow;
 use super::data::{self, AbilityDef, Effect, Kind, PassiveDef, Stat};
 use super::hero::{self, Hero};
 use super::minimap::{self, MiniMap};
+use super::profile::Profile;
 use super::{Owned, Phase, Rng, Run, Selection, Stats};
 
 const GOLD: Color = Color::srgb(1.0, 0.82, 0.0);
@@ -895,13 +896,18 @@ pub(super) fn menu_preview(
     );
 }
 
-pub(super) fn start_run(run: &mut Run, selection: &mut Selection) -> bool {
-    let (Some(class), Some(&(_, race, _))) = (
+pub(super) fn start_run(run: &mut Run, selection: &mut Selection, profile: &Profile) -> bool {
+    let (Some(class), Some(index), Some(&(_, race, _))) = (
         selection.class_def(),
+        selection.class,
         selection.look.and_then(|i| selection.looks.get(i)),
     ) else {
         return false;
     };
+    // A class not bought yet, or a zone above its character's level, does not start.
+    if !profile.class_unlocked(index) || !profile.zone_unlocked(index, selection.map) {
+        return false;
+    }
     // The world goes to the battleground picked; until now it stood in the last one.
     selection.stage = selection.map;
     let next_guid = run.next_guid;
@@ -909,6 +915,7 @@ pub(super) fn start_run(run: &mut Run, selection: &mut Selection) -> bool {
         class,
         race,
         next_guid,
+        meta: profile.bonus(index),
         ..Run::default()
     };
     run.abilities.push(Owned {
@@ -1052,11 +1059,12 @@ pub(super) fn keys(
     phase: Res<State<Phase>>,
     mut selection: ResMut<Selection>,
     mut run: ResMut<Run>,
+    profile: Res<Profile>,
     mut next: ResMut<NextState<Phase>>,
 ) {
     match phase.get() {
         Phase::Menu => {
-            if keys.just_pressed(KeyCode::Enter) && start_run(&mut run, &mut selection) {
+            if keys.just_pressed(KeyCode::Enter) && start_run(&mut run, &mut selection, &profile) {
                 next.set(Phase::Playing);
             }
         }

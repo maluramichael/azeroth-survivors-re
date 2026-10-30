@@ -160,6 +160,7 @@ pub(super) fn drive(
     mut next: ResMut<NextState<Phase>>,
     mut selection: ResMut<Selection>,
     mut run: ResMut<Run>,
+    profile: Res<super::profile::Profile>,
     mut offer: ResMut<Offer>,
     mut rng: ResMut<Rng>,
     loading: Res<crate::loading_screen::LoadingScreen>,
@@ -185,7 +186,7 @@ pub(super) fn drive(
                 auto.wait = 0.0;
             } else if auto.wait > 2.0 && auto.wait < 3.0 {
                 auto.capture_once(&mut commands, "menu".into());
-            } else if auto.wait > 3.0 && hud::start_run(&mut run, &mut selection) {
+            } else if auto.wait > 3.0 && hud::start_run(&mut run, &mut selection, &profile) {
                 info!(
                     "survivors auto: run begins as {} at {}",
                     run.class.name,

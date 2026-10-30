@@ -16,6 +16,7 @@ mod hud;
 mod menu;
 mod minimap;
 mod mobility;
+mod profile;
 mod units;
 
 use benilla_world::schedule::WorldStage;
@@ -54,7 +55,7 @@ impl Plugin for SurvivorsPlugin {
             .add_message::<enemies::Loot>()
             .add_plugins(bevy::ui_render::UiMaterialPlugin::<hud::SweepUiMaterial>::default())
             .add_plugins(bevy::ui_render::UiMaterialPlugin::<fill::FillMaterial>::default())
-            .add_systems(Startup, hud::setup_hud)
+            .add_systems(Startup, (hud::setup_hud, profile::load_profile))
             .add_systems(Update, hero::daylight)
             .add_systems(
                 Update,
@@ -134,7 +135,7 @@ impl Plugin for SurvivorsPlugin {
             .add_systems(OnEnter(Phase::Playing), unpause)
             .add_systems(OnEnter(Phase::LevelUp), (pause, hud::roll_offer))
             .add_systems(OnEnter(Phase::Paused), pause)
-            .add_systems(OnEnter(Phase::GameOver), unpause)
+            .add_systems(OnEnter(Phase::GameOver), (unpause, profile::award_run))
             .add_systems(OnEnter(Phase::Menu), (unpause, reset_run));
         if let Some(auto) = auto::from_env() {
             app.insert_resource(auto)
@@ -259,6 +260,10 @@ pub(super) struct Run {
     pub thorns_spell: u32,
     pub heal_rate: f32,
     pub heal_t: f32,
+    /// Gold picked up this run, banked into the profile when it ends ([`profile::award_run`]).
+    pub gold: u32,
+    /// The profile's bonus for this class, fixed when the run starts ([`profile::Profile::bonus`]).
+    pub meta: profile::MetaBonus,
     /// The class mobility's cooldown and running effect.
     mobile: mobility::MobilityState,
     pub pending_levels: u32,
@@ -295,6 +300,8 @@ impl Default for Run {
             thorns_spell: 0,
             heal_rate: 0.0,
             heal_t: 0.0,
+            gold: 0,
+            meta: profile::MetaBonus::default(),
             mobile: mobility::MobilityState::default(),
             pending_levels: 0,
             bosses: 0,
@@ -344,6 +351,14 @@ impl Run {
                 Stat::Crit => s.crit += v,
             }
         }
+        let m = &self.meta;
+        s.max_hp *= m.max_hp;
+        s.might += m.might;
+        s.speed *= m.speed;
+        s.haste += m.haste;
+        s.magnet *= m.magnet;
+        s.armor += m.armor;
+        s.regen += m.regen;
         s
     }
 

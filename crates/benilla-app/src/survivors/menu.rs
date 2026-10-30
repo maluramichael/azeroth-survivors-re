@@ -526,6 +526,7 @@ pub(super) fn menu_clicks(
     creatures: Option<Res<crate::entities::Creatures>>,
     mut selection: ResMut<Selection>,
     mut run: ResMut<Run>,
+    profile: Res<super::profile::Profile>,
     mut rng: ResMut<Rng>,
     mut next: ResMut<NextState<Phase>>,
 ) {
@@ -556,7 +557,7 @@ pub(super) fn menu_clicks(
             }
         }
         MenuAction::Enter => {
-            if start_run(&mut run, &mut selection) {
+            if start_run(&mut run, &mut selection, &profile) {
                 next.set(Phase::Playing);
             }
         }
