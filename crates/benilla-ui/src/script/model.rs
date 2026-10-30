@@ -1669,7 +1669,7 @@ impl Model {
         if let Some((t0, delay, left)) = spec {
             if t0.elapsed().as_secs_f64() >= *delay
                 && left
-                    .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| v.checked_sub(1))
+                    .try_update(Ordering::Relaxed, Ordering::Relaxed, |v| v.checked_sub(1))
                     .is_ok()
             {
                 eprintln!(
@@ -1700,6 +1700,6 @@ fn derive_trace_armed() -> bool {
     };
     t0.elapsed().as_secs_f64() >= *delay
         && left
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| v.checked_sub(1))
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |v| v.checked_sub(1))
             .is_ok()
 }
