@@ -92,13 +92,15 @@ Run `make` (or `make help`) to list every target.
 `make native` fetches the data and runs the desktop client. To start it yourself:
 
 ```bash
-cargo run --release -p warcraft-survivors -- --data wow-data --windowed
-cargo run --release -p warcraft-survivors -- --data wow-data --size 1280x720
+cargo run --release -p warcraft-survivors -- --windowed
+cargo run --release -p warcraft-survivors -- --data /path/to/WoW --size 1280x720
 ```
 
-`--data` takes the client's `Data` folder or the folder above it, `--windowed` (`-w`) opens a
-1600×900 window instead of borderless fullscreen, and `--size WxH` sets the window size. Without
-a data folder the game stops at launch and lists where it looked. `--help` lists every flag.
+`--data` takes the client's `Data` folder or the folder above it; without it (and without
+`WOW_DATA`) the game uses the checkout's `wow-data`, where `make fetch-data` puts the client.
+`--windowed` (`-w`) opens a 1600×900 window instead of borderless fullscreen, and `--size WxH`
+sets the window size. Without a data folder the game stops at launch and lists where it looked.
+`--help` lists every flag.
 
 ## Controls
 
