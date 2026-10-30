@@ -144,8 +144,12 @@ impl Profile {
             .unwrap_or_default();
         p.normalize();
         p.ephemeral = crate::webenv::var("WOW_SURVIVORS_AUTO").is_some();
-        p.unlock_all =
-            p.ephemeral || crate::webenv::var("WOW_SURVIVORS_UNLOCK_ALL").is_some_and(|v| v != "0");
+        // An automated run opens everything unless `WOW_SURVIVORS_UNLOCK_ALL=0` keeps the locks, to
+        // photograph them.
+        p.unlock_all = match crate::webenv::var("WOW_SURVIVORS_UNLOCK_ALL") {
+            Some(v) => v != "0",
+            None => p.ephemeral,
+        };
         p
     }
 
@@ -196,12 +200,14 @@ impl Profile {
     /// The bonus a run with `class` starts with: the character's level, then the trainer.
     pub fn bonus(&self, class: usize) -> MetaBonus {
         let level = self.character(class).level.saturating_sub(1) as f32;
-        MetaBonus {
+        let mut bonus = MetaBonus {
             // Level 60: +118 % health, +89 % might.
             max_hp: 1.0 + 0.02 * level,
             might: 0.015 * level,
             ..MetaBonus::default()
-        }
+        };
+        super::trainer::apply_ranks(&mut bonus, &self.trainer);
+        bonus
     }
 
     /// Add character experience to `class`, levelling up as far as it reaches; returns the levels
