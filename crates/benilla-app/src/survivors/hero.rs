@@ -40,6 +40,24 @@ const FIXED_PITCH: f32 = 61.0 * std::f32::consts::PI / 180.0;
 const ZOOM_MIN: f32 = 1.5;
 const ZOOM_MAX: f32 = 70.0;
 
+/// The pick screen's idle orbit, radians per second.
+const MENU_IDLE_RATE: f32 = 0.06;
+/// Seconds after letting go of the drag before the idle orbit starts again, then ramps in over
+/// [`MENU_IDLE_RAMP`].
+const MENU_IDLE_DELAY: f32 = 3.0;
+const MENU_IDLE_RAMP: f32 = 1.5;
+/// The pick screen's default camera distance and zoom range, yards from the look-at point.
+const MENU_DIST: f32 = 7.0;
+const MENU_ZOOM_MIN: f32 = 3.5;
+const MENU_ZOOM_MAX: f32 = 12.0;
+/// The pick screen's default elevation (2.4 yards up at 7 out, seen from the 1.1 look-at height)
+/// and the tilt range a drag may use, radians.
+const MENU_PITCH: f32 = 0.184;
+const MENU_PITCH_MIN: f32 = 0.05;
+const MENU_PITCH_MAX: f32 = 0.5;
+/// How fast the menu zoom settles on its target, per second.
+const MENU_ZOOM_SMOOTH: f32 = 9.0;
+
 /// Whether the camera is locked; `C` toggles it.
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub(super) enum CamMode {
@@ -59,6 +77,17 @@ pub(super) struct CamRig {
     /// Elevation above the horizon (radians), clamped so the camera never dives underground.
     pub pitch: f32,
     pub mode: CamMode,
+    /// Pick-screen camera distance as drawn, easing toward `menu_zoom`; apart from `dist` so the
+    /// menu zoom leaves the game camera alone.
+    pub menu_dist: f32,
+    /// Pick-screen zoom the wheel asks for.
+    pub menu_zoom: f32,
+    /// Pick-screen elevation (radians); a drag tilts it a little.
+    pub menu_pitch: f32,
+    /// A left drag that began over the 3D scene is under way at the pick screen.
+    pub menu_drag: bool,
+    /// Seconds since the pick-screen drag ended; the idle orbit waits for it to pass the delay.
+    pub menu_idle: f32,
 }
 
 impl Default for CamRig {
@@ -69,7 +98,54 @@ impl Default for CamRig {
             yaw: 0.0,
             pitch: FIXED_PITCH,
             mode: CamMode::Fixed,
+            menu_dist: MENU_DIST,
+            menu_zoom: MENU_DIST,
+            menu_pitch: MENU_PITCH,
+            menu_drag: false,
+            menu_idle: MENU_IDLE_DELAY + MENU_IDLE_RAMP,
         }
+    }
+}
+
+/// Whether the cursor is over a piece of UI: a node that draws something (an image, a visible
+/// background) or takes clicks, so panels without buttons count and the empty layout wrappers
+/// around them do not. Nodes that cover most of the window (vignettes, fade layers) are not
+/// panels and are skipped.
+#[derive(bevy::ecs::system::SystemParam)]
+pub(super) struct UiCover<'w, 's> {
+    windows: Query<'w, 's, &'static Window, With<bevy::window::PrimaryWindow>>,
+    nodes: Query<'w, 's, UiNode>,
+}
+
+/// What [`UiCover`] reads off a UI node to tell a panel from an empty layout wrapper.
+type UiNode = (
+    &'static ComputedNode,
+    &'static bevy::ui::UiGlobalTransform,
+    &'static InheritedVisibility,
+    Option<&'static BackgroundColor>,
+    Option<&'static ImageNode>,
+    Option<&'static Interaction>,
+);
+
+impl UiCover<'_, '_> {
+    pub(super) fn cursor_over_ui(&self) -> bool {
+        let Ok(window) = self.windows.single() else {
+            return false;
+        };
+        let Some(cursor) = window.physical_cursor_position() else {
+            return false;
+        };
+        let screen = window.physical_size().as_vec2();
+        self.nodes.iter().any(|(node, at, shown, fill, image, interaction)| {
+            let size = node.size();
+            let solid = interaction.is_some()
+                || image.is_some_and(|i| i.color.alpha() > 0.0)
+                || fill.is_some_and(|f| f.0.alpha() > 0.0);
+            shown.get()
+                && solid
+                && size.x * size.y < 0.7 * screen.x * screen.y
+                && node.contains_point(*at, cursor)
+        })
     }
 }
 
@@ -330,7 +406,9 @@ pub(super) fn drop_stray_buttons(
     }
 }
 
-/// A slow orbit at the menu; in play, top-down until `C` unlocks it to swing and tilt.
+/// At the menu a slow orbit the player can take over: a left drag that began over the scene swings
+/// and tilts it, the wheel zooms, and the orbit resumes where it was left. In play, top-down until
+/// `C` unlocks it to swing and tilt.
 pub(super) fn place_camera(
     time: Res<Time<Real>>,
     phase: Res<State<Phase>>,
@@ -340,6 +418,7 @@ pub(super) fn place_camera(
     motion: Res<AccumulatedMouseMotion>,
     keys: Res<ButtonInput<KeyCode>>,
     player: Res<crate::player::Player>,
+    ui: UiCover,
     world: WorldPoint,
     hero: Query<&Transform, (With<Hero>, Without<WorldCamera>)>,
     mut cams: Query<&mut Transform, With<WorldCamera>>,
@@ -358,22 +437,54 @@ pub(super) fn place_camera(
     }
     // With no hero yet, the focus `drive_hero` grounded.
     let focus = hero.single().map_or(player.pos, |t| t.translation);
+    let menu = *phase.get() == Phase::Menu;
+    let dt = time.delta_secs();
     // Multiplicative, so a notch moves as far by eye close in as far out; all the way down to an
-    // over-the-shoulder view.
+    // over-the-shoulder view. At the menu it moves the pick screen's own zoom, and not at all
+    // while the cursor is over a panel.
+    let over_ui = menu && ui.cursor_over_ui();
     for w in wheel.read() {
         let notches = match w.unit {
             MouseScrollUnit::Line => w.y,
             MouseScrollUnit::Pixel => w.y * 0.02,
         };
-        rig.dist = (rig.dist * (1.0 - 0.12 * notches).clamp(0.5, 1.5)).clamp(ZOOM_MIN, ZOOM_MAX);
+        let step = (1.0 - 0.12 * notches).clamp(0.5, 1.5);
+        if !menu {
+            rig.dist = (rig.dist * step).clamp(ZOOM_MIN, ZOOM_MAX);
+        } else if !over_ui {
+            rig.menu_zoom = (rig.menu_zoom * step).clamp(MENU_ZOOM_MIN, MENU_ZOOM_MAX);
+        }
     }
-    let (eye, look) = if *phase.get() == Phase::Menu {
-        rig.orbit += time.delta_secs() * 0.2;
-        let d = 7.0;
-        (
-            focus + Vec3::new(rig.orbit.sin() * d, 2.4, rig.orbit.cos() * d),
-            focus + Vec3::Y * 1.1,
-        )
+    let (eye, look) = if menu {
+        // A drag counts only if the press landed on the scene, and ends with the button.
+        if mouse.just_pressed(MouseButton::Left) && !over_ui {
+            rig.menu_drag = true;
+        }
+        if rig.menu_drag && !mouse.pressed(MouseButton::Left) {
+            rig.menu_drag = false;
+        }
+        if rig.menu_drag {
+            rig.menu_idle = 0.0;
+            rig.orbit -= motion.delta.x * ORBIT_RATE;
+            rig.menu_pitch = (rig.menu_pitch + motion.delta.y * ORBIT_RATE)
+                .clamp(MENU_PITCH_MIN, MENU_PITCH_MAX);
+        } else {
+            rig.menu_idle += dt;
+            // Ease the idle orbit in, so it does not lurch into motion; the tilt drifts home with it.
+            let ease = ((rig.menu_idle - MENU_IDLE_DELAY) / MENU_IDLE_RAMP).clamp(0.0, 1.0);
+            rig.orbit += dt * MENU_IDLE_RATE * ease;
+            rig.menu_pitch += (MENU_PITCH - rig.menu_pitch) * (1.0 - (-0.8 * ease * dt).exp());
+        }
+        rig.menu_dist += (rig.menu_zoom - rig.menu_dist) * (1.0 - (-MENU_ZOOM_SMOOTH * dt).exp());
+        let (sy, cy) = rig.orbit.sin_cos();
+        let (sp, cp) = rig.menu_pitch.sin_cos();
+        let look = focus + Vec3::Y * 1.1;
+        let mut eye = look + Vec3::new(cp * sy, sp, cp * cy) * rig.menu_dist;
+        // Never under the ground: a low tilt on a slope would bury the lens.
+        if let Some(h) = world.terrain_height_under(eye) {
+            eye.y = eye.y.max(h + 0.6);
+        }
+        (eye, look)
     } else {
         // Unlocked, either mouse button drags the camera around the hero, as in WoW.
         if rig.mode == CamMode::Orbit && mouse.any_pressed([MouseButton::Left, MouseButton::Right])
