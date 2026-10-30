@@ -725,3 +725,6 @@ pub(super) fn refresh_menu_ui(
         }
     }
 }
+
+/// The menu's own systems beyond the plugin's shared tuple: the zone locks and the character line.
+pub(super) fn plugin(_app: &mut App) {}
