@@ -9,6 +9,7 @@ use bevy::prelude::*;
 use bevy::ui_render::ui_material::MaterialNode;
 
 use super::hud::{looks_for, rgb, start_run, HudFont, MenuRoot};
+use super::profile::{xp_to_next, zone_min_level, Profile, MAX_LEVEL};
 use super::{data, Phase, Rng, Run, Selection};
 use crate::char_select::race_name;
 use crate::glue::art::{class_tc, race_tc, tc_rect, GlueArt, DIM, GOLD, NAME_EDGE};
@@ -484,7 +485,7 @@ fn zone_frame(ui: &mut ChildSpawnerCommands, art: &GlueArt, f: &Handle<Font>) {
                         b,
                         abs(1.0, 0.0, 2.0, ROW_W, 16.0),
                         (),
-                        (),
+                        ZoneName(i),
                         GlueText {
                             text: map.name,
                             size: 15.0,
@@ -503,7 +504,7 @@ fn zone_frame(ui: &mut ChildSpawnerCommands, art: &GlueArt, f: &Handle<Font>) {
                         b,
                         abs(1.0, 0.0, 19.0, ROW_W, 14.0),
                         (),
-                        (),
+                        ZoneLevels { map: i, lo, hi },
                         GlueText {
                             text: &format!("{levels}  {}", map.zone),
                             size: 12.0,
@@ -513,6 +514,14 @@ fn zone_frame(ui: &mut ChildSpawnerCommands, art: &GlueArt, f: &Handle<Font>) {
                         f,
                         1.0,
                     );
+                    // The padlock of a zone the character is too low for; `refresh_zone_rows`
+                    // shows it and `build_pick_extras` gives it its art.
+                    b.spawn((
+                        ZoneLock(i),
+                        Visibility::Hidden,
+                        ImageNode::default(),
+                        abs(1.0, ROW_W - 22.0, 9.0, 16.0, 16.0),
+                    ));
                 });
         }
     });
@@ -606,7 +615,7 @@ pub(super) fn menu_clicks(
 }
 
 /// The screen's per-frame state: the locked highlights, hover labels, which races and classes
-/// the pick allows, the gender on the race faces, the name line and Enter World.
+/// the pick allows, the gender on the race faces and Enter World.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub(super) fn refresh_menu_ui(
     selection: Res<Selection>,
@@ -623,7 +632,6 @@ pub(super) fn refresh_menu_ui(
     )>,
     mut labels: Query<&mut Visibility, (With<HoverLabel>, Without<MenuAction>)>,
     mut faces: Query<(&RaceFace, &mut ImageNode)>,
-    mut name: Query<(&mut Text, &mut TextColor), With<PickName>>,
     mut cache: Local<(Option<u32>, bool, Vec<Vec<(u32, u8, u8)>>)>,
 ) {
     let have = creatures.is_some();
@@ -708,11 +716,224 @@ pub(super) fn refresh_menu_ui(
             }
         }
     }
+}
 
+/// The menu's own systems beyond the plugin's shared tuple: the zone locks and the character line.
+pub(super) fn plugin(app: &mut App) {
+    app.add_systems(
+        Update,
+        (
+            build_pick_extras.after(build_menu),
+            (refresh_zone_rows, refresh_pick_line, lock_enter)
+                .after(refresh_menu_ui)
+                .before(crate::glue::GlueVisuals),
+        )
+            .run_if(in_state(Phase::Menu)),
+    );
+}
+
+/// A zone row's name text.
+#[derive(Component)]
+struct ZoneName(usize);
+
+/// A zone row's level line; `lo` and `hi` are the lowest and highest creature level of the zone.
+#[derive(Component)]
+struct ZoneLevels {
+    map: usize,
+    lo: u32,
+    hi: u32,
+}
+
+/// A zone row's padlock, shown while the selected class's character is below the zone.
+#[derive(Component)]
+struct ZoneLock(usize);
+
+/// The red "Requires level X" line above Enter World.
+#[derive(Component)]
+struct ZoneWarn;
+
+/// The fill of the character's XP bar under [`PickName`].
+#[derive(Component)]
+struct PickXpFill;
+
+/// On [`MenuRoot`] once [`build_pick_extras`] has added the warning line and the XP bar.
+#[derive(Component)]
+struct PickExtras;
+
+/// A locked zone's name, as a disabled glue button's caption.
+const LOCKED_NAME: Color = Color::srgb(0.5, 0.5, 0.5);
+/// A locked zone's "Requires level X" in its row.
+const LOCKED_LEVEL: Color = Color::srgb(0.8, 0.3, 0.3);
+/// The red line above Enter World.
+const WARN_RED: Color = Color::srgb(1.0, 0.1, 0.1);
+/// The HUD's XP bar colour.
+const XP_PURPLE: Color = Color::srgb(0.58, 0.0, 0.55);
+
+/// Whether the selected class's character is too low for `map`. False with no class or profile.
+fn zone_locked(selection: &Selection, profile: Option<&Profile>, map: usize) -> bool {
+    selection
+        .class
+        .zip(profile)
+        .is_some_and(|(class, p)| !p.zone_unlocked(class, map))
+}
+
+/// Once the menu is built: the padlock art, the red zone warning and the XP bar under the name.
+fn build_pick_extras(
+    mut commands: Commands,
+    roots: Query<Entity, (With<MenuBuilt>, Without<PickExtras>)>,
+    assets: Option<ResMut<benilla_assets::WorldAssets>>,
+    mut images: ResMut<Assets<Image>>,
+    mut locks: Query<&mut ImageNode, With<ZoneLock>>,
+    font: Res<HudFont>,
+) {
+    let Ok(root) = roots.single() else { return };
+    let Some(mut assets) = assets else { return };
+    if let Some(lock) =
+        assets.sprite_texture("Interface\\ChatFrame\\UI-ChatFrame-LockIcon", &mut images)
+    {
+        for mut img in &mut locks {
+            img.image = lock.clone();
+        }
+    }
+    let bar = assets
+        .sprite_texture("Interface\\TargetingFrame\\UI-StatusBar", &mut images)
+        .unwrap_or_default();
+    let f = &font.0;
+    commands.entity(root).insert(PickExtras).with_children(|ui| {
+        // Above the name line, which sits above Enter World.
+        ui.spawn(Node {
+            position_type: PositionType::Absolute,
+            bottom: Val::Px(130.0),
+            width: Val::Percent(100.0),
+            justify_content: JustifyContent::Center,
+            ..default()
+        })
+        .with_children(|c| {
+            outlined_text(
+                c,
+                Node::default(),
+                (),
+                ZoneWarn,
+                GlueText {
+                    text: "",
+                    size: 16.0,
+                    color: WARN_RED,
+                    wrap: false,
+                },
+                f,
+                1.0,
+            );
+        });
+        // The thin XP bar between the name and the Enter World button.
+        ui.spawn(Node {
+            position_type: PositionType::Absolute,
+            bottom: Val::Px(91.0),
+            width: Val::Percent(100.0),
+            justify_content: JustifyContent::Center,
+            ..default()
+        })
+        .with_children(|c| {
+            c.spawn((
+                Node {
+                    width: Val::Px(200.0),
+                    height: Val::Px(8.0),
+                    padding: UiRect::all(Val::Px(1.0)),
+                    ..default()
+                },
+                BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.75)),
+            ))
+            .with_children(|frame| {
+                frame.spawn((
+                    PickXpFill,
+                    Node {
+                        width: Val::Percent(0.0),
+                        height: Val::Percent(100.0),
+                        ..default()
+                    },
+                    ImageNode::new(bar).with_color(XP_PURPLE),
+                ));
+            });
+        });
+    });
+}
+
+/// The zone rows: a zone above the selected character's level greys its name, shows its padlock
+/// and says what level it needs where the level range was.
+#[allow(clippy::type_complexity)]
+fn refresh_zone_rows(
+    selection: Res<Selection>,
+    profile: Option<Res<Profile>>,
+    mut names: Query<(&ZoneName, &mut TextColor), Without<ZoneLevels>>,
+    mut levels: Query<(&ZoneLevels, &mut Text, &mut TextColor), Without<ZoneName>>,
+    mut locks: Query<(&ZoneLock, &mut Visibility)>,
+) {
+    let profile = profile.as_deref();
+    for (name, mut color) in &mut names {
+        let want = if zone_locked(&selection, profile, name.0) {
+            LOCKED_NAME
+        } else {
+            GOLD
+        };
+        if color.0 != want {
+            color.0 = want;
+        }
+    }
+    for (row, mut text, mut color) in &mut levels {
+        let locked = zone_locked(&selection, profile, row.map);
+        let zone = data::MAPS[row.map].zone;
+        let (want, tint) = if locked {
+            (format!("Requires level {}  {zone}", row.lo), LOCKED_LEVEL)
+        } else if row.lo == row.hi {
+            (format!("Level {}  {zone}", row.lo), Color::WHITE)
+        } else {
+            (format!("Level {}-{}  {zone}", row.lo, row.hi), Color::WHITE)
+        };
+        if text.0 != want {
+            text.0 = want;
+        }
+        if color.0 != tint {
+            color.0 = tint;
+        }
+    }
+    for (lock, mut vis) in &mut locks {
+        let want = if zone_locked(&selection, profile, lock.0) {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        };
+        if *vis != want {
+            *vis = want;
+        }
+    }
+}
+
+/// The character line above Enter World ("Level 12 Night Elf Warrior"), its XP bar, and the red
+/// warning when the zone picked is above the character.
+#[allow(clippy::type_complexity)]
+fn refresh_pick_line(
+    selection: Res<Selection>,
+    profile: Option<Res<Profile>>,
+    mut name: Query<(&mut Text, &mut TextColor), (With<PickName>, Without<ZoneWarn>)>,
+    mut warn: Query<&mut Text, (With<ZoneWarn>, Without<PickName>)>,
+    mut fill: Query<&mut Node, With<PickXpFill>>,
+) {
+    let profile = profile.as_deref();
     let class = selection.class_def();
+    let race = selection
+        .look
+        .and_then(|i| selection.looks.get(i))
+        .map(|&(_, r, _)| r);
+    let character = selection
+        .class
+        .zip(profile)
+        .map(|(class, p)| p.character(class));
+
     if let Ok((mut t, mut color)) = name.single_mut() {
-        let want = match (class, cur) {
-            (Some(c), Some((r, _))) => format!("{} {}", race_name(r), c.name),
+        let want = match (class, race) {
+            (Some(c), Some(r)) => match character {
+                Some(ch) => format!("Level {} {} {}", ch.level, race_name(r), c.name),
+                None => format!("{} {}", race_name(r), c.name),
+            },
             _ => String::new(),
         };
         if t.0 != want {
@@ -724,7 +945,45 @@ pub(super) fn refresh_menu_ui(
             color.0 = want;
         }
     }
+
+    if let Ok(mut node) = fill.single_mut() {
+        let pct = character.map_or(0.0, |ch| {
+            if ch.level >= MAX_LEVEL {
+                100.0
+            } else {
+                (ch.xp as f32 / xp_to_next(ch.level) as f32 * 100.0).clamp(0.0, 100.0)
+            }
+        });
+        if node.width != Val::Percent(pct) {
+            node.width = Val::Percent(pct);
+        }
+    }
+
+    if let Ok(mut t) = warn.single_mut() {
+        let want = if zone_locked(&selection, profile, selection.map) {
+            format!("Requires level {}", zone_min_level(selection.map))
+        } else {
+            String::new()
+        };
+        if t.0 != want {
+            t.0 = want;
+        }
+    }
 }
 
-/// The menu's own systems beyond the plugin's shared tuple: the zone locks and the character line.
-pub(super) fn plugin(_app: &mut App) {}
+/// Enter World looks disabled while the zone picked is above the character; `start_run` refuses it
+/// either way. Runs after [`refresh_menu_ui`], which owns the button's other disabled reason.
+fn lock_enter(
+    selection: Res<Selection>,
+    profile: Option<Res<Profile>>,
+    mut buttons: Query<(&MenuAction, &mut GlueDisabled)>,
+) {
+    if !zone_locked(&selection, profile.as_deref(), selection.map) {
+        return;
+    }
+    for (action, mut disabled) in &mut buttons {
+        if *action == MenuAction::Enter && !disabled.0 {
+            disabled.0 = true;
+        }
+    }
+}
