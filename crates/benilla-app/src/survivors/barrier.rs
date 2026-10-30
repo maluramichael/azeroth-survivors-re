@@ -103,8 +103,7 @@ impl Barrier {
             v[2] = [p1.x, h1 + HEIGHT, p1.z];
             v[3] = [p0.x, h0 + HEIGHT, p0.z];
         }
-        if let Some(VertexAttributeValues::Float32x4(c)) =
-            mesh.attribute_mut(Mesh::ATTRIBUTE_COLOR)
+        if let Some(VertexAttributeValues::Float32x4(c)) = mesh.attribute_mut(Mesh::ATTRIBUTE_COLOR)
         {
             let (a, b) = (tint(self.shown[i]), tint(self.shown[j]));
             c[0] = a;

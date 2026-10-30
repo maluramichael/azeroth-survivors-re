@@ -292,9 +292,20 @@ impl NavGrid {
         let (mut x, mut z) = (p0.x.floor() as i32, p0.y.floor() as i32);
         let (ex, ez) = (p1.x.floor() as i32, p1.y.floor() as i32);
         let d = p1 - p0;
-        let (sx, sz) = (if d.x > 0.0 { 1 } else { -1 }, if d.y > 0.0 { 1 } else { -1 });
-        let delta_x = if d.x != 0.0 { (1.0 / d.x).abs() } else { f32::MAX };
-        let delta_z = if d.y != 0.0 { (1.0 / d.y).abs() } else { f32::MAX };
+        let (sx, sz) = (
+            if d.x > 0.0 { 1 } else { -1 },
+            if d.y > 0.0 { 1 } else { -1 },
+        );
+        let delta_x = if d.x != 0.0 {
+            (1.0 / d.x).abs()
+        } else {
+            f32::MAX
+        };
+        let delta_z = if d.y != 0.0 {
+            (1.0 / d.y).abs()
+        } else {
+            f32::MAX
+        };
         let mut t_x = match d.x {
             v if v > 0.0 => (x as f32 + 1.0 - p0.x) / v,
             v if v < 0.0 => (p0.x - x as f32) / -v,

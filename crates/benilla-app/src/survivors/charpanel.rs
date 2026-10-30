@@ -34,10 +34,7 @@ pub(super) fn plugin(app: &mut App) {
 
 /// The phases that put the HUD on screen.
 fn in_run(phase: Res<State<Phase>>) -> bool {
-    matches!(
-        phase.get(),
-        Phase::Playing | Phase::LevelUp | Phase::Paused
-    )
+    matches!(phase.get(), Phase::Playing | Phase::LevelUp | Phase::Paused)
 }
 
 #[derive(Resource, Default)]
@@ -236,11 +233,7 @@ fn lines(run: &Run, char_level: u32, spells: Option<&crate::ui_action::Spells>) 
         for o in &run.abilities {
             out.push(Line {
                 left: hud::spell_name(spells, o.def.spell, o.def.key),
-                right: format!(
-                    "Rank {}, every {} s",
-                    o.level,
-                    hud::num(o.cooldown(&s))
-                ),
+                right: format!("Rank {}, every {} s", o.level, hud::num(o.cooldown(&s))),
                 left_color: VALUE,
                 right_color: RANK,
             });

@@ -43,10 +43,7 @@ pub(super) fn plugin(app: &mut App) {
 
 /// The phases that put the HUD on screen.
 fn in_run(phase: Res<State<Phase>>) -> bool {
-    matches!(
-        phase.get(),
-        Phase::Playing | Phase::LevelUp | Phase::Paused
-    )
+    matches!(phase.get(), Phase::Playing | Phase::LevelUp | Phase::Paused)
 }
 
 /// The nodes of one bar.
@@ -242,10 +239,13 @@ fn drive(
         .class
         .zip(profile.as_deref())
         .map_or(1, |(class, p)| p.character(class).level);
-    let view = cams
-        .single()
-        .ok()
-        .and_then(|(cam, tf)| Some((cam, GlobalTransform::from(*tf), cam.logical_viewport_size()?)));
+    let view = cams.single().ok().and_then(|(cam, tf)| {
+        Some((
+            cam,
+            GlobalTransform::from(*tf),
+            cam.logical_viewport_size()?,
+        ))
+    });
     if plates.shown {
         if let (Ok(h), Some((cam, cam_tf, viewport))) = (hero.single(), view.as_ref()) {
             cands.clear();
@@ -283,9 +283,12 @@ fn drive(
                     &anchor_q.4,
                 );
                 // Off screen or behind the camera: no bar.
-                let Some(screen) =
-                    crate::ui_pass::project_overlay(cam, cam_tf, anchor + Vec3::Y * 0.67, *viewport)
-                else {
+                let Some(screen) = crate::ui_pass::project_overlay(
+                    cam,
+                    cam_tf,
+                    anchor + Vec3::Y * 0.67,
+                    *viewport,
+                ) else {
                     continue;
                 };
                 seats.push(Seat {

@@ -78,10 +78,7 @@ pub(super) fn plugin(app: &mut App) {
 
 /// The phases that put the HUD on screen.
 fn in_run(phase: Res<State<Phase>>) -> bool {
-    matches!(
-        phase.get(),
-        Phase::Playing | Phase::LevelUp | Phase::Paused
-    )
+    matches!(phase.get(), Phase::Playing | Phase::LevelUp | Phase::Paused)
 }
 
 /// The icon button.
@@ -150,8 +147,11 @@ fn build(
     font: &Handle<Font>,
     icons: [Option<Handle<Image>>; 3],
 ) {
-    let (mut image, mut label, mut hint) =
-        (Entity::PLACEHOLDER, Entity::PLACEHOLDER, Entity::PLACEHOLDER);
+    let (mut image, mut label, mut hint) = (
+        Entity::PLACEHOLDER,
+        Entity::PLACEHOLDER,
+        Entity::PLACEHOLDER,
+    );
     let root = commands
         .spawn((
             Node {
@@ -267,7 +267,12 @@ mod tests {
         }
         assert_eq!(
             seen,
-            [Focus::Nearest, Focus::Lowest, Focus::Strongest, Focus::Nearest]
+            [
+                Focus::Nearest,
+                Focus::Lowest,
+                Focus::Strongest,
+                Focus::Nearest
+            ]
         );
     }
 }

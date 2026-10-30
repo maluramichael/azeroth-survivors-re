@@ -125,7 +125,11 @@ pub(super) fn next_price(trainer: &BTreeMap<String, u8>, u: &Upgrade) -> Option<
 pub(super) fn spent(trainer: &BTreeMap<String, u8>) -> u64 {
     UPGRADES
         .iter()
-        .map(|u| (0..u64::from(rank(trainer, u))).map(|r| u.price * (r + 1)).sum::<u64>())
+        .map(|u| {
+            (0..u64::from(rank(trainer, u)))
+                .map(|r| u.price * (r + 1))
+                .sum::<u64>()
+        })
         .sum()
 }
 
@@ -284,70 +288,73 @@ fn build_trainer(
         });
     }
 
-    commands.entity(root).insert(TrainerBuilt).with_children(|ui| {
-        // Under the class tower: the Trainer button and the bank.
-        ui.spawn(Node {
-            position_type: PositionType::Absolute,
-            left: px(58.0),
-            top: px(676.0),
-            ..default()
-        })
-        .with_children(|b| {
-            glue_button(
-                b,
-                &glue,
-                f,
-                TrainerAction::Open,
-                "Trainer",
-                146.0,
-                30.0,
-                GlueBtnKind::Small,
-                1.0,
-            );
-        });
-        ui.spawn(Node {
-            position_type: PositionType::Absolute,
-            left: px(28.0),
-            top: px(712.0),
-            width: px(206.0),
-            justify_content: JustifyContent::Center,
-            align_items: AlignItems::Center,
-            column_gap: px(4.0),
-            ..default()
-        })
-        .with_children(|row| {
-            gold_line(row, art, 14.0);
-            gold_text(row, f, 14.0);
-        });
-
-        // The unlock button above the name line, only while a locked class is selected.
-        ui.spawn((
-            UnlockWrap,
-            Node {
+    commands
+        .entity(root)
+        .insert(TrainerBuilt)
+        .with_children(|ui| {
+            // Under the class tower: the Trainer button and the bank.
+            ui.spawn(Node {
                 position_type: PositionType::Absolute,
-                bottom: px(140.0),
-                width: Val::Percent(100.0),
-                justify_content: JustifyContent::Center,
-                display: Display::None,
+                left: px(58.0),
+                top: px(676.0),
                 ..default()
-            },
-        ))
-        .with_children(|c| {
-            glue_button(
-                c,
-                &glue,
-                f,
-                TrainerAction::Unlock,
-                "Unlock",
-                340.0,
-                40.0,
-                GlueBtnKind::Normal,
-                1.0,
-            );
-        });
+            })
+            .with_children(|b| {
+                glue_button(
+                    b,
+                    &glue,
+                    f,
+                    TrainerAction::Open,
+                    "Trainer",
+                    146.0,
+                    30.0,
+                    GlueBtnKind::Small,
+                    1.0,
+                );
+            });
+            ui.spawn(Node {
+                position_type: PositionType::Absolute,
+                left: px(28.0),
+                top: px(712.0),
+                width: px(206.0),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                column_gap: px(4.0),
+                ..default()
+            })
+            .with_children(|row| {
+                gold_line(row, art, 14.0);
+                gold_text(row, f, 14.0);
+            });
 
-        panel(ui, &glue, art, f);
-    });
+            // The unlock button above the name line, only while a locked class is selected.
+            ui.spawn((
+                UnlockWrap,
+                Node {
+                    position_type: PositionType::Absolute,
+                    bottom: px(140.0),
+                    width: Val::Percent(100.0),
+                    justify_content: JustifyContent::Center,
+                    display: Display::None,
+                    ..default()
+                },
+            ))
+            .with_children(|c| {
+                glue_button(
+                    c,
+                    &glue,
+                    f,
+                    TrainerAction::Unlock,
+                    "Unlock",
+                    340.0,
+                    40.0,
+                    GlueBtnKind::Normal,
+                    1.0,
+                );
+            });
+
+            panel(ui, &glue, art, f);
+        });
 }
 
 /// The bank's number, white as the game's money frames show it.
@@ -408,10 +415,7 @@ fn panel(ui: &mut ChildSpawnerCommands, glue: &GlueArt, art: &TrainerArt, f: &Ha
                 ));
                 backdrop_border(frame, border, NAME_EDGE, FRAME_BORDER);
             } else {
-                frame.spawn((
-                    BackgroundColor(FRAME_FILL),
-                    crate::glue::widgets::overlay(),
-                ));
+                frame.spawn((BackgroundColor(FRAME_FILL), crate::glue::widgets::overlay()));
             }
             outlined_text(
                 frame,
@@ -633,7 +637,11 @@ fn show_panel(
     if ui.open && (*phase.get() != Phase::Menu || keys.just_pressed(KeyCode::Escape)) {
         ui.open = false;
     }
-    let display = if ui.open { Display::Flex } else { Display::None };
+    let display = if ui.open {
+        Display::Flex
+    } else {
+        Display::None
+    };
     for mut node in &mut panel {
         if node.display != display {
             node.display = display;
@@ -840,7 +848,10 @@ fn refresh_unlock(
     let name = data::CLASSES[class].name;
     let price = class_price(&profile);
     let (off, caption) = if profile.gold >= price {
-        (false, format!("Unlock {name}: {} gold", hud::grouped(price)))
+        (
+            false,
+            format!("Unlock {name}: {} gold", hud::grouped(price)),
+        )
     } else {
         (
             true,

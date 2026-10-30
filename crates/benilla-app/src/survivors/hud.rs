@@ -299,7 +299,11 @@ fn coin_icon(size: f32) -> impl Bundle {
     )
 }
 
-pub(super) fn spell_name(spells: Option<&crate::ui_action::Spells>, spell: u32, fallback: &str) -> String {
+pub(super) fn spell_name(
+    spells: Option<&crate::ui_action::Spells>,
+    spell: u32,
+    fallback: &str,
+) -> String {
     spells
         .and_then(|s| s.catalog.get(spell))
         .map(|d| d.name.clone())
