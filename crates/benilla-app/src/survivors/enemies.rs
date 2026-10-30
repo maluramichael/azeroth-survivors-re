@@ -1,5 +1,5 @@
 //! The horde: spawning on a ring outside the view, the chase, contact damage, death, and the
-//! experience gems the dead leave.
+//! experience gems, gold and health the dead leave.
 
 use std::collections::HashMap;
 
@@ -58,12 +58,16 @@ pub(super) struct Loot {
     pub pos: Vec3,
     pub xp: u32,
     pub boss: bool,
+    /// The creature's level, which sizes its gold.
+    pub level: u32,
 }
 
 #[derive(Clone, Copy)]
 pub(super) enum GemKind {
     Xp(u32),
     Heal(f32),
+    /// Coins worth this much gold, before the profile's greed.
+    Gold(u32),
 }
 
 #[derive(Component)]
@@ -74,11 +78,16 @@ pub(super) struct Gem {
 }
 
 /// The `GameObjectDisplayInfo` row and scale a pickup wears: a wisp per experience tier, the
-/// bigger tiers rarer, and a turkey leg for health.
+/// bigger tiers rarer, a turkey leg for health and a pile of gold that grows with its worth.
 fn look_for(kind: GemKind) -> (u32, f32) {
     match kind {
         // `TurkeyLeg.mdx`.
         GemKind::Heal(_) => (114, 2.5),
+        // `GoldPilesmall01.mdx`, a flat heap about two yards across at scale 1.
+        GemKind::Gold(g) if g >= 100 => (2614, 1.4),
+        GemKind::Gold(g) if g >= 25 => (2614, 0.9),
+        GemKind::Gold(g) if g >= 6 => (2614, 0.6),
+        GemKind::Gold(_) => (2614, 0.45),
         // `BFD_WispSmallPurple.mdx`.
         GemKind::Xp(xp) if xp >= 20 => (1307, 1.0),
         // `BFD_WispSmallGreen.mdx`.
@@ -409,8 +418,27 @@ pub(super) fn mark_dying(commands: &mut Commands, e: Entity) {
     commands.entity(e).insert(Dying(0.0));
 }
 
-/// Most gems on the ground at once; past it, a kill's worth joins an existing gem.
+/// Most experience and health gems on the ground at once; past it, a kill's worth joins an
+/// existing gem.
 const MAX_GEMS: usize = 350;
+
+/// Most coin piles on the ground at once; past it, a drop's gold joins an existing pile.
+const MAX_COINS: usize = 60;
+
+/// Chance a normal kill drops coins.
+const GOLD_CHANCE: f32 = 0.12;
+
+/// The gold a kill drops: about a quarter gold per creature level for a normal kill, so the
+/// later zones pay more, and a fat pile from a boss.
+fn gold_for(level: u32, boss: bool, rng: &mut Rng) -> u32 {
+    let level = level.max(1) as f32;
+    let gold = if boss {
+        (25.0 + level * 4.0) * rng.range(0.9, 1.1)
+    } else {
+        level * 0.25 * rng.range(0.6, 1.4)
+    };
+    gold.round().max(1.0) as u32
+}
 
 pub(super) fn drop_loot(
     mut commands: Commands,
@@ -419,8 +447,32 @@ pub(super) fn drop_loot(
     mut run: ResMut<Run>,
     mut gems: Query<&mut Gem>,
 ) {
-    let mut count = gems.iter().count();
+    let mut coins = gems
+        .iter()
+        .filter(|g| matches!(g.kind, GemKind::Gold(_)))
+        .count();
+    let mut count = gems.iter().count() - coins;
     for d in drops.read() {
+        if d.boss || rng.f32() < GOLD_CHANCE {
+            let gold = gold_for(d.level, d.boss, &mut rng);
+            let merged = if coins >= MAX_COINS && !d.boss {
+                gems.iter_mut().find_map(|mut g| match &mut g.kind {
+                    GemKind::Gold(have) => {
+                        *have += gold;
+                        Some(())
+                    }
+                    _ => None,
+                })
+            } else {
+                None
+            };
+            if merged.is_none() {
+                let a = rng.range(0.0, std::f32::consts::TAU);
+                let at = d.pos + Vec3::new(a.cos(), 0.0, a.sin()) * 0.7;
+                spawn_gem(&mut commands, run.guid(), at, GemKind::Gold(gold));
+                coins += 1;
+            }
+        }
         if d.boss || rng.f32() < 0.015 {
             let heal = GemKind::Heal(if d.boss { 1000.0 } else { 30.0 });
             spawn_gem(&mut commands, run.guid(), d.pos + Vec3::X * 0.8, heal);
@@ -440,7 +492,13 @@ pub(super) fn drop_loot(
 
 fn spawn_gem(commands: &mut Commands, serial: u64, pos: Vec3, kind: GemKind) {
     let (display, scale) = look_for(kind);
-    let e = units::spawn_object(commands, serial, display, scale, pos + Vec3::Y * 0.5);
+    // Wisps and the turkey leg hover; a heap of coins lies on the ground.
+    let lift = if matches!(kind, GemKind::Gold(_)) {
+        0.1
+    } else {
+        0.5
+    };
+    let e = units::spawn_object(commands, serial, display, scale, pos + Vec3::Y * lift);
     commands.entity(e).insert(Gem {
         kind,
         pulled: false,
@@ -453,6 +511,7 @@ pub(super) fn collect_gems(
     mut commands: Commands,
     time: Res<Time>,
     mut run: ResMut<Run>,
+    mut rng: ResMut<Rng>,
     mut next: ResMut<NextState<Phase>>,
     hero: Query<&Transform, (With<Hero>, Without<Gem>)>,
     mut gems: Query<(Entity, &mut Transform, &mut Gem)>,
@@ -477,6 +536,11 @@ pub(super) fn collect_gems(
             match g.kind {
                 GemKind::Xp(xp) => run.xp += xp as f32 * data::XP_RATE * stats.growth,
                 GemKind::Heal(hp) => run.hp = (run.hp + hp).min(stats.max_hp),
+                GemKind::Gold(gold) => {
+                    // Greed rounds at random, so a small pile still feels a +10 %.
+                    let worth = gold as f32 * run.meta.greed;
+                    run.gold += worth.floor() as u32 + u32::from(rng.f32() < worth.fract());
+                }
             }
             commands.entity(e).despawn();
             continue;

@@ -50,6 +50,8 @@ pub(super) struct TimerText;
 #[derive(Component)]
 pub(super) struct KillText;
 #[derive(Component)]
+pub(super) struct GoldText;
+#[derive(Component)]
 pub(super) struct HpFrame;
 #[derive(Component)]
 pub(super) struct HpBar;
@@ -109,6 +111,10 @@ pub(super) struct OverStats;
 pub(super) struct OverLine;
 #[derive(Component)]
 pub(super) struct OverStat(usize);
+/// One line of the results payout: 0 gold earned, 1 character experience, 2 the bank, 3 the
+/// character's level.
+#[derive(Component)]
+pub(super) struct OverPayout(usize);
 
 /// An icon slot filled from the spell's `SpellIcon` once the client data is up.
 #[derive(Component)]
@@ -270,6 +276,26 @@ fn icon(spell: u32, size: f32) -> impl Bundle {
             ..default()
         },
         SpellIcon(spell),
+    )
+}
+
+/// The gold coin of `UI-MoneyIcons` (gold, silver and copper side by side), drawn by
+/// [`fill_art`].
+fn coin_icon(size: f32) -> impl Bundle {
+    (
+        Node {
+            width: Val::Px(size),
+            height: Val::Px(size),
+            ..default()
+        },
+        ImageNode {
+            color: Color::NONE,
+            ..default()
+        },
+        UiArt::crop(
+            "Interface\\MoneyFrame\\UI-MoneyIcons",
+            [0.0, 0.25, 0.0, 1.0],
+        ),
     )
 }
 
@@ -493,7 +519,7 @@ pub(super) fn setup_hud(
                         },
                     ));
                 });
-                // The clock, with the level and the kill count on one line under it.
+                // The clock, with the level, the kill count and the gold on one line under it.
                 row.spawn(Node {
                     flex_direction: FlexDirection::Column,
                     align_items: AlignItems::Center,
@@ -509,6 +535,15 @@ pub(super) fn setup_hud(
                     .with_children(|line| {
                         line.spawn((LevelText, text(f, "Level 1", 14.0, GOLD)));
                         line.spawn((KillText, text(f, "Kills 0", 14.0, Color::WHITE)));
+                        line.spawn(Node {
+                            align_items: AlignItems::Center,
+                            column_gap: Val::Px(3.0),
+                            ..default()
+                        })
+                        .with_children(|gold| {
+                            gold.spawn(coin_icon(14.0));
+                            gold.spawn((GoldText, text(f, "0", 14.0, GOLD)));
+                        });
                     });
                 });
                 // The minimap cluster's column.
@@ -816,6 +851,48 @@ pub(super) fn setup_hud(
                     });
                 }
             });
+            // What the run paid out: gold, character experience and the bank, then the
+            // character's level.
+            root.spawn((
+                Node {
+                    flex_direction: FlexDirection::Column,
+                    align_items: AlignItems::Center,
+                    padding: UiRect::axes(Val::Px(24.0), Val::Px(10.0)),
+                    row_gap: Val::Px(4.0),
+                    border: UiRect::all(Val::Px(1.0)),
+                    border_radius: BorderRadius::all(Val::Px(8.0)),
+                    ..default()
+                },
+                BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.45)),
+                BorderColor::all(EDGE),
+            ))
+            .with_children(|panel| {
+                panel
+                    .spawn(Node {
+                        align_items: AlignItems::Center,
+                        column_gap: Val::Px(28.0),
+                        ..default()
+                    })
+                    .with_children(|row| {
+                        for (i, color) in [(0, GOLD), (1, Color::srgb(0.7, 0.55, 1.0)), (2, DIM)] {
+                            row.spawn(Node {
+                                align_items: AlignItems::Center,
+                                column_gap: Val::Px(4.0),
+                                ..default()
+                            })
+                            .with_children(|item| {
+                                if i != 1 {
+                                    item.spawn(coin_icon(20.0));
+                                }
+                                item.spawn((OverPayout(i), text(f, "", 22.0, color)));
+                            });
+                        }
+                    });
+                panel.spawn((
+                    OverPayout(3),
+                    centered(f, "", 16.0, Color::srgb(0.85, 0.78, 0.6)),
+                ));
+            });
             root.spawn((OverStats, centered(f, "", 15.0, DIM)));
             root.spawn((
                 edged_button(UiAction::MainMenu, BUTTON, GOLD),
@@ -1060,11 +1137,16 @@ pub(super) fn keys(
     mut selection: ResMut<Selection>,
     mut run: ResMut<Run>,
     profile: Res<Profile>,
+    trainer: Res<super::trainer::TrainerUi>,
     mut next: ResMut<NextState<Phase>>,
 ) {
     match phase.get() {
         Phase::Menu => {
-            if keys.just_pressed(KeyCode::Enter) && start_run(&mut run, &mut selection, &profile) {
+            // Enter World by key, but not from behind the open trainer.
+            if keys.just_pressed(KeyCode::Enter)
+                && !trainer.open
+                && start_run(&mut run, &mut selection, &profile)
+            {
                 next.set(Phase::Playing);
             }
         }
@@ -1233,6 +1315,7 @@ pub(super) fn refresh_hud(
         Query<&mut Text, With<OverTitle>>,
         Query<&mut Text, With<OverStats>>,
         Query<&mut Text, With<XpText>>,
+        Query<&mut Text, With<GoldText>>,
     )>,
     mut xp_fill: Query<&mut Node, With<XpFill>>,
     rows: Query<(Entity, Has<AbilityRow>), Or<(With<AbilityRow>, With<PassiveRow>)>>,
@@ -1259,6 +1342,12 @@ pub(super) fn refresh_hud(
     let kills = run.kills;
     if let Ok(mut t) = texts.p2().single_mut() {
         **t = format!("Kills {kills}");
+    }
+    if let Ok(mut t) = texts.p7().single_mut() {
+        let gold = grouped(u64::from(run.gold));
+        if **t != gold {
+            **t = gold;
+        }
     }
     let banner = match run.banner.as_mut() {
         Some((msg, t)) => {
@@ -1648,16 +1737,16 @@ impl TipLine {
     }
 }
 
-/// A number as the tooltips print it: whole when near enough, else to one decimal.
-
-/// The results screen's tiles and its line under the title.
+/// The results screen's tiles, its line under the title and the payout.
 #[allow(clippy::type_complexity)]
 pub(super) fn refresh_results(
     run: Res<Run>,
     selection: Res<Selection>,
+    profile: Res<Profile>,
     mut over_texts: ParamSet<(
         Query<(&OverStat, &mut Text)>,
         Query<&mut Text, With<OverLine>>,
+        Query<(&OverPayout, &mut Text)>,
     )>,
 ) {
     let secs = run.elapsed as u32;
@@ -1685,6 +1774,54 @@ pub(super) fn refresh_results(
             **t = stats_line.to_string();
         }
     }
+
+    // The payout is filled in as the run ends ([`super::profile::award_run`]); until then the
+    // run's own gold stands in.
+    let award = profile.last_award.unwrap_or(super::profile::Award {
+        gold: u64::from(run.gold),
+        ..default()
+    });
+    let class = data::CLASSES.iter().position(|c| c.id == run.class.id);
+    let character = class.map(|c| profile.character(c)).unwrap_or_default();
+    let level_line = if award.levels > 0 {
+        format!("{} reached level {}!", run.class.name, character.level)
+    } else if character.level >= super::profile::MAX_LEVEL {
+        format!("{} is level {}", run.class.name, character.level)
+    } else {
+        format!(
+            "{} is level {}   ({} / {} XP)",
+            run.class.name,
+            character.level,
+            character.xp,
+            super::profile::xp_to_next(character.level)
+        )
+    };
+    let lines = [
+        format!("+{}", grouped(award.gold)),
+        format!("+{} XP", grouped(award.xp)),
+        format!("Bank {}", grouped(profile.gold)),
+        level_line,
+    ];
+    for (line, mut t) in &mut over_texts.p2() {
+        if let Some(v) = lines.get(line.0) {
+            if **t != *v {
+                **t = v.clone();
+            }
+        }
+    }
+}
+
+/// 1,234,567.
+pub(super) fn grouped(v: u64) -> String {
+    let digits = v.to_string();
+    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
 }
 
 /// 12.3k, 4.5M.
@@ -1698,6 +1835,7 @@ fn compact(v: f64) -> String {
     }
 }
 
+/// A number as the tooltips print it: whole when near enough, else to one decimal.
 fn num(v: f32) -> String {
     if (v - v.round()).abs() < 0.05 {
         format!("{}", v.round() as i64)
