@@ -10,6 +10,7 @@ use bevy::prelude::*;
 use super::abilities::Hit;
 use super::data::{self, EnemyDef};
 use super::hero::{self, Hero, HERO_RADIUS};
+use super::nav::NavGrid;
 use super::units::{self, flat, yaw_toward, Fx, Marks, UnitSpec, COLOR_HURT};
 use super::{Phase, Rng, Run, Selection};
 use crate::creature_anim::{move_flags, MovementState};
@@ -158,6 +159,11 @@ fn ground(world: &WorldPoint, mut p: Vec3, fallback: f32) -> Vec3 {
     p
 }
 
+/// [`ground`] at the nearest free spot to `p`: a spawn never lands inside a tree or a wall.
+fn spawn_spot(nav: &NavGrid, world: &WorldPoint, p: Vec3, fallback: f32) -> Vec3 {
+    ground(world, nav.free_near(p), fallback)
+}
+
 /// Keep the horde topped up on a ring outside the view, with the bosses and the encircling waves
 /// on the clock.
 pub(super) fn spawn_enemies(
@@ -167,6 +173,7 @@ pub(super) fn spawn_enemies(
     mut rng: ResMut<Rng>,
     mut spawner: ResMut<Spawner>,
     selection: Res<Selection>,
+    nav: Res<NavGrid>,
     hero: Query<&Transform, With<Hero>>,
     enemies: Query<&Enemy>,
     world: WorldPoint,
@@ -184,7 +191,8 @@ pub(super) fn spawn_enemies(
     while run.bosses < due_bosses {
         let def = &roster.bosses[run.bosses as usize];
         let a = rng.range(0.0, std::f32::consts::TAU);
-        let pos = ground(
+        let pos = spawn_spot(
+            &nav,
             &world,
             hpos + Vec3::new(a.cos(), 0.0, a.sin()) * 30.0,
             hpos.y,
@@ -202,7 +210,8 @@ pub(super) fn spawn_enemies(
         let n = 28 + (data::progress(elapsed) * 60.0) as usize;
         for i in 0..n {
             let a = i as f32 / n as f32 * std::f32::consts::TAU;
-            let pos = ground(
+            let pos = spawn_spot(
+                &nav,
                 &world,
                 hpos + Vec3::new(a.cos(), 0.0, a.sin()) * 26.0,
                 hpos.y,
@@ -227,17 +236,24 @@ pub(super) fn spawn_enemies(
         let def = &roster.enemies[pool[rng.index(pool.len())]];
         let a = rng.range(0.0, std::f32::consts::TAU);
         let r = rng.range(34.0, 42.0);
-        let pos = ground(&world, hpos + Vec3::new(a.cos(), 0.0, a.sin()) * r, hpos.y);
+        let pos = spawn_spot(
+            &nav,
+            &world,
+            hpos + Vec3::new(a.cos(), 0.0, a.sin()) * r,
+            hpos.y,
+        );
         spawn_enemy(&mut commands, &mut run, def, pos, hpos, false);
     }
 }
 
-/// The chase: straight at the hero, pushed apart from each other, stopped by crowd control, and
-/// swinging when in reach.
+/// The chase: at the hero, straight in the open and round trees and buildings by the nav grid's
+/// flow field, never into a blocked cell, pushed apart from each other, stopped by crowd control,
+/// and swinging when in reach.
 #[allow(clippy::type_complexity)]
 pub(super) fn move_enemies(
     time: Res<Time>,
     mut run: ResMut<Run>,
+    nav: Res<NavGrid>,
     world: WorldPoint,
     hero: Query<(Entity, &Transform), (With<Hero>, Without<Enemy>)>,
     mut enemies: Query<(Entity, &mut Transform, &mut Enemy, &mut MovementState), Without<Hero>>,
@@ -326,7 +342,7 @@ pub(super) fn move_enemies(
         // Strays far behind are brought back in front, as the reference genre does.
         if dist > 75.0 {
             let back = hpos + to_hero.normalize_or_zero() * 38.0;
-            tf.translation = ground(&world, back, hpos.y);
+            tf.translation = spawn_spot(&nav, &world, back, hpos.y);
             continue;
         }
 
@@ -340,7 +356,7 @@ pub(super) fn move_enemies(
             let dir = if e.fear_t > 0.0 {
                 -to_hero.normalize_or_zero()
             } else {
-                to_hero.normalize_or_zero()
+                nav.chase(pos, hpos)
             };
             if !contact || e.fear_t > 0.0 {
                 speed = e.speed * e.slow;
@@ -352,7 +368,8 @@ pub(super) fn move_enemies(
             }
         }
         let shove = push.get(&ent).copied().unwrap_or_default();
-        let mut next = pos + step * dt + shove * (dt * 8.0).min(0.5);
+        // The walk and the shove both stop at a blocked cell, sliding along it.
+        let mut next = nav.step(pos, pos + step * dt + shove * (dt * 8.0).min(0.5));
         next = ground(&world, next, pos.y);
         tf.translation = next;
         if speed > 0.0 {

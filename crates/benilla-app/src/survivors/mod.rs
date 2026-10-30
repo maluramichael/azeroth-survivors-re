@@ -18,6 +18,7 @@ mod hud;
 mod menu;
 mod minimap;
 mod mobility;
+mod nav;
 mod plates;
 mod profile;
 mod trainer;
@@ -51,6 +52,7 @@ impl Plugin for SurvivorsPlugin {
                 barrier::plugin,
                 menu::plugin,
                 charpanel::plugin,
+                nav::plugin,
             ))
             .init_state::<Phase>()
             .init_resource::<Rng>()
