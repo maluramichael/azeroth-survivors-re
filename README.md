@@ -20,6 +20,8 @@ as its own pull request. Newest first.
 
 | Feature | What it does | Screenshot | Upstream PR |
 | --- | --- | --- | --- |
+| Options window | **Options** on the pick screen and the pause screen: volume sliders for master, music, effects and ambience, sound on or off, and windowed or fullscreen. Saved in `benilla-config/config.toml`. | <img src="docs/screenshots/fork-options.jpg" width="320" alt="The options window over a paused run"> | none, built on `features` |
+| Chat window | Status lines at the bottom left as WoW's chat prints them: experience and gold (summed every few seconds), level ups, new spells and talents, bosses, and the run's payout. Fades when quiet, the wheel scrolls back. | <img src="docs/screenshots/fork-chatlog.jpg" width="320" alt="The chat window with experience, gold and level-up lines"> | none, built on `features` |
 | Target focus | **Tab** (or a click on the icon at the bottom right) cycles what the abilities aim at: the nearest enemy, the one with the lowest health, or the strongest (bosses first). | <img src="docs/screenshots/fork-focus.jpg" width="320" alt="The focus icon at the bottom right, set to Nearest"> | none, built on `features` |
 | Enemy pathfinding | Enemies walk around trees, rocks and buildings: a walkability grid scanned from the world's colliders and a flow field toward the hero, cheap enough for hundreds of enemies. | | none, built on `features` |
 | Hero collision | The hero no longer walks through trees, rocks and buildings; he stops at them and slides along, as the WoW player does. | | none, built on `features` |
