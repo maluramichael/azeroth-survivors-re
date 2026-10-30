@@ -1,10 +1,13 @@
 //! Auto-cast: every owned ability fires on its own cooldown at the targets its kind picks, with
 //! the spell's own visuals; damage lands when its missile would.
 
+use std::cmp::Ordering;
+
 use bevy::prelude::*;
 
 use super::data::{AbilityDef, Effect, Kind};
 use super::enemies::{self, Enemy, Loot};
+use super::focus::Focus;
 use super::hero::{self, Hero};
 use super::units::{self, flat, Fx, Marks, UnitSpec, COLOR_HEAL, COLOR_MELEE, COLOR_SPELL};
 use super::{Rng, Run, RunEntity};
@@ -79,6 +82,8 @@ struct Foe {
     e: Entity,
     pos: Vec3,
     hp: f32,
+    max_hp: f32,
+    boss: bool,
     dist: f32,
     radius: f32,
 }
@@ -147,12 +152,27 @@ fn roll(rng: &mut Rng, crit: f32, dmg: f32) -> (f32, bool) {
     }
 }
 
-fn nearest(foes: &[Foe], range: f32, n: usize) -> Vec<Foe> {
-    foes.iter()
-        .filter(|f| f.dist <= range + f.radius)
-        .take(n)
-        .copied()
-        .collect()
+/// How the focus ranks two foes, the better first; ties go to the nearer. Strongest goes by max
+/// health, not current, so a volley keeps its target while the blows land.
+fn by_focus(focus: Focus, a: &Foe, b: &Foe) -> Ordering {
+    match focus {
+        Focus::Nearest => Ordering::Equal,
+        Focus::Lowest => a.hp.total_cmp(&b.hp),
+        Focus::Strongest => b.boss.cmp(&a.boss).then(b.max_hp.total_cmp(&a.max_hp)),
+    }
+    .then(a.dist.total_cmp(&b.dist))
+}
+
+/// Up to `n` foes within `range`, the focus's first. `foes` is sorted by distance.
+fn pick(foes: &[Foe], range: f32, n: usize, focus: Focus) -> Vec<Foe> {
+    let in_range = foes.iter().filter(|f| f.dist <= range + f.radius).copied();
+    if focus == Focus::Nearest {
+        return in_range.take(n).collect();
+    }
+    let mut v: Vec<Foe> = in_range.collect();
+    v.sort_by(|a, b| by_focus(focus, a, b));
+    v.truncate(n);
+    v
 }
 
 fn toughest(foes: &[Foe], range: f32, n: usize) -> Vec<Foe> {
@@ -198,6 +218,7 @@ pub(super) fn cast_abilities(
     time: Res<Time>,
     mut run: ResMut<Run>,
     mut rng: ResMut<Rng>,
+    focus: Res<Focus>,
     spells: Option<Res<crate::ui_action::Spells>>,
     hero: Query<(Entity, &Transform), With<Hero>>,
     enemies: Query<(Entity, &Transform, &Enemy)>,
@@ -211,6 +232,7 @@ pub(super) fn cast_abilities(
     }
     let Ok((me, htf)) = hero.single() else { return };
     let hpos = htf.translation;
+    let focus = *focus;
     let stats = run.stats();
     let now = run.elapsed;
     let mut foes: Vec<Foe> = enemies
@@ -220,6 +242,8 @@ pub(super) fn cast_abilities(
             e,
             pos: tf.translation,
             hp: en.hp,
+            max_hp: en.max_hp,
+            boss: en.boss,
             dist: hero::reach(hpos, tf.translation),
             radius: en.radius,
         })
@@ -256,13 +280,16 @@ pub(super) fn cast_abilities(
                 } else {
                     def.range
                 };
-                let targets = if matches!(
-                    def.key,
-                    "pyroblast" | "aimed_shot" | "exorcism" | "starfire"
-                ) {
+                // The heavy hitters go for the toughest on their own; a focus the player chose
+                // outranks that.
+                let targets = if focus == Focus::Nearest
+                    && matches!(
+                        def.key,
+                        "pyroblast" | "aimed_shot" | "exorcism" | "starfire"
+                    ) {
                     toughest(&foes, reach, p.count)
                 } else {
-                    nearest(&foes, reach, p.count)
+                    pick(&foes, reach, p.count, focus)
                 };
                 if targets.is_empty() {
                     false
@@ -292,7 +319,9 @@ pub(super) fn cast_abilities(
             Kind::Nova | Kind::Cone => {
                 let mut targets = around(&foes, hpos, p.radius);
                 if def.kind == Kind::Cone {
-                    if let Some(first) = targets.first().copied() {
+                    // The cone points at the focus, then keeps whatever stands in it.
+                    if let Some(first) = pick(&targets, f32::INFINITY, 1, focus).first().copied()
+                    {
                         let aim = flat(first.pos - hpos).normalize_or_zero();
                         targets.retain(|f| {
                             let d = flat(f.pos - hpos);
@@ -361,7 +390,7 @@ pub(super) fn cast_abilities(
                     }
                 }
             }
-            Kind::Chain => match nearest(&foes, def.range, 1).first().copied() {
+            Kind::Chain => match pick(&foes, def.range, 1, focus).first().copied() {
                 None => false,
                 Some(first) => {
                     let mut chain = vec![first];
@@ -397,19 +426,26 @@ pub(super) fn cast_abilities(
                 }
             },
             Kind::Dot => {
-                let mut pool: Vec<Foe> = foes
-                    .iter()
-                    .filter(|f| f.dist <= def.range)
-                    .take(p.count * 3)
-                    .copied()
-                    .collect();
-                if pool.is_empty() {
-                    false
-                } else {
+                // Nearest spreads the curses over a few of the closest at random; a chosen
+                // focus puts them on its first picks.
+                let targets = if focus == Focus::Nearest {
+                    let mut pool: Vec<Foe> = foes
+                        .iter()
+                        .filter(|f| f.dist <= def.range)
+                        .take(p.count * 3)
+                        .copied()
+                        .collect();
                     let mut targets = Vec::with_capacity(p.count);
                     while targets.len() < p.count && !pool.is_empty() {
                         targets.push(pool.swap_remove(rng.index(pool.len())));
                     }
+                    targets
+                } else {
+                    pick(&foes, def.range, p.count, focus)
+                };
+                if targets.is_empty() {
+                    false
+                } else {
                     fx.cast(me, def.spell, &entities(&targets), None);
                     for f in &targets {
                         let delay = if speed > 0.0 { f.dist / speed } else { 0.0 };
@@ -440,7 +476,7 @@ pub(super) fn cast_abilities(
                 }
             }
             Kind::Orbit => {
-                let targets = nearest(&foes, p.radius, p.count);
+                let targets = pick(&foes, p.radius, p.count, focus);
                 if targets.is_empty() {
                     false
                 } else {
@@ -539,6 +575,7 @@ pub(super) fn tick_areas(
     time: Res<Time>,
     run: Res<Run>,
     mut rng: ResMut<Rng>,
+    focus: Res<Focus>,
     spells: Option<Res<crate::ui_action::Spells>>,
     mut areas: Query<(Entity, &Transform, &mut GroundArea)>,
     mut totems: Query<(Entity, &Transform, &mut Totem), Without<GroundArea>>,
@@ -560,6 +597,8 @@ pub(super) fn tick_areas(
             e,
             pos: tf.translation,
             hp: en.hp,
+            max_hp: en.max_hp,
+            boss: en.boss,
             dist: 0.0,
             radius: en.radius,
         })
@@ -627,12 +666,17 @@ pub(super) fn tick_areas(
             }
         } else {
             totem.tick = 1.0;
+            // In the totem's range, the focus's first, measured from the totem.
             let target = live
                 .iter()
-                .map(|f| (flat(f.pos - pos).length(), f))
-                .filter(|(d, _)| *d <= totem.range)
-                .min_by(|a, b| a.0.total_cmp(&b.0));
-            let Some((dist, f)) = target else { continue };
+                .map(|f| Foe {
+                    dist: flat(f.pos - pos).length(),
+                    ..*f
+                })
+                .filter(|f| f.dist <= totem.range)
+                .min_by(|a, b| by_focus(*focus, a, b));
+            let Some(f) = target else { continue };
+            let dist = f.dist;
             fx.cast(e, totem.cast, &[f.e], None);
             let speed = spells
                 .as_deref()
@@ -811,5 +855,72 @@ pub(super) fn apply_hits(
                 marks.flush(e, guid.0, &mut store, &mut fields);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn foe(dist: f32, hp: f32, max_hp: f32, boss: bool) -> Foe {
+        Foe {
+            e: Entity::PLACEHOLDER,
+            pos: Vec3::ZERO,
+            hp,
+            max_hp,
+            boss,
+            dist,
+            radius: 0.0,
+        }
+    }
+
+    /// Sorted by distance, as `cast_abilities` hands them over.
+    fn horde() -> Vec<Foe> {
+        vec![
+            foe(2.0, 90.0, 100.0, false),
+            foe(4.0, 10.0, 100.0, false),
+            foe(6.0, 50.0, 400.0, false),
+            foe(8.0, 900.0, 1000.0, true),
+            foe(30.0, 1.0, 100.0, false),
+        ]
+    }
+
+    fn hps(v: &[Foe]) -> Vec<f32> {
+        v.iter().map(|f| f.hp).collect()
+    }
+
+    #[test]
+    fn nearest_takes_the_closest_in_range() {
+        let got = pick(&horde(), 10.0, 2, Focus::Nearest);
+        assert_eq!(hps(&got), [90.0, 10.0]);
+    }
+
+    #[test]
+    fn lowest_orders_by_current_health_within_range() {
+        // The foe at 30 yd has the least health but is out of range.
+        let got = pick(&horde(), 10.0, 3, Focus::Lowest);
+        assert_eq!(hps(&got), [10.0, 50.0, 90.0]);
+    }
+
+    #[test]
+    fn strongest_puts_bosses_first_then_max_health() {
+        let got = pick(&horde(), 10.0, 3, Focus::Strongest);
+        assert_eq!(hps(&got), [900.0, 50.0, 90.0]);
+    }
+
+    #[test]
+    fn ties_fall_to_the_nearer() {
+        let foes = vec![foe(1.0, 5.0, 10.0, false), foe(2.0, 5.0, 10.0, false)];
+        for focus in [Focus::Lowest, Focus::Strongest] {
+            let got = pick(&foes, 10.0, 2, focus);
+            assert_eq!(got[0].dist, 1.0);
+        }
+    }
+
+    #[test]
+    fn range_counts_the_foes_radius() {
+        let mut far = foe(11.0, 1.0, 1.0, false);
+        far.radius = 1.5;
+        assert_eq!(pick(&[far], 10.0, 1, Focus::Lowest).len(), 1);
     }
 }

@@ -12,6 +12,7 @@ mod charpanel;
 mod data;
 mod enemies;
 mod fill;
+mod focus;
 mod grade;
 mod hero;
 mod hud;
@@ -53,6 +54,7 @@ impl Plugin for SurvivorsPlugin {
                 menu::plugin,
                 charpanel::plugin,
                 nav::plugin,
+                focus::plugin,
             ))
             .init_state::<Phase>()
             .init_resource::<Rng>()
