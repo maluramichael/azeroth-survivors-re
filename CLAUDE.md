@@ -18,6 +18,25 @@
 - When a feature is done, merge its branch into `features`, then update the README table there.
   New upstream commits are merged into `features` as well.
 
+## Feature rounds with several agents in one tree
+
+Upstream merges nothing so far, so bigger game features are built straight on `features` in
+the main tree, not as upstream PR branches. One tree means one `target/` and one incremental
+build. A round runs like this:
+
+1. The orchestrator (the main session) lays the shared groundwork itself first: data types,
+   resources and the hooks every feature needs, plus an empty module per feature already
+   registered in `survivors/mod.rs` (`pub(super) fn plugin(app: &mut App)`). Commit it.
+2. Cheap implementer agents (Sonnet) run in parallel, one feature each, in the background. Each
+   brief lists exactly which files or functions the agent owns; agents edit only those (Edit,
+   never a whole-file rewrite of a shared file), never touch `mod.rs`, run no git command that
+   changes state, never launch the game, and check with
+   `cargo check -p benilla-app --profile play`, ignoring errors in files they do not own.
+3. The orchestrator then builds once (`cargo survivors`), fixes what breaks between features,
+   runs the game (auto mode with `WOW_SURVIVORS_SHOTS`) and looks at the screenshots, reads the
+   diffs, sends targeted follow-ups to the agents, and commits one commit per feature with its
+   README row.
+
 ## Every new feature gets a screenshot and a README row
 
 - Take a screenshot that shows the feature. `WOW_SURVIVORS_AUTO=<class>[:idle|:all|:late]`,
@@ -29,4 +48,5 @@
   one or two sentences, the screenshot at `width="320"`, and the upstream PR link. A change with
   nothing to show (a fix, tooling) gets a row without a screenshot.
 - README rows and screenshots are committed on `features` only, never on a feature branch: they
-  would break upstream's one-change-per-PR rule.
+  would break upstream's one-change-per-PR rule. A feature built straight on `features` has no
+  upstream PR; its PR column says so.
