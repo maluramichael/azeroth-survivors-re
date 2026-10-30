@@ -10,10 +10,12 @@ workspace = true
 
 [features]
 default = ["dev"]
-dev = ["benilla-app/dev"]
+dev = ["benilla-app/dev", "benilla-formats/dev"]
 
 [dependencies]
 benilla-app = { path = "../benilla-app", default-features = false }
+benilla-formats = { path = "../benilla-formats", default-features = false }
+clap.workspace = true
 
 [build-dependencies]
 benilla-buildstamp = { path = "../benilla-buildstamp" }
