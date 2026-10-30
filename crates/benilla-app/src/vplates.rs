@@ -137,7 +137,7 @@ const CON_GRAY: [f32; 4] = [127.0 / 255.0, 127.0 / 255.0, 127.0 / 255.0, 1.0];
 
 /// The con colour (`0x7cbd50`): +5 or more red, +3/+4 orange, -2..+2 yellow, then green until
 /// the shared grey test ([`unit_is_grey`], table `[0x81dda8]`) says gray.
-fn con_color(pl_level: u32, unit_level: u32) -> [f32; 4] {
+pub(crate) fn con_color(pl_level: u32, unit_level: u32) -> [f32; 4] {
     let diff = i64::from(unit_level) - i64::from(pl_level);
     if diff >= 5 {
         CON_RED

@@ -1,6 +1,7 @@
 //! Enemy health bars: the WoW nameplate (V toggles, as in 1.12) over the horde during a run. A
 //! fixed pool of UI nodes is seated on the nearest enemies every frame and the bosses always get
-//! one, so a few hundred enemies cost a bounded number of nodes.
+//! one, so a few hundred enemies cost a bounded number of nodes. The level sits at the plate's
+//! right end as in 1.12, coloured by the con against the class's character level.
 
 use benilla_ui::script::nameplate;
 use benilla_world::view::WorldCamera;
@@ -9,9 +10,11 @@ use bevy::prelude::*;
 use super::enemies::{self, Enemy};
 use super::hero::Hero;
 use super::hud::{HudFont, GOLD_TONE};
-use super::Phase;
+use super::profile::Profile;
+use super::{Phase, Selection};
 use crate::vplates::{
-    gx_px, plate_basis, text_px, BAR_H, BAR_OFF_X, BAR_OFF_Y, BAR_W, PLATE_H, PLATE_W,
+    con_color, gx_px, plate_basis, text_px, BAR_H, BAR_OFF_X, BAR_OFF_Y, BAR_W, LEVEL_H,
+    LEVEL_OFF_X, LEVEL_OFF_Y, PLATE_H, PLATE_W,
 };
 
 /// Bars at once on the horde, the nearest to the hero; bosses come on top of this.
@@ -53,6 +56,8 @@ struct Slot {
     fill: Entity,
     name_box: Entity,
     name: Entity,
+    level_box: Entity,
+    level: Entity,
 }
 
 #[derive(Resource)]
@@ -84,6 +89,16 @@ struct Cand {
     entity: Entity,
     hp: f32,
     name: &'static str,
+    level: u32,
+}
+
+/// One bar seated this frame.
+struct Seat {
+    screen: Vec2,
+    boss: bool,
+    hp: f32,
+    name: &'static str,
+    level: u32,
 }
 
 fn toggle(keys: Res<ButtonInput<KeyCode>>, mut plates: ResMut<Plates>) {
@@ -100,8 +115,8 @@ fn teardown(mut commands: Commands, mut plates: ResMut<Plates>) {
     plates.slots.clear();
 }
 
-/// One bar's nodes under `root`: the fill under the border, and a name seated on the plate's
-/// centre line for a boss.
+/// One bar's nodes under `root`: the fill under the border, a name seated on the plate's centre
+/// line for a boss, and the level at the right end.
 fn spawn_slot(
     commands: &mut Commands,
     root: Entity,
@@ -117,7 +132,23 @@ fn spawn_slot(
         height: Val::Percent(100.0),
         ..absolute()
     };
-    let mut ids = [Entity::PLACEHOLDER; 5];
+    let text = |font_size: f32| {
+        (
+            Text::new(""),
+            TextFont {
+                font: font.clone(),
+                font_size,
+                ..default()
+            },
+            TextColor(GOLD_TONE),
+            TextShadow {
+                offset: Vec2::new(1.0, 1.0),
+                color: Color::BLACK,
+            },
+            TextLayout::new(Justify::Center, LineBreak::NoWrap),
+        )
+    };
+    let mut ids = [Entity::PLACEHOLDER; 7];
     commands.entity(root).with_children(|root| {
         let mut frame = root.spawn((absolute(), Visibility::Hidden));
         ids[0] = frame.id();
@@ -148,32 +179,29 @@ fn spawn_slot(
             ));
             ids[3] = name_box.id();
             name_box.with_children(|b| {
-                ids[4] = b
-                    .spawn((
-                        Text::new(""),
-                        TextFont {
-                            font: font.clone(),
-                            font_size: 11.0,
-                            ..default()
-                        },
-                        TextColor(GOLD_TONE),
-                        TextShadow {
-                            offset: Vec2::new(1.0, 1.0),
-                            color: Color::BLACK,
-                        },
-                        TextLayout::new(Justify::Center, LineBreak::NoWrap),
-                    ))
-                    .id();
+                ids[4] = b.spawn(text(11.0)).id();
+            });
+            let mut level_box = plate.spawn(Node {
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                overflow: Overflow::visible(),
+                ..absolute()
+            });
+            ids[5] = level_box.id();
+            level_box.with_children(|b| {
+                ids[6] = b.spawn(text(10.0)).id();
             });
         });
     });
-    let [frame, bar, fill, name_box, name] = ids;
+    let [frame, bar, fill, name_box, name, level_box, level] = ids;
     Slot {
         frame,
         bar,
         fill,
         name_box,
         name,
+        level_box,
+        level,
     }
 }
 
@@ -193,6 +221,7 @@ fn drive(
     assets: Option<ResMut<benilla_assets::WorldAssets>>,
     mut images: ResMut<Assets<Image>>,
     hero: Query<&Transform, With<Hero>>,
+    (selection, profile): (Res<Selection>, Option<Res<Profile>>),
     cams: Query<(&Camera, &Transform), With<WorldCamera>>,
     enemies: Query<(Entity, &Enemy, &Transform)>,
     anchor_q: (
@@ -203,12 +232,16 @@ fn drive(
         Query<(), With<crate::entities::mount::MountChild>>,
     ),
     mut nodes: Query<(&mut Node, &mut Visibility)>,
-    mut texts: Query<(&mut Text, &mut TextFont)>,
+    mut texts: Query<(&mut Text, &mut TextFont, &mut TextColor)>,
     mut cands: Local<Vec<Cand>>,
 ) {
     let plates = &mut *plates;
-    // Chosen bars, in screen position and (bar size scale, fill, name) terms.
-    let mut seats: Vec<(Vec2, bool, f32, &'static str)> = Vec::new();
+    let mut seats: Vec<Seat> = Vec::new();
+    // The con compares against the class's character, the level that also opens the zones.
+    let my_level = selection
+        .class
+        .zip(profile.as_deref())
+        .map_or(1, |(class, p)| p.character(class).level);
     let view = cams
         .single()
         .ok()
@@ -227,6 +260,7 @@ fn drive(
                     entity,
                     hp: (e.hp / e.max_hp.max(1.0)).clamp(0.0, 1.0),
                     name: e.def.name,
+                    level: e.def.level,
                 });
             }
             // Bosses first, then the nearest; the horde stops at the cap.
@@ -254,7 +288,13 @@ fn drive(
                 else {
                     continue;
                 };
-                seats.push((screen, c.boss, c.hp, c.name));
+                seats.push(Seat {
+                    screen,
+                    boss: c.boss,
+                    hp: c.hp,
+                    name: c.name,
+                    level: c.level,
+                });
             }
         }
     }
@@ -298,7 +338,14 @@ fn drive(
         let Ok((mut frame, mut vis)) = nodes.get_mut(slot.frame) else {
             continue;
         };
-        let Some(&(screen, boss, hp, name)) = seats.get(i) else {
+        let Some(&Seat {
+            screen,
+            boss,
+            hp,
+            name,
+            level,
+        }) = seats.get(i)
+        else {
             set(&mut *vis, Visibility::Hidden);
             continue;
         };
@@ -333,8 +380,26 @@ fn drive(
                 },
             );
         }
+        // The level's centre at the plate's bottom right, pulled in and up by the client's offsets.
+        let level_h = text_px(LEVEL_H * k, basis) / s;
+        if let Ok((mut b, _)) = nodes.get_mut(slot.level_box) {
+            let w = level_h * 3.0;
+            set(&mut b.width, Val::Px(w));
+            set(&mut b.height, Val::Px(level_h));
+            set(&mut b.left, Val::Px(pw - gx(LEVEL_OFF_X) - w / 2.0));
+            set(&mut b.top, Val::Px(ph - gx(LEVEL_OFF_Y) - level_h / 2.0));
+        }
+        if let Ok((mut text, mut tf, mut color)) = texts.get_mut(slot.level) {
+            let label = level.to_string();
+            if text.0 != label {
+                text.0 = label;
+            }
+            set(&mut tf.font_size, level_h);
+            let [r, g, b, a] = con_color(my_level, level);
+            set(&mut color.0, Color::srgba(r, g, b, a));
+        }
         if boss {
-            if let Ok((mut text, mut tf)) = texts.get_mut(slot.name) {
+            if let Ok((mut text, mut tf, _)) = texts.get_mut(slot.name) {
                 if text.0 != name {
                     text.0 = name.to_string();
                 }
