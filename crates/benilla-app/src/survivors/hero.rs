@@ -34,8 +34,10 @@ const ORBIT_RATE: f32 = 0.008;
 /// Elevation clamp (radians): ~10°..~83° above the horizon, so the camera never dives underground.
 const PITCH_MIN: f32 = 0.18;
 const PITCH_MAX: f32 = 1.45;
-/// The locked view's tilt.
-const FIXED_PITCH: f32 = 61.0 * std::f32::consts::PI / 180.0;
+/// The tilt a run starts at.
+const START_PITCH: f32 = 61.0 * std::f32::consts::PI / 180.0;
+/// Left and right arrow turn the camera this fast, radians per second: WoW's keyboard turn rate.
+const TURN_RATE: f32 = std::f32::consts::PI;
 /// Wheel zoom range, yards from the hero's shoulders.
 const ZOOM_MIN: f32 = 1.5;
 const ZOOM_MAX: f32 = 70.0;
@@ -58,16 +60,6 @@ const MENU_PITCH_MAX: f32 = 0.5;
 /// How fast the menu zoom settles on its target, per second.
 const MENU_ZOOM_SMOOTH: f32 = 9.0;
 
-/// Whether the camera is locked; `C` toggles it.
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
-pub(super) enum CamMode {
-    /// Locked top-down (58°), laptop-friendly — the original feel.
-    #[default]
-    Fixed,
-    /// Unlocked: a mouse drag swings and tilts it around the hero.
-    Orbit,
-}
-
 #[derive(Resource)]
 pub(super) struct CamRig {
     pub dist: f32,
@@ -76,7 +68,6 @@ pub(super) struct CamRig {
     pub yaw: f32,
     /// Elevation above the horizon (radians), clamped so the camera never dives underground.
     pub pitch: f32,
-    pub mode: CamMode,
     /// Pick-screen camera distance as drawn, easing toward `menu_zoom`; apart from `dist` so the
     /// menu zoom leaves the game camera alone.
     pub menu_dist: f32,
@@ -96,8 +87,7 @@ impl Default for CamRig {
             dist: 30.0,
             orbit: 0.6,
             yaw: 0.0,
-            pitch: FIXED_PITCH,
-            mode: CamMode::Fixed,
+            pitch: START_PITCH,
             menu_dist: MENU_DIST,
             menu_zoom: MENU_DIST,
             menu_pitch: MENU_PITCH,
@@ -215,8 +205,8 @@ pub(super) fn daylight(debug: Option<ResMut<benilla_world::dev_state::DebugState
     }
 }
 
-/// The ground under the mouse cursor, `None` with the cursor off the window. The locked camera's
-/// hero faces it, and the aimed mobility spells (Blink, Charge) go toward it.
+/// The ground under the mouse cursor, `None` with the cursor off the window. The aimed mobility
+/// spells (Blink, Charge) go toward it.
 #[derive(Resource, Default)]
 pub(super) struct AimPoint(pub(super) Option<Vec3>);
 
@@ -268,7 +258,6 @@ pub(super) fn drive_hero(
     run: Res<Run>,
     selection: Res<Selection>,
     rig: Res<CamRig>,
-    aim: Res<AimPoint>,
     world: WorldPoint,
     auto: Option<Res<super::auto::Auto>>,
     mut player: ResMut<crate::player::Player>,
@@ -278,6 +267,9 @@ pub(super) fn drive_hero(
         Ok((mut tf, mut mv, mut hm)) => {
             let dt = time.delta_secs();
             let mut dir = Vec3::ZERO;
+            // Under the player's keys the hero faces the camera's forward and strafes or
+            // backpedals against it; driven, he faces where he runs.
+            let mut face = None;
             if let Some(auto) = auto
                 .as_deref()
                 .filter(|_| *phase.get() == Phase::Playing && run.dead_t.is_none())
@@ -290,46 +282,29 @@ pub(super) fn drive_hero(
                 if keys.any_pressed([KeyCode::KeyS, KeyCode::ArrowDown]) {
                     dir.z += 1.0;
                 }
-                if keys.any_pressed([KeyCode::KeyA, KeyCode::ArrowLeft]) {
+                // A and D strafe; the left and right arrows turn the camera instead
+                // ([`place_camera`]).
+                if keys.pressed(KeyCode::KeyA) {
                     dir.x -= 1.0;
                 }
-                if keys.any_pressed([KeyCode::KeyD, KeyCode::ArrowRight]) {
+                if keys.pressed(KeyCode::KeyD) {
                     dir.x += 1.0;
                 }
-                // In orbit mode WASD is camera-relative; in fixed mode it stays world-relative.
-                if rig.mode == CamMode::Orbit {
-                    let (sy, cy) = rig.yaw.sin_cos();
-                    dir = Vec3::new(dir.x * cy + dir.z * sy, 0.0, dir.z * cy - dir.x * sy);
-                }
+                // Camera-relative.
+                let (sy, cy) = rig.yaw.sin_cos();
+                dir = Vec3::new(dir.x * cy + dir.z * sy, 0.0, dir.z * cy - dir.x * sy);
+                face = Some(Vec3::new(-sy, 0.0, -cy));
             }
             let mut pos = tf.translation;
-            // Locked, the hero faces the cursor and WASD moves him under it, so he backpedals and
-            // strafes as a player does; unlocked (or driven), he faces where he runs.
-            let face = (rig.mode == CamMode::Fixed
-                && auto.is_none()
-                && *phase.get() == Phase::Playing
-                && run.dead_t.is_none())
-            .then(|| aim.0.map(|a| flat(a - pos)))
-            .flatten()
-            .filter(|d| d.length() > 0.5)
-            .map(|d| d.normalize());
-            if let Some(look) = face {
-                let target = Quat::from_rotation_y(yaw_toward(look));
-                tf.rotation = tf.rotation.slerp(target, (dt * 20.0).min(1.0));
-            }
             if dir != Vec3::ZERO && dt > 0.0 {
                 let dir = dir.normalize();
                 let speed = run.stats().speed * run.haste_mult();
                 pos += dir * speed * dt;
                 mv.speed = speed;
-                mv.flags = match face {
-                    Some(look) => gait(look, dir),
-                    None => {
-                        let target = Quat::from_rotation_y(yaw_toward(dir));
-                        tf.rotation = tf.rotation.slerp(target, (dt * 20.0).min(1.0));
-                        move_flags::FORWARD
-                    }
-                };
+                let look = face.unwrap_or(dir);
+                mv.flags = gait(look, dir);
+                let target = Quat::from_rotation_y(yaw_toward(look));
+                tf.rotation = tf.rotation.slerp(target, (dt * 20.0).min(1.0));
             } else if mv.speed != 0.0 || mv.flags != 0 {
                 mv.speed = 0.0;
                 mv.flags = 0;
@@ -407,8 +382,8 @@ pub(super) fn drop_stray_buttons(
 }
 
 /// At the menu a slow orbit the player can take over: a left drag that began over the scene swings
-/// and tilts it, the wheel zooms, and the orbit resumes where it was left. In play, top-down until
-/// `C` unlocks it to swing and tilt.
+/// and tilts it, the wheel zooms, and the orbit resumes where it was left. In play, a drag with
+/// either mouse button swings and tilts it around the hero, as in WoW.
 pub(super) fn place_camera(
     time: Res<Time<Real>>,
     phase: Res<State<Phase>>,
@@ -423,18 +398,6 @@ pub(super) fn place_camera(
     hero: Query<&Transform, (With<Hero>, Without<WorldCamera>)>,
     mut cams: Query<&mut Transform, With<WorldCamera>>,
 ) {
-    // `C` unlocks the camera to swing and tilt; locking it again snaps back to the top-down view,
-    // so world-relative WASD lines up with the screen again.
-    if keys.just_pressed(KeyCode::KeyC) {
-        rig.mode = match rig.mode {
-            CamMode::Fixed => CamMode::Orbit,
-            CamMode::Orbit => {
-                rig.yaw = 0.0;
-                rig.pitch = FIXED_PITCH;
-                CamMode::Fixed
-            }
-        };
-    }
     // With no hero yet, the focus `drive_hero` grounded.
     let focus = hero.single().map_or(player.pos, |t| t.translation);
     let menu = *phase.get() == Phase::Menu;
@@ -486,11 +449,17 @@ pub(super) fn place_camera(
         }
         (eye, look)
     } else {
-        // Unlocked, either mouse button drags the camera around the hero, as in WoW.
-        if rig.mode == CamMode::Orbit && mouse.any_pressed([MouseButton::Left, MouseButton::Right])
-        {
+        // Either mouse button drags the camera around the hero, as in WoW.
+        if mouse.any_pressed([MouseButton::Left, MouseButton::Right]) {
             rig.yaw -= motion.delta.x * ORBIT_RATE;
             rig.pitch = (rig.pitch + motion.delta.y * ORBIT_RATE).clamp(PITCH_MIN, PITCH_MAX);
+        }
+        // The left and right arrows turn it, so one hand runs and strafes on WASD while the
+        // other turns.
+        if *phase.get() == Phase::Playing {
+            let turn = f32::from(u8::from(keys.pressed(KeyCode::ArrowLeft)))
+                - f32::from(u8::from(keys.pressed(KeyCode::ArrowRight)));
+            rig.yaw += turn * TURN_RATE * dt;
         }
         let (sy, cy) = rig.yaw.sin_cos();
         let (sp, cp) = rig.pitch.sin_cos();
@@ -596,12 +565,11 @@ pub(super) fn hero_vitals(
     }
 }
 
-/// The ground-plane distance from the hero, the measure every range in the mode uses.
 /// The movement flags for running `dir` while facing `look`: forward, backpedal or strafe, by
 /// which quarter the run falls in, so the walk, backpedal and strafe animations play.
 fn gait(look: Vec3, dir: Vec3) -> u32 {
     let ahead = look.dot(dir);
-    // Positive when `dir` is to the hero's left: WoW faces −Z with +X on the right.
+    // Positive when `dir` is to the hero's left: WoW faces -Z with +X on the right.
     let left = look.cross(dir).y;
     let quarter = std::f32::consts::FRAC_1_SQRT_2;
     if ahead >= quarter {
@@ -615,6 +583,7 @@ fn gait(look: Vec3, dir: Vec3) -> u32 {
     }
 }
 
+/// The ground-plane distance from the hero, the measure every range in the mode uses.
 pub(super) fn reach(hero: Vec3, other: Vec3) -> f32 {
     flat(other - hero).length()
 }
