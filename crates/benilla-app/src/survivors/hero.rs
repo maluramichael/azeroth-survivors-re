@@ -249,7 +249,39 @@ pub(super) fn aim_cursor(
     }
 }
 
-/// WASD over the terrain within the battleground's leash, and the streaming focus on the hero.
+/// The hero's collision capsule: the player's radius, and a height that with [`BODY_LIFT`] reaches
+/// the player's 2.03 yd.
+const BODY_RADIUS: f32 = 1.0 / 3.0;
+const BODY_HEIGHT: f32 = 1.5;
+/// How far the capsule's foot hangs above the hero's feet (yd). The height follows the terrain
+/// whatever the walls say, so kerbs, steps and ground lumps below this are walked over, and a jump
+/// clears more.
+const BODY_LIFT: f32 = 0.5;
+
+/// Moves `feet` by `vel` over `dt`, stopped and slid along by the solid world (trees, rocks,
+/// buildings, cliffs): the walk of `player/mover.rs`, minus its step and ground logic. Only the
+/// horizontal part comes back; the caller owns the height.
+fn collide_step(
+    collision: &benilla_world::collision::WorldCollision,
+    body: &avian3d::prelude::Collider,
+    feet: Vec3,
+    vel: Vec3,
+    dt: std::time::Duration,
+) -> Vec3 {
+    let from = feet + Vec3::Y * (BODY_LIFT + BODY_HEIGHT * 0.5);
+    let out = collision.slide_body(
+        body,
+        from,
+        vel,
+        dt,
+        &avian3d::character_controller::move_and_slide::MoveAndSlideConfig::default(),
+        |_| avian3d::character_controller::move_and_slide::MoveAndSlideHitResponse::Accept,
+    );
+    feet + Vec3::new(out.position.x - from.x, 0.0, out.position.z - from.z)
+}
+
+/// WASD over the terrain within the battleground's leash, and the streaming focus on the hero. The
+/// walk is blocked by the world's colliders ([`collide_step`]), auto mode's too.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn drive_hero(
     time: Res<Time>,
@@ -259,6 +291,8 @@ pub(super) fn drive_hero(
     selection: Res<Selection>,
     rig: Res<CamRig>,
     world: WorldPoint,
+    collision: benilla_world::collision::WorldCollision,
+    mut body: Local<Option<avian3d::prelude::Collider>>,
     auto: Option<Res<super::auto::Auto>>,
     mut player: ResMut<crate::player::Player>,
     mut hero: Query<(&mut Transform, &mut MovementState, &mut Hero)>,
@@ -299,7 +333,13 @@ pub(super) fn drive_hero(
             if dir != Vec3::ZERO && dt > 0.0 {
                 let dir = dir.normalize();
                 let speed = run.stats().speed * run.haste_mult();
-                pos += dir * speed * dt;
+                let body = body.get_or_insert_with(|| {
+                    avian3d::prelude::Collider::capsule(
+                        BODY_RADIUS,
+                        BODY_HEIGHT - 2.0 * BODY_RADIUS,
+                    )
+                });
+                pos = collide_step(&collision, body, pos, dir * speed, time.delta());
                 mv.speed = speed;
                 let look = face.unwrap_or(dir);
                 mv.flags = gait(look, dir);
