@@ -21,6 +21,8 @@
 | Playing | — | abilities cast themselves (no aim) |
 | Level up | **1 / 2 / 3** (or click a card) | pick an upgrade |
 | Paused | **Esc** | resume |
+| Menu / Paused | **Options** button | sound volumes (drag a slider), mute, windowed or fullscreen; kept across restarts |
+| Options | **Esc** (or **Close**) | close the options |
 | Game over | **Enter** (or **Play again**) | back to the menu |
 | Any | minimap **+ / −** / minimize | minimap zoom / collapse |
 

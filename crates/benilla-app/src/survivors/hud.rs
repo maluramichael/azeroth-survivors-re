@@ -1142,13 +1142,15 @@ pub(super) fn keys(
     mut run: ResMut<Run>,
     profile: Res<Profile>,
     trainer: Res<super::trainer::TrainerUi>,
+    options: Res<super::options::OptionsUi>,
     mut next: ResMut<NextState<Phase>>,
 ) {
     match phase.get() {
         Phase::Menu => {
-            // Enter World by key, but not from behind the open trainer.
+            // Enter World by key, but not from behind the open trainer or options.
             if keys.just_pressed(KeyCode::Enter)
                 && !trainer.open
+                && !options.open
                 && start_run(&mut run, &mut selection, &profile)
             {
                 next.set(Phase::Playing);
@@ -1160,7 +1162,8 @@ pub(super) fn keys(
             }
         }
         Phase::Paused => {
-            if keys.just_pressed(KeyCode::Escape) {
+            // With the options open Esc closes them, not the pause.
+            if keys.just_pressed(KeyCode::Escape) && !options.open {
                 next.set(Phase::Playing);
             }
         }

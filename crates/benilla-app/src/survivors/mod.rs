@@ -21,6 +21,7 @@ mod menu;
 mod minimap;
 mod mobility;
 mod nav;
+mod options;
 mod plates;
 mod profile;
 mod trainer;
@@ -57,6 +58,7 @@ impl Plugin for SurvivorsPlugin {
                 nav::plugin,
                 focus::plugin,
                 chatlog::plugin,
+                options::plugin,
             ))
             .init_state::<Phase>()
             .init_resource::<Rng>()
