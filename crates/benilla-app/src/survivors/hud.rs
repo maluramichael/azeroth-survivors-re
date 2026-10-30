@@ -299,7 +299,7 @@ fn coin_icon(size: f32) -> impl Bundle {
     )
 }
 
-fn spell_name(spells: Option<&crate::ui_action::Spells>, spell: u32, fallback: &str) -> String {
+pub(super) fn spell_name(spells: Option<&crate::ui_action::Spells>, spell: u32, fallback: &str) -> String {
     spells
         .and_then(|s| s.catalog.get(spell))
         .map(|d| d.name.clone())
@@ -1836,7 +1836,7 @@ fn compact(v: f64) -> String {
 }
 
 /// A number as the tooltips print it: whole when near enough, else to one decimal.
-fn num(v: f32) -> String {
+pub(super) fn num(v: f32) -> String {
     if (v - v.round()).abs() < 0.05 {
         format!("{}", v.round() as i64)
     } else {
@@ -1844,7 +1844,7 @@ fn num(v: f32) -> String {
     }
 }
 
-fn pct(v: f32) -> String {
+pub(super) fn pct(v: f32) -> String {
     format!("{}%", num(v * 100.0))
 }
 
