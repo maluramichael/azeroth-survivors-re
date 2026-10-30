@@ -14,7 +14,8 @@ use clap::Parser;
 #[command(version)]
 struct Cli {
     /// The client's `Data` folder (the one holding the `.MPQ` files), or the WoW folder above it.
-    /// Sets `WOW_DATA`.
+    /// Sets `WOW_DATA`. Without it and without `WOW_DATA`, the checkout's `wow-data` folder, where
+    /// `make fetch-data` puts the client, is used when it exists.
     #[arg(long, value_name = "PATH")]
     data: Option<PathBuf>,
 
@@ -46,7 +47,11 @@ fn main() -> AppExit {
     let cli = Cli::parse();
 
     // Nothing else runs yet, so setting the environment here races no other thread.
-    if let Some(dir) = cli.data {
+    let fetched = PathBuf::from(env!("BENILLA_PROJECT_DIR")).join("wow-data");
+    let data = cli.data.or_else(|| {
+        (std::env::var_os("WOW_DATA").is_none() && fetched.is_dir()).then_some(fetched)
+    });
+    if let Some(dir) = data {
         // Accept the WoW folder as well as its `Data` folder below it.
         let data = dir.join("Data");
         std::env::set_var("WOW_DATA", if data.is_dir() { data } else { dir });
@@ -63,9 +68,7 @@ fn main() -> AppExit {
         for path in benilla_formats::candidates() {
             eprintln!("  {}", path.display());
         }
-        eprintln!(
-            "Pass --data <PATH>, set WOW_DATA, or run `make fetch-data` and use --data wow-data."
-        );
+        eprintln!("Pass --data <PATH>, set WOW_DATA, or run `make fetch-data` to fill wow-data.");
         return AppExit::error();
     }
 
