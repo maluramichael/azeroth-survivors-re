@@ -229,6 +229,20 @@ fn entities(foes: &[Foe]) -> Vec<Entity> {
     foes.iter().map(|f| f.e).collect()
 }
 
+/// The spell whose visual plays on the hero each time an aura ability pulses, by ability key;
+/// `None` when the ability's own spell already shows on the caster. None of these ids could be
+/// checked against Spell.dbc, so they are all unverified.
+fn aura_caster_visual(key: &str) -> Option<u32> {
+    match key {
+        // Hellfire Rank 1, the channelled spell with the ring of fire around the caster; 5857
+        // ("Hellfire Effect") is only the damage tick. Unverified (11683 and 11684 are ranks 2, 3).
+        "hellfire" => Some(1949),
+        // Sweeping Strikes itself, as a cast kit on the caster. Unverified that it has one.
+        "sweeping_strikes" => Some(12292),
+        _ => None,
+    }
+}
+
 pub(super) fn cast_abilities(
     mut commands: Commands,
     time: Res<Time>,
@@ -485,6 +499,11 @@ pub(super) fn cast_abilities(
                 if targets.is_empty() {
                     false
                 } else {
+                    // The damage tick spell has no caster visual of its own, so the ring
+                    // around the hero is a second spell, played on the hero each pulse.
+                    if let Some(visual) = aura_caster_visual(def.key) {
+                        fx.cast(me, visual, &[me], None);
+                    }
                     for f in targets.iter().take(6) {
                         fx.impact(f.e, def.spell);
                     }
