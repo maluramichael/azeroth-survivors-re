@@ -194,6 +194,54 @@ pub(super) fn spawn_hero(
     e
 }
 
+/// Marks the puppet a co-op host keeps for a guest. It is a body like the hero's but carries no
+/// [`Hero`], so none of the systems that expect exactly one hero see it.
+#[derive(Component)]
+pub(super) struct Peer {
+    pub player: u8,
+}
+
+/// What a hero of this class and look is built from, as [`spawn_hero`] builds it.
+pub(super) fn hero_spec(
+    class: &'static ClassDef,
+    display: u32,
+    race: u8,
+    sex: u8,
+    serial: u64,
+) -> UnitSpec<'static> {
+    UnitSpec {
+        serial,
+        display,
+        scale: 1.0,
+        level: 60,
+        faction: units::FACTION_FRIENDLY,
+        bytes0: u32::from(race)
+            | u32::from(class.id) << 8
+            | u32::from(sex) << 16
+            | u32::from(class.power) << 24,
+        weapons: class.weapons,
+        sheath: class.sheath,
+    }
+}
+
+/// A co-op guest's puppet on the host: the guest's hero body in the class trainer's look, without
+/// [`Hero`] and [`Marks`].
+#[allow(clippy::too_many_arguments)]
+pub(super) fn spawn_peer(
+    commands: &mut Commands,
+    class: &'static ClassDef,
+    display: u32,
+    race: u8,
+    sex: u8,
+    serial: u64,
+    pos: Vec3,
+    player: u8,
+) -> Entity {
+    let e = units::spawn_unit(commands, &hero_spec(class, display, race, sex, serial), pos, 0.0);
+    commands.entity(e).insert(Peer { player });
+    e
+}
+
 /// Midday over the battleground, whatever the clock says.
 pub(super) const MINUTE_OF_DAY: u32 = 780;
 

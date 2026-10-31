@@ -2,7 +2,10 @@
 //! The host simulates the run and replicates the heroes; a guest plays its own hero and sends
 //! where it walks. Design: `docs/superpowers/specs/2026-10-31-coop-direct-ip-design.md`.
 
+mod client;
+mod host;
 mod net;
+mod smooth;
 mod wire;
 
 use bevy::prelude::*;
@@ -22,6 +25,8 @@ pub(super) fn plugin(app: &mut App) {
         RepliconRenetPlugins,
     ));
     wire::protocol(app);
+    host::plugin(app);
+    client::plugin(app);
     app.init_resource::<Session>()
         .add_systems(Startup, connect_from_env)
         .add_systems(Update, post_notice);
@@ -42,8 +47,9 @@ pub(super) struct Session {
 
 /// A guest the host has seated.
 pub(super) struct Guest {
-    /// renet's client id.
-    pub client: u64,
+    /// The connected client's entity (replicon's `ClientId::Client`); it despawns when the guest
+    /// leaves.
+    pub client: Entity,
     pub player: u8,
     pub hello: wire::Hello,
 }
@@ -120,7 +126,7 @@ mod tests {
 
     fn guest(player: u8) -> Guest {
         Guest {
-            client: u64::from(player) * 100,
+            client: Entity::PLACEHOLDER,
             player,
             hello: wire::Hello {
                 name: format!("P{player}"),
