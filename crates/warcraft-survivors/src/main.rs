@@ -26,6 +26,20 @@ struct Cli {
     /// Window size in logical pixels, e.g. `1280x720`; implies `--windowed`. Sets `WOW_WIN`.
     #[arg(long, value_name = "WxH", value_parser = parse_size)]
     size: Option<(u32, u32)>,
+
+    /// Host a co-op party; friends join with `--join <your address>`. The UDP port is 37373
+    /// unless given. Sets `WOW_SURVIVORS_HOST`.
+    #[arg(long, value_name = "PORT", num_args = 0..=1, default_missing_value = "")]
+    host: Option<String>,
+
+    /// Join a friend's co-op party at `ADDRESS` (`192.168.1.20`, `host.local:37373`). Sets
+    /// `WOW_SURVIVORS_JOIN`.
+    #[arg(long, value_name = "ADDRESS", conflicts_with = "host")]
+    join: Option<String>,
+
+    /// The name the party sees. Sets `WOW_SURVIVORS_NAME`.
+    #[arg(long, value_name = "NAME")]
+    name: Option<String>,
 }
 
 /// The windowed size when `--windowed` comes without `--size`: the client's own default.
@@ -58,6 +72,15 @@ fn main() -> AppExit {
     }
     if let Some((w, h)) = cli.size.or(cli.windowed.then_some(DEFAULT_SIZE)) {
         std::env::set_var("WOW_WIN", format!("{w}x{h}"));
+    }
+    for (var, value) in [
+        ("WOW_SURVIVORS_HOST", cli.host),
+        ("WOW_SURVIVORS_JOIN", cli.join),
+        ("WOW_SURVIVORS_NAME", cli.name),
+    ] {
+        if let Some(value) = value {
+            std::env::set_var(var, value);
+        }
     }
 
     // The client starts without an install and only logs it, which leaves an empty world; the

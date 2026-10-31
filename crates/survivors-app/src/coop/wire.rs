@@ -13,7 +13,7 @@ use crate::units::UnitSpec;
 
 /// What a unit's body is built from: [`UnitSpec`] without the serial, which each machine picks.
 #[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
-pub(super) struct Look {
+pub(crate) struct Look {
     pub display: u32,
     pub scale: f32,
     pub level: u32,
@@ -54,7 +54,7 @@ impl Look {
 /// Where a unit stands, quantised: centimetres, a 256-step facing, and the walk the animation
 /// shows (pace in cm/s and the movement flags). From deanmathieson's fork (`coop/wire.rs`).
 #[derive(Component, Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(super) struct NetPos {
+pub(crate) struct NetPos {
     pub at: [i32; 3],
     pub yaw: u8,
     pub pace: u16,
@@ -93,7 +93,7 @@ impl NetPos {
 
 /// Who a hero is: its player (0 is the host), name and class.
 #[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
-pub(super) struct NetHero {
+pub(crate) struct NetHero {
     pub player: u8,
     pub name: String,
     pub class_id: u8,
@@ -103,7 +103,7 @@ pub(super) struct NetHero {
 
 /// A guest's first word: who it is and what its hero looks like.
 #[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
-pub(super) struct Hello {
+pub(crate) struct Hello {
     pub name: String,
     pub class_id: u8,
     pub display: u32,
@@ -113,7 +113,7 @@ pub(super) struct Hello {
 
 /// Where the guest's own hero is, 20 times a second.
 #[derive(Message, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
-pub(super) struct MoveInput {
+pub(crate) struct MoveInput {
     pub at: [f32; 3],
     pub yaw: f32,
     pub pace: f32,
@@ -124,25 +124,25 @@ pub(super) struct MoveInput {
 
 /// The guest has a seat: its player number.
 #[derive(Message, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct Welcome {
+pub(crate) struct Welcome {
     pub player: u8,
 }
 
 /// The guest is turned away, and why.
 #[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
-pub(super) struct Refused {
+pub(crate) struct Refused {
     pub reason: String,
 }
 
 /// The host's run began (or is under way): the guest enters the same battleground.
 #[derive(Message, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct StartRun {
+pub(crate) struct StartRun {
     pub map: usize,
 }
 
 /// The host is back at the menu: so is the guest.
 #[derive(Message, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct EndRun;
+pub(crate) struct EndRun;
 
 /// The replication rules and messages, in the one order both ends register them.
 pub(super) fn protocol(app: &mut App) {

@@ -101,6 +101,7 @@ impl Plugin for SurvivorsPlugin {
             .init_resource::<hero::CamRig>()
             .init_resource::<hero::AimPoint>()
             .init_resource::<abilities::PendingHits>()
+            .init_resource::<NetRole>()
             .init_resource::<enemies::Spawner>()
             .init_resource::<hud::Offer>()
             .init_resource::<cards::PendingPick>()
@@ -138,6 +139,7 @@ impl Plugin for SurvivorsPlugin {
                     .chain()
                     .after(WorldStage::Input)
                     .run_if(in_state(Phase::Playing))
+                    .run_if(simulates)
                     // Entering a battleground raises its loading screen: the run waits behind it.
                     .run_if(|l: Res<benilla_app::survivors_host::loading_screen::LoadingScreen>| !l.covering()),
             )
@@ -294,6 +296,22 @@ pub(crate) struct Stats {
 pub(crate) const BASE_HP: f32 = 120.0;
 pub(crate) const BASE_SPEED: f32 = 7.0;
 pub(crate) const BASE_MAGNET: f32 = 4.5;
+
+/// This machine's part in a co-op session ([`coop`]): alone, hosting, or a guest of a host.
+/// Always present, so a build without co-op reads `Solo`.
+#[derive(Resource, Default, Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum NetRole {
+    #[default]
+    Solo,
+    Host,
+    Client,
+}
+
+/// Run condition: this machine simulates the run (alone or as the host); a guest only shows the
+/// host's.
+pub(crate) fn simulates(role: Res<NetRole>) -> bool {
+    *role != NetRole::Client
+}
 
 /// One run's state.
 #[derive(Resource)]
