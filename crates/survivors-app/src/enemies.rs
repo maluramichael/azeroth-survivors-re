@@ -238,6 +238,7 @@ pub(super) fn spawn_enemies(
     mut rng: ResMut<Rng>,
     mut spawner: ResMut<Spawner>,
     selection: Res<Selection>,
+    surge: Res<super::surge::Surge>,
     nav: Res<NavGrid>,
     probe: SpawnProbe,
     hero: Query<&Transform, With<Hero>>,
@@ -293,14 +294,20 @@ pub(super) fn spawn_enemies(
     if spawner.timer > 0.0 {
         return;
     }
-    spawner.timer = 0.12;
+    // A surge ([`super::surge`]) keeps more of the horde alive, fills the gap quicker and in
+    // bigger batches.
+    spawner.timer = if surge.active { 0.07 } else { 0.12 };
     let alive = enemies.iter().filter(|(e, _)| !e.dead).count();
     let mut elites = enemies.iter().filter(|(e, el)| *el && !e.dead).count();
-    let target = data::target_alive(elapsed);
+    let mut target = data::target_alive(elapsed);
+    if surge.active {
+        target = target * 3 / 2;
+    }
     if alive >= target {
         return;
     }
-    let n = (((target - alive) as f32) / 6.0).ceil().min(4.0) as usize;
+    let batch_cap = if surge.active { 8.0 } else { 4.0 };
+    let n = (((target - alive) as f32) / 6.0).ceil().min(batch_cap) as usize;
     for _ in 0..n {
         let def = &roster.enemies[pool[rng.index(pool.len())]];
         let a = rng.range(0.0, std::f32::consts::TAU);
