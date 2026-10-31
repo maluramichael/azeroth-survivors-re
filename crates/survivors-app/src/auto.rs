@@ -174,6 +174,7 @@ pub(super) fn drive(
     mut talents: ResMut<super::talents::TalentsUi>,
     heroes: Query<(), With<Hero>>,
     enemies: Query<&Enemy>,
+    role: Res<super::NetRole>,
 ) {
     let dt = time.delta_secs();
     auto.wait += dt;
@@ -206,6 +207,9 @@ pub(super) fn drive(
                 }
             } else if auto.wait > 2.0 && auto.wait < 3.0 {
                 auto.capture_once(&mut commands, "menu".into());
+            } else if *role == super::NetRole::Client {
+                // A guest never starts a run: the host does, and `coop::client` follows it in.
+                auto.wait = 3.0;
             } else if auto.wait > 3.0 && hud::start_run(&mut run, &mut selection, &profile) {
                 info!(
                     "survivors auto: run begins as {} at {}",
