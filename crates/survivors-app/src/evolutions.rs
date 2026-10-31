@@ -16,7 +16,8 @@ use super::{Phase, Run};
 const Z: i32 = 425;
 const FOUND: Color = super::cards::LEGENDARY;
 const HINT: Color = kit::MUTED;
-const WIDTH: f32 = 560.0;
+/// Narrow enough to sit left of four cards, so the reroll row under them stays free.
+const WIDTH: f32 = 210.0;
 /// Most recipes a class has; the panel holds this many lines.
 const ROWS: usize = 4;
 
@@ -172,13 +173,12 @@ fn build(commands: &mut Commands, ui: &mut BookUi, fonts: &kit::KitFonts) {
         .spawn((
             kit::panel(Node {
                 position_type: PositionType::Absolute,
-                left: Val::Percent(50.0),
-                bottom: Val::Px(28.0),
-                margin: UiRect::left(Val::Px(-WIDTH / 2.0)),
+                left: Val::Px(10.0),
+                top: Val::Percent(36.0),
                 width: Val::Px(WIDTH),
                 flex_direction: FlexDirection::Column,
                 align_items: AlignItems::Center,
-                padding: UiRect::axes(Val::Px(18.0), Val::Px(8.0)),
+                padding: UiRect::axes(Val::Px(12.0), Val::Px(8.0)),
                 row_gap: Val::Px(3.0),
                 ..default()
             }),

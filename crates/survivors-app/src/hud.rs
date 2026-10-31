@@ -194,9 +194,45 @@ pub(super) enum Choice {
 #[derive(Resource, Default)]
 pub(super) struct Offer {
     choices: Vec<Choice>,
+    /// Choices banished this run, by [`choice_key`]: they never come back. Cleared when the run's
+    /// first hand is dealt ([`roll_offer`]).
+    pub(super) banished: Vec<&'static str>,
+}
+
+/// The key a choice is banished by: the ability's key for a new spell or a rank of it, the
+/// passive's key for a passive. An evolution and the heal cannot be banished.
+pub(super) fn choice_key(choice: Choice, run: &Run) -> Option<&'static str> {
+    match choice {
+        Choice::NewAbility(def) => Some(def.key),
+        Choice::Upgrade(k) => run.abilities.get(k).map(|o| o.def.key),
+        Choice::NewPassive(p) => Some(p.key),
+        Choice::UpPassive(k) => run.passives.get(k).map(|(p, _)| p.key),
+        Choice::Evolve(_) | Choice::Heal => None,
+    }
+}
+
+/// The level a hand is dealt for: several can wait behind one another.
+pub(super) fn hand_level(run: &Run) -> u32 {
+    run.level
+        .saturating_sub(run.pending_levels.saturating_sub(1))
+}
+
+/// Cards in the hand for the run's current level-up: the first hand of a run holds `first_hand`,
+/// every other hand three.
+pub(super) fn hand_size(run: &Run, first_hand: usize) -> usize {
+    if hand_level(run) <= 2 {
+        first_hand.clamp(3, 4)
+    } else {
+        3
+    }
 }
 
 impl Offer {
+    /// Replace the hand with a fresh one that skips the banished choices.
+    pub(super) fn reroll(&mut self, run: &Run, rng: &mut Rng, first_hand: usize) {
+        self.choices = choices_for(run, rng, &self.banished, hand_size(run, first_hand));
+    }
+
     pub(super) fn len(&self) -> usize {
         self.choices.len()
     }
@@ -1007,10 +1043,17 @@ pub(super) fn start_run(run: &mut Run, selection: &mut Selection, profile: &Prof
     true
 }
 
-fn choices_for(run: &Run, rng: &mut Rng) -> Vec<Choice> {
+/// A hand of up to `size` choices, the evolutions that hold first (two at most), then drawn by
+/// weight from the rest. Choices whose [`choice_key`] is in `banished` are left out.
+pub(super) fn choices_for(
+    run: &Run,
+    rng: &mut Rng,
+    banished: &[&'static str],
+    size: usize,
+) -> Vec<Choice> {
     let mut pool: Vec<(Choice, f32)> = Vec::new();
     for (i, o) in run.abilities.iter().enumerate() {
-        if o.level < data::MAX_ABILITY_LEVEL {
+        if o.level < data::MAX_ABILITY_LEVEL && !banished.contains(&o.def.key) {
             pool.push((Choice::Upgrade(i), 1.2));
         }
     }
@@ -1019,19 +1062,20 @@ fn choices_for(run: &Run, rng: &mut Rng) -> Vec<Choice> {
             // A spell that has evolved does not come back as a new one.
             if !run.abilities.iter().any(|o| o.def.key == *key)
                 && !super::evolutions::evolved_from(run, key)
+                && !banished.contains(key)
             {
                 pool.push((Choice::NewAbility(data::ability(key)), 1.0));
             }
         }
     }
-    for (i, (_, level)) in run.passives.iter().enumerate() {
-        if *level < data::MAX_PASSIVE_LEVEL {
+    for (i, (p, level)) in run.passives.iter().enumerate() {
+        if *level < data::MAX_PASSIVE_LEVEL && !banished.contains(&p.key) {
             pool.push((Choice::UpPassive(i), 0.8));
         }
     }
     if run.passives.len() < data::MAX_PASSIVES {
         for p in data::PASSIVES {
-            if !run.passives.iter().any(|(q, _)| q.key == p.key) {
+            if !run.passives.iter().any(|(q, _)| q.key == p.key) && !banished.contains(&p.key) {
                 pool.push((Choice::NewPassive(p), 0.5));
             }
         }
@@ -1042,7 +1086,7 @@ fn choices_for(run: &Run, rng: &mut Rng) -> Vec<Choice> {
         .take(2)
         .map(Choice::Evolve)
         .collect();
-    while out.len() < 3 && !pool.is_empty() {
+    while out.len() < size && !pool.is_empty() {
         let total: f32 = pool.iter().map(|(_, w)| w).sum();
         let mut pick = rng.f32() * total;
         let mut idx = pool.len() - 1;
@@ -1061,8 +1105,17 @@ fn choices_for(run: &Run, rng: &mut Rng) -> Vec<Choice> {
     out
 }
 
-pub(super) fn roll_offer(run: Res<Run>, mut rng: ResMut<Rng>, mut offer: ResMut<Offer>) {
-    offer.choices = choices_for(&run, &mut rng);
+pub(super) fn roll_offer(
+    run: Res<Run>,
+    perks: Res<super::achievements::RunPerks>,
+    mut rng: ResMut<Rng>,
+    mut offer: ResMut<Offer>,
+) {
+    // The run's first hand: nothing has been banished yet, whatever the last run left behind.
+    if hand_level(&run) <= 2 {
+        offer.banished.clear();
+    }
+    offer.reroll(&run, &mut rng, perks.first_hand);
 }
 
 pub(super) fn pick(
@@ -1097,9 +1150,15 @@ pub(super) fn pick(
         Choice::Heal => run.hp = run.stats().max_hp,
     }
     run.version += 1;
+    advance(run, offer, rng, next);
+}
+
+/// One level-up is done, picked or skipped: deal the next waiting hand, or go back to playing.
+/// Later hands are never the run's first, so they hold three cards.
+pub(super) fn advance(run: &mut Run, offer: &mut Offer, rng: &mut Rng, next: &mut NextState<Phase>) {
     run.pending_levels = run.pending_levels.saturating_sub(1);
     if run.pending_levels > 0 {
-        offer.choices = choices_for(run, rng);
+        offer.reroll(run, rng, 3);
     } else {
         offer.choices.clear();
         next.set(Phase::Playing);

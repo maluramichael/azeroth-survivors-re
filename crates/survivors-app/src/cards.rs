@@ -7,8 +7,9 @@ use bevy::prelude::*;
 use bevy::ui::RelativeCursorPosition;
 
 use super::data::{self, Kind};
+use super::achievements::RunPerks;
 use super::hud::{self, Choice, Offer, SpellIcon};
-use super::kit::{self, KitFonts};
+use super::kit::{self, KitButton, KitFonts, KitStyle};
 use super::{Phase, Rng, Run};
 
 /// WoW's item-quality colours (`ITEM_QUALITY_COLORS`).
@@ -19,6 +20,10 @@ pub(super) const EPIC: Color = Color::srgb(0.639, 0.208, 0.933);
 pub(super) const LEGENDARY: Color = Color::srgb(1.0, 0.502, 0.0);
 
 const CARD_W: f32 = 250.0;
+/// A hand of four (the perk) gets narrower cards so the row still fits a 1024-wide screen.
+const CARD_W_FOUR: f32 = 220.0;
+/// Gold per level for skipping a hand.
+const SKIP_GOLD_PER_LEVEL: u32 = 10;
 const CARD_H: f32 = 370.0;
 /// Seconds between one card landing and the next.
 const DEAL_STAGGER: f32 = 0.09;
@@ -163,6 +168,15 @@ pub(super) struct PendingPick(Option<(usize, f32)>);
 
 const PICK_SECS: f32 = 0.28;
 
+/// The small buttons around the cards: banish the card above, deal a new hand, skip the hand.
+#[derive(Component, Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum LevelUpAction {
+    /// Banish the card at this index and deal a new hand.
+    Banish(usize),
+    Reroll,
+    Skip,
+}
+
 /// Upper case with a space between the letters, the closest thing to letter-spacing the text
 /// has: "UNCOMMON" becomes "U N C O M M O N".
 fn spaced(s: &str) -> String {
@@ -233,6 +247,7 @@ pub(super) fn deal_cards(
     run: Res<Run>,
     spells: Option<Res<benilla_app::survivors_host::ui_action::Spells>>,
     fonts: Res<KitFonts>,
+    perks: Res<RunPerks>,
     rows: Query<(Entity, &ChildOf), With<hud::OfferRow>>,
     mut siblings: Query<(&ChildOf, &mut Node, &Text, Has<hud::LevelUpSub>), Without<hud::OfferRow>>,
 ) {
@@ -259,9 +274,9 @@ pub(super) fn deal_cards(
     let kf = &*fonts;
     let f = &kf.body;
     // The level this offer is for: several can wait behind one another.
-    let level = run
-        .level
-        .saturating_sub(run.pending_levels.saturating_sub(1));
+    let level = hud::hand_level(&run);
+    let n = offer.len();
+    let (card_w, gap) = if n >= 4 { (CARD_W_FOUR, 16.0) } else { (CARD_W, 22.0) };
     let owned: Vec<u32> = run.abilities.iter().map(|o| o.def.spell).collect();
     commands.entity(row).with_children(|row| {
         // The header: a gold pill, the Morpheus title and a line of help.
@@ -305,7 +320,7 @@ pub(super) fn deal_cards(
 
         // The cards.
         row.spawn(Node {
-            column_gap: Val::Px(22.0),
+            column_gap: Val::Px(gap),
             // Room for a hovered card's lift.
             margin: UiRect::new(Val::ZERO, Val::ZERO, Val::Px(14.0), Val::Px(4.0)),
             ..default()
@@ -360,7 +375,7 @@ pub(super) fn deal_cards(
                         Interaction::default(),
                         RelativeCursorPosition::default(),
                         Node {
-                            width: Val::Px(CARD_W),
+                            width: Val::Px(card_w),
                             height: Val::Px(CARD_H),
                             flex_direction: FlexDirection::Column,
                             align_items: AlignItems::Center,
@@ -540,6 +555,31 @@ pub(super) fn deal_cards(
             }
         });
 
+        // A banish button under each card, in a row that lines up with the cards above.
+        row.spawn(Node {
+            column_gap: Val::Px(gap),
+            margin: UiRect::top(Val::Px(-6.0)),
+            ..default()
+        })
+        .with_children(|banish| {
+            // Whether a card can be banished is kept up to date by `choose_card`.
+            for i in 0..n {
+                kit::button(
+                    banish,
+                    kf,
+                    KitStyle::Normal,
+                    &format!("Banish ({})", perks.banishes),
+                    None,
+                    Node {
+                        width: Val::Px(card_w),
+                        height: Val::Px(26.0),
+                        ..default()
+                    },
+                    LevelUpAction::Banish(i),
+                );
+            }
+        });
+
         // The hero's spell slots: the ones taken show their icon, the free ones stay dark.
         row.spawn(Node {
             align_items: AlignItems::Center,
@@ -584,7 +624,45 @@ pub(super) fn deal_cards(
                 }
             }
         });
+
+        // Deal a new hand, or give the level up for gold.
+        row.spawn(Node {
+            column_gap: Val::Px(16.0),
+            ..default()
+        })
+        .with_children(|bar| {
+            let node = Node {
+                min_width: Val::Px(150.0),
+                height: Val::Px(30.0),
+                ..default()
+            };
+            kit::button(
+                bar,
+                kf,
+                KitStyle::Normal,
+                &format!("Reroll  {}  [R]", perks.rerolls),
+                None,
+                node.clone(),
+                LevelUpAction::Reroll,
+            );
+            if perks.skip {
+                kit::button(
+                    bar,
+                    kf,
+                    KitStyle::Normal,
+                    &format!("Skip  +{} gold  [X]", skip_gold(&run)),
+                    None,
+                    node,
+                    LevelUpAction::Skip,
+                );
+            }
+        });
     });
+}
+
+/// The gold a skipped hand pays: more the later the level.
+fn skip_gold(run: &Run) -> u32 {
+    SKIP_GOLD_PER_LEVEL * hud::hand_level(run)
 }
 
 fn ease_out_back(t: f32) -> f32 {
@@ -709,24 +787,95 @@ pub(super) fn animate_cards(
     }
 }
 
-/// A click on a card, or 1/2/3: start its burst; the choice applies when it finishes.
+/// A click on a card, or 1/2/3/4: start its burst; the choice applies when it finishes. Also the
+/// banish, reroll and skip buttons (R and X for the last two).
+#[allow(clippy::too_many_arguments)]
 pub(super) fn choose_card(
     phase: Res<State<Phase>>,
     keys: Res<ButtonInput<KeyCode>>,
     cards: Query<(&Card, &Interaction), Changed<Interaction>>,
-    offer: Res<Offer>,
+    mut buttons: Query<(&LevelUpAction, Ref<Interaction>, &mut KitButton)>,
+    mut offer: ResMut<Offer>,
     mut pending: ResMut<PendingPick>,
+    mut run: ResMut<Run>,
+    mut perks: ResMut<RunPerks>,
+    mut rng: ResMut<Rng>,
+    mut next: ResMut<NextState<Phase>>,
 ) {
-    if *phase.get() != Phase::LevelUp || pending.0.is_some() {
+    if *phase.get() != Phase::LevelUp {
+        return;
+    }
+    // Grey out what cannot be used right now.
+    let mut pressed = None;
+    for (action, interaction, mut state) in &mut buttons {
+        let off = match *action {
+            LevelUpAction::Banish(i) => {
+                perks.banishes == 0
+                    || offer
+                        .choices()
+                        .get(i)
+                        .and_then(|&c| hud::choice_key(c, &run))
+                        .is_none()
+            }
+            LevelUpAction::Reroll => perks.rerolls == 0,
+            LevelUpAction::Skip => !perks.skip,
+        };
+        if state.disabled != off {
+            state.disabled = off;
+        }
+        if !off && interaction.is_changed() && *interaction == Interaction::Pressed {
+            pressed = Some(*action);
+        }
+    }
+    if pending.0.is_some() {
+        return;
+    }
+    if keys.just_pressed(KeyCode::KeyR) && perks.rerolls > 0 {
+        pressed = Some(LevelUpAction::Reroll);
+    }
+    if keys.just_pressed(KeyCode::KeyX) && perks.skip {
+        pressed = Some(LevelUpAction::Skip);
+    }
+    if let Some(action) = pressed {
+        let first_hand = perks.first_hand;
+        match action {
+            LevelUpAction::Reroll => {
+                perks.rerolls -= 1;
+                offer.reroll(&run, &mut rng, first_hand);
+            }
+            LevelUpAction::Banish(i) => {
+                let key = offer
+                    .choices()
+                    .get(i)
+                    .and_then(|&c| hud::choice_key(c, &run));
+                if let (Some(key), true) = (key, perks.banishes > 0) {
+                    perks.banishes -= 1;
+                    offer.banished.push(key);
+                    offer.reroll(&run, &mut rng, first_hand);
+                }
+            }
+            LevelUpAction::Skip => {
+                let gold = skip_gold(&run);
+                run.gold += gold;
+                run.banner = Some((format!("Skipped, +{gold} gold"), 2.5));
+                run.version += 1;
+                hud::advance(&mut run, &mut offer, &mut rng, &mut next);
+            }
+        }
         return;
     }
     let mut pick = cards
         .iter()
         .find(|(c, i)| **i == Interaction::Pressed && c.t >= DEAL_SECS)
         .map(|(c, _)| c.index);
-    for (i, key) in [KeyCode::Digit1, KeyCode::Digit2, KeyCode::Digit3]
-        .into_iter()
-        .enumerate()
+    for (i, key) in [
+        KeyCode::Digit1,
+        KeyCode::Digit2,
+        KeyCode::Digit3,
+        KeyCode::Digit4,
+    ]
+    .into_iter()
+    .enumerate()
     {
         if keys.just_pressed(key) {
             pick = Some(i);
@@ -734,5 +883,83 @@ pub(super) fn choose_card(
     }
     if let Some(i) = pick.filter(|&i| i < offer.len()) {
         pending.0 = Some((i, 0.0));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn run_at(level: u32) -> Run {
+        Run {
+            level,
+            pending_levels: 1,
+            ..Run::default()
+        }
+    }
+
+    #[test]
+    fn only_the_first_hand_is_bigger() {
+        assert_eq!(hud::hand_size(&run_at(2), 4), 4);
+        assert_eq!(hud::hand_size(&run_at(2), 3), 3);
+        assert_eq!(hud::hand_size(&run_at(3), 4), 3);
+        assert_eq!(hud::hand_size(&run_at(30), 4), 3);
+        // Two levels waiting: the second hand is for level 3, so it holds three.
+        let waiting = Run {
+            level: 3,
+            pending_levels: 2,
+            ..Run::default()
+        };
+        assert_eq!(hud::hand_size(&waiting, 4), 4);
+        let second = Run {
+            level: 3,
+            pending_levels: 1,
+            ..Run::default()
+        };
+        assert_eq!(hud::hand_size(&second, 4), 3);
+    }
+
+    #[test]
+    fn a_hand_holds_the_size_asked_for() {
+        let run = run_at(2);
+        let mut rng = Rng::default();
+        assert_eq!(hud::choices_for(&run, &mut rng, &[], 4).len(), 4);
+        assert_eq!(hud::choices_for(&run, &mut rng, &[], 3).len(), 3);
+    }
+
+    #[test]
+    fn a_banished_choice_never_comes_back() {
+        let run = run_at(2);
+        let mut rng = Rng::default();
+        let ability = run.class.pool[0];
+        let banished = [ability, data::PASSIVES[0].key];
+        for _ in 0..300 {
+            for c in hud::choices_for(&run, &mut rng, &banished, 4) {
+                let key = hud::choice_key(c, &run);
+                assert!(key.is_none_or(|k| !banished.contains(&k)), "{key:?} came back");
+            }
+        }
+    }
+
+    #[test]
+    fn evolutions_and_the_heal_cannot_be_banished() {
+        let run = run_at(2);
+        let evo = data::EVOLUTIONS.iter().next().expect("an evolution");
+        assert!(hud::choice_key(Choice::Evolve(evo), &run).is_none());
+        assert!(hud::choice_key(Choice::Heal, &run).is_none());
+        assert_eq!(
+            hud::choice_key(Choice::NewAbility(data::ability(run.class.pool[0])), &run),
+            Some(run.class.pool[0])
+        );
+    }
+
+    #[test]
+    fn everything_banished_leaves_the_heal() {
+        let run = run_at(2);
+        let mut rng = Rng::default();
+        let mut banished: Vec<&'static str> = run.class.pool.to_vec();
+        banished.extend(data::PASSIVES.iter().map(|p| p.key));
+        let hand = hud::choices_for(&run, &mut rng, &banished, 3);
+        assert!(matches!(hand.as_slice(), [Choice::Heal]));
     }
 }
