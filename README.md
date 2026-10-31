@@ -20,6 +20,16 @@ as its own pull request. Newest first.
 
 | Feature | What it does | Screenshot | Upstream PR |
 | --- | --- | --- | --- |
+| Wave surges | From the first minute, every 45 seconds the horde surges for 12 seconds, with a countdown under the clock. | <img src="docs/screenshots/fork-surge.jpg" width="320" alt="The horde surges, Hellfire burning around the warlock"> | none, built on `features` |
+| Hellfire and Sweeping Strikes visuals | Aura spells now show on the hero: Hellfire's ring of fire burns around the warlock each pulse. | <img src="docs/screenshots/fork-surge.jpg" width="320" alt="Hellfire's ring of fire around the warlock"> | none, built on `features` |
+| Best runs and racial traits | The hub shows the selected class's best time and kills under each zone, gold after a win. Each race lends a small bonus named after its racial, shown on the class panel and in the character window. | <img src="docs/screenshots/fork-records-racial.jpg" width="320" alt="The hub with a RACIAL box and best runs under the zones"> | none, built on `features` |
+| Camera settings, shake and obstacles | Options has a mouse sensitivity slider and toggles for inverted pitch and camera shake. Hits shake the camera a little, and trees or buildings between camera and hero pull it in. | <img src="docs/screenshots/fork-options-camera.jpg" width="320" alt="The Options window with its Camera section"> | none, built on `features` |
+| Hit feedback | Direct hits knock enemies back, crits further; elites barely move and bosses not at all. |  | none, built on `features` |
+| Boss enrage | A boss below 40 percent health enrages once: faster, harder hits, an emote in the chat. |  | none, built on `features` |
+| Faster gems | Gems fly in faster, and a fallen boss pulls every gem on the field. |  | none, built on `features` |
+| Chests clear of the hero | A chest never lands at the hero's feet, so it is not opened by accident. |  | none, built on `features` |
+| Item suffixes | Green and better items are named after their stats as in Classic: of the Bear, of the Eagle, of the Owl. |  | none, built on `features` |
+| Seeded runs and level-up tests | `WOW_SURVIVORS_SEED=<n>` starts every run from the same dice. Regression tests for the level-up hands, ported from upstream PR #10. |  | none, built on `features` |
 | Unit frames | The hero's frame is WoW's targeting frame: a round class portrait, the name plate, health and experience bars and a level badge. The target gets the same frame, elites the elite one. | <img src="docs/screenshots/fork-unit-frames.jpg" width="320" alt="The warlock's unit frame at the top left"> | none, built on `features` |
 | Level-up perks | Under every card a Banish button takes that power out of the run; Reroll draws a new hand and Skip trades the pick for gold. The Spellbook moves to the left of the cards. | <img src="docs/screenshots/fork-levelup-perks.jpg" width="320" alt="Level-up cards with Banish, Reroll and Skip"> | none, built on `features` |
 | Achievements | Fifty achievements over zones, classes, feats, totals and the collection, each worth points. The points buy perks: more rerolls, banishes and a four-card first hand. | <img src="docs/screenshots/fork-achievements.jpg" width="320" alt="The achievements window with points, categories and recent ones"> | none, built on `features` |
