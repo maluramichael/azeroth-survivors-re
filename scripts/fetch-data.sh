@@ -4,6 +4,8 @@
 # the MPQs are extracted.
 #
 # Re-runnable: skips when the MPQs are already present, and resumes an interrupted download.
+# The zip is kept next to the Data folder, so the MPQs can be extracted again or the zip handed to
+# another machine without downloading ~5.5 GB once more; delete it by hand to reclaim the space.
 # Requires: curl, unzip.
 set -euo pipefail
 
@@ -40,8 +42,6 @@ echo "extracting MPQs into ${DATA}…"
 mkdir -p "$DATA"
 unzip -o "$ZIP" 'Data/*.MPQ' -d "$DATA_DIR"
 
-# The MPQs are what the game reads; drop the zip to reclaim ~5.5 GB.
-rm -f "$ZIP"
-
 echo "game data ready at $DATA"
 echo "  --data $DATA"
+echo "  the zip stays at $ZIP"
