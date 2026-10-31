@@ -905,6 +905,7 @@ pub(super) fn choose_card(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Owned;
 
     fn run_at(level: u32) -> Run {
         Run {
@@ -977,5 +978,264 @@ mod tests {
         banished.extend(data::PASSIVES.iter().map(|p| p.key));
         let hand = hud::choices_for(&run, &mut rng, &banished, 3);
         assert!(matches!(hand.as_slice(), [Choice::Heal]));
+    }
+
+    /// `n` of the warrior's spells at `level`, none of them the source of an evolution, so a run
+    /// built from them never gets an evolution card in its hand.
+    fn plain_spells(n: usize, level: u8) -> Vec<Owned> {
+        data::CLASSES[0]
+            .pool
+            .iter()
+            .filter(|key| !data::EVOLUTIONS.iter().any(|e| e.from == **key))
+            .take(n)
+            .map(|key| Owned {
+                def: data::ability(key),
+                level,
+                cd: 0.0,
+            })
+            .collect()
+    }
+
+    /// The first `n` passives, each at `level`.
+    fn passives_at(n: usize, level: u8) -> Vec<(&'static data::PassiveDef, u8)> {
+        data::PASSIVES.iter().take(n).map(|p| (p, level)).collect()
+    }
+
+    /// Every spell slot and every passive slot full, everything at its top rank.
+    fn capped_run() -> Run {
+        let run = Run {
+            abilities: plain_spells(data::MAX_ABILITIES, data::MAX_ABILITY_LEVEL),
+            passives: passives_at(data::MAX_PASSIVES, data::MAX_PASSIVE_LEVEL),
+            ..Run::default()
+        };
+        assert_eq!(run.abilities.len(), data::MAX_ABILITIES);
+        assert_eq!(run.passives.len(), data::MAX_PASSIVES);
+        run
+    }
+
+    #[test]
+    fn a_hand_is_never_longer_than_asked_and_never_repeats_a_card() {
+        for class in data::CLASSES {
+            let mut run = Run {
+                class,
+                ..Run::default()
+            };
+            run.abilities.push(Owned {
+                def: data::ability(class.start),
+                level: 1,
+                cd: 0.0,
+            });
+            run.passives.push((&data::PASSIVES[0], 1));
+            for size in [3, 4] {
+                for seed in 1..=16 {
+                    let hand = hud::choices_for(&run, &mut Rng(seed), &[], size);
+                    assert_eq!(hand.len(), size);
+                    let mut seen = std::collections::HashSet::new();
+                    for choice in hand {
+                        let key = match choice {
+                            Choice::NewAbility(def) => {
+                                assert!(class.pool.contains(&def.key));
+                                assert!(!run.abilities.iter().any(|o| o.def.key == def.key));
+                                ("ability", def.key)
+                            }
+                            Choice::Upgrade(i) => {
+                                assert!(run.abilities[i].level < data::MAX_ABILITY_LEVEL);
+                                ("ability", run.abilities[i].def.key)
+                            }
+                            Choice::NewPassive(p) => {
+                                assert!(!run.passives.iter().any(|(q, _)| q.key == p.key));
+                                ("passive", p.key)
+                            }
+                            Choice::UpPassive(i) => {
+                                assert!(run.passives[i].1 < data::MAX_PASSIVE_LEVEL);
+                                ("passive", run.passives[i].0.key)
+                            }
+                            Choice::Evolve(_) | Choice::Heal => {
+                                panic!("a fresh run has neither an evolution nor a reason to heal")
+                            }
+                        };
+                        assert!(seen.insert(key), "{key:?} was dealt twice");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_maxed_spell_or_passive_is_not_offered_again() {
+        let mut spells = plain_spells(2, data::MAX_ABILITY_LEVEL);
+        spells[1].level = 3;
+        let mut passives = passives_at(2, data::MAX_PASSIVE_LEVEL);
+        passives[1].1 = 2;
+        let run = Run {
+            level: 5,
+            abilities: spells,
+            passives,
+            ..Run::default()
+        };
+        let mut rng = Rng(7);
+        let mut upgrades = 0;
+        for _ in 0..300 {
+            for choice in hud::choices_for(&run, &mut rng, &[], 4) {
+                assert!(!matches!(choice, Choice::Upgrade(0)), "the maxed spell came back");
+                assert!(!matches!(choice, Choice::UpPassive(0)), "the maxed passive came back");
+                upgrades += usize::from(matches!(choice, Choice::Upgrade(1) | Choice::UpPassive(1)));
+            }
+        }
+        // The ranks still open are on offer.
+        assert!(upgrades > 0);
+    }
+
+    #[test]
+    fn six_spells_stop_the_new_spell_cards() {
+        let run = Run {
+            level: 5,
+            abilities: plain_spells(data::MAX_ABILITIES, 1),
+            ..Run::default()
+        };
+        assert_eq!(run.abilities.len(), data::MAX_ABILITIES);
+        let mut rng = Rng(11);
+        for _ in 0..300 {
+            for choice in hud::choices_for(&run, &mut rng, &[], 4) {
+                assert!(!matches!(choice, Choice::NewAbility(_)), "a seventh spell was offered");
+            }
+        }
+    }
+
+    #[test]
+    fn six_passives_stop_the_new_passive_cards() {
+        let run = Run {
+            level: 5,
+            abilities: plain_spells(1, 1),
+            passives: passives_at(data::MAX_PASSIVES, 1),
+            ..Run::default()
+        };
+        assert_eq!(run.passives.len(), data::MAX_PASSIVES);
+        let mut rng = Rng(13);
+        for _ in 0..300 {
+            for choice in hud::choices_for(&run, &mut rng, &[], 4) {
+                assert!(!matches!(choice, Choice::NewPassive(_)), "a seventh passive was offered");
+            }
+        }
+    }
+
+    #[test]
+    fn full_slots_offer_only_the_ranks_left_and_do_not_pad_the_hand() {
+        let mut run = capped_run();
+        run.abilities[0].level -= 1;
+        run.passives[0].1 -= 1;
+        let hand = hud::choices_for(&run, &mut Rng(1), &[], 3);
+        assert_eq!(hand.len(), 2);
+        assert!(hand.iter().any(|c| matches!(c, Choice::Upgrade(0))));
+        assert!(hand.iter().any(|c| matches!(c, Choice::UpPassive(0))));
+    }
+
+    #[test]
+    fn with_nothing_left_to_gain_the_hand_is_the_heal() {
+        let hand = hud::choices_for(&capped_run(), &mut Rng(1), &[], 3);
+        assert!(matches!(hand.as_slice(), [Choice::Heal]));
+    }
+
+    #[test]
+    fn queued_levels_deal_one_hand_each_and_then_return_to_playing() {
+        let mut run = capped_run();
+        run.level = 6;
+        run.pending_levels = 3;
+        let mut offer = hud::Offer::default();
+        let mut rng = Rng(1);
+        let mut next = NextState::<Phase>::Unchanged;
+
+        hud::advance(&mut run, &mut offer, &mut rng, &mut next);
+        assert_eq!(run.pending_levels, 2);
+        assert!(matches!(offer.choices(), [Choice::Heal]));
+        assert!(matches!(next, NextState::Unchanged));
+
+        hud::advance(&mut run, &mut offer, &mut rng, &mut next);
+        assert_eq!(run.pending_levels, 1);
+        assert!(matches!(offer.choices(), [Choice::Heal]));
+        assert!(matches!(next, NextState::Unchanged));
+
+        hud::advance(&mut run, &mut offer, &mut rng, &mut next);
+        assert_eq!(run.pending_levels, 0);
+        assert_eq!(offer.len(), 0);
+        assert!(matches!(next, NextState::Pending(Phase::Playing)));
+    }
+
+    #[test]
+    fn picking_ranks_through_queued_levels_applies_each_and_then_requests_playing() {
+        let mut run = capped_run();
+        run.level = 10;
+        run.abilities[0].level -= 1;
+        run.passives[0].1 -= 1;
+        run.pending_levels = 2;
+        let mut offer = hud::Offer::default();
+        let mut rng = Rng(1);
+        let mut next = NextState::<Phase>::Unchanged;
+        offer.reroll(&run, &mut rng, 3);
+        assert_eq!(offer.len(), 2);
+
+        hud::pick(0, &mut run, &mut offer, &mut rng, &mut next);
+        assert_eq!(run.version, 1);
+        assert_eq!(run.pending_levels, 1);
+        assert!(matches!(next, NextState::Unchanged));
+        // One of the two ranks is taken, the other is the next level's only card.
+        assert_eq!(offer.len(), 1);
+        assert!(matches!(offer.choices(), [Choice::Upgrade(0) | Choice::UpPassive(0)]));
+
+        hud::pick(0, &mut run, &mut offer, &mut rng, &mut next);
+        assert_eq!(run.abilities[0].level, data::MAX_ABILITY_LEVEL);
+        assert_eq!(run.passives[0].1, data::MAX_PASSIVE_LEVEL);
+        assert_eq!(run.version, 2);
+        assert_eq!(run.pending_levels, 0);
+        assert_eq!(offer.len(), 0);
+        assert!(matches!(next, NextState::Pending(Phase::Playing)));
+    }
+
+    #[test]
+    fn picking_the_heal_restores_health_and_leaves_no_level_owed() {
+        let mut run = capped_run();
+        run.hp = 1.0;
+        let mut offer = hud::Offer::default();
+        let mut rng = Rng(1);
+        let mut next = NextState::<Phase>::Unchanged;
+        offer.reroll(&run, &mut rng, 3);
+        assert!(matches!(offer.choices(), [Choice::Heal]));
+
+        hud::pick(0, &mut run, &mut offer, &mut rng, &mut next);
+        assert_eq!(run.hp, run.stats().max_hp);
+        // No level was waiting: the count stays at zero instead of wrapping.
+        assert_eq!(run.pending_levels, 0);
+        assert_eq!(run.version, 1);
+        assert_eq!(offer.len(), 0);
+        assert!(matches!(next, NextState::Pending(Phase::Playing)));
+    }
+
+    #[test]
+    fn a_pick_that_is_not_on_the_table_does_nothing() {
+        let mut run = capped_run();
+        run.hp = 1.0;
+        run.pending_levels = 2;
+        let mut offer = hud::Offer::default();
+        let mut rng = Rng(1);
+        let mut next = NextState::<Phase>::Unchanged;
+        offer.reroll(&run, &mut rng, 3);
+        assert_eq!(offer.len(), 1);
+
+        // Past the end of the hand.
+        hud::pick(1, &mut run, &mut offer, &mut rng, &mut next);
+        assert_eq!(run.hp, 1.0);
+        assert_eq!(run.pending_levels, 2);
+        assert_eq!(run.version, 0);
+        assert_eq!(offer.len(), 1);
+        assert!(matches!(next, NextState::Unchanged));
+
+        // No hand at all, and the dice stay where they were.
+        let mut empty = hud::Offer::default();
+        let mut untouched = Rng(5);
+        hud::pick(0, &mut run, &mut empty, &mut untouched, &mut next);
+        assert_eq!(run.version, 0);
+        assert_eq!(run.pending_levels, 2);
+        assert_eq!(untouched.next_u64(), Rng(5).next_u64());
+        assert!(matches!(next, NextState::Unchanged));
     }
 }
