@@ -140,6 +140,8 @@ enum MenuTab {
     Collection,
     Loot,
     Achievements,
+    /// The co-op window ([`super::coop`]); the tab exists only in a build with co-op.
+    Coop,
     Options,
 }
 
@@ -335,8 +337,12 @@ fn top_bar(ui: &mut ChildSpawnerCommands, fonts: &KitFonts) {
                 (MenuTab::Collection, "Collection"),
                 (MenuTab::Loot, "Loot Tables"),
                 (MenuTab::Achievements, "Achievements"),
+                (MenuTab::Coop, "Co-op"),
                 (MenuTab::Options, "Options"),
-            ] {
+            ]
+            .into_iter()
+            .filter(|(tab, _)| *tab != MenuTab::Coop || cfg!(all(feature = "coop", not(target_arch = "wasm32"))))
+            {
                 kit::button(
                     tabs,
                     fonts,
@@ -924,6 +930,7 @@ fn tab_clicks(
     mut collection: ResMut<super::collection::CollectionUi>,
     mut loot: ResMut<super::loottables::LootUi>,
     mut achievements: ResMut<super::achievements::AchievementsUi>,
+    mut coop: Option<ResMut<super::CoopUi>>,
 ) {
     let Some(tab) = tabs
         .iter()
@@ -939,6 +946,11 @@ fn tab_clicks(
         MenuTab::Collection => collection.open = true,
         MenuTab::Loot => loot.open = true,
         MenuTab::Achievements => achievements.open = true,
+        MenuTab::Coop => {
+            if let Some(coop) = coop.as_mut() {
+                coop.open = true;
+            }
+        }
     }
 }
 

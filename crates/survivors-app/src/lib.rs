@@ -41,6 +41,7 @@ mod pickups;
 mod plates;
 mod prefs;
 mod talents;
+mod textfield;
 mod profile;
 mod quests;
 mod races;
@@ -70,7 +71,7 @@ impl Plugin for SurvivorsPlugin {
         app.insert_resource(benilla_app::survivors_host::run_mode::CaptureMode)
             .add_plugins((grade::plugin, kit::plugin, dmgmeter::plugin))
             .add_plugins((collection::plugin, loottables::plugin, achievements::plugin))
-            .add_plugins((races::plugin, records::plugin, surge::plugin, enrage::plugin, prefs::plugin))
+            .add_plugins((races::plugin, records::plugin, surge::plugin, enrage::plugin, prefs::plugin, textfield::plugin))
             .add_plugins((
                 trainer::plugin,
                 plates::plugin,
@@ -305,6 +306,13 @@ pub(crate) enum NetRole {
     Solo,
     Host,
     Client,
+}
+
+/// Whether the co-op window is open ([`coop`]); outside the module so the hub's tab and the
+/// menu keys can see it in a build without co-op too (it is never opened there).
+#[derive(Resource, Default)]
+pub(crate) struct CoopUi {
+    pub open: bool,
 }
 
 /// Run condition: this machine simulates the run (alone or as the host); a guest only shows the

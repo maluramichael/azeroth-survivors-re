@@ -109,6 +109,8 @@ pub(crate) struct Hello {
     pub display: u32,
     pub race: u8,
     pub sex: u8,
+    /// What the guest typed for a locked party; empty otherwise.
+    pub password: String,
 }
 
 /// Where the guest's own hero is, 20 times a second.

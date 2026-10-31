@@ -1223,6 +1223,7 @@ pub(super) fn keys(
         Res<super::collection::CollectionUi>,
         Res<super::loottables::LootUi>,
         Res<super::achievements::AchievementsUi>,
+        Option<Res<super::CoopUi>>,
     ),
     mut next: ResMut<NextState<Phase>>,
 ) {
@@ -1236,6 +1237,7 @@ pub(super) fn keys(
                 && !windows.0.open
                 && !windows.1.open
                 && !windows.2.open
+                && !windows.3.as_ref().is_some_and(|c| c.open)
                 && start_run(&mut run, &mut selection, &profile)
             {
                 next.set(Phase::Playing);

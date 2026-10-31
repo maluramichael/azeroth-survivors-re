@@ -13,7 +13,7 @@ use bevy_replicon::server::server_tick::ServerTick;
 use super::wire::{
     EndRun, Hello, Look, MoveInput, NetHero, NetPos, Refused, StartRun, Welcome,
 };
-use super::{free_slot, Guest, Session};
+use super::{admits, free_slot, Guest, Lobby, Session};
 use crate::chatlog::ChatLine;
 use crate::data::{self, ClassDef};
 use crate::hero::{self, Hero, Peer};
@@ -189,7 +189,16 @@ fn greet(
             });
             continue;
         };
-        let Some(player) = free_slot(&session.guests) else {
+        if !admits(&session.lobby.password, &hello.message.password) {
+            refuse.write(ToClients {
+                targets: to,
+                message: Refused {
+                    reason: "Wrong password".into(),
+                },
+            });
+            continue;
+        }
+        let Some(player) = free_slot(&session.guests, Lobby::seats(session.lobby.max_players)) else {
             warn!("survivors: co-op: the party is full; turning a guest away");
             refuse.write(ToClients {
                 targets: to,
@@ -369,6 +378,34 @@ fn farewell(
     });
 }
 
+/// Stop hosting: every guest is let go, their puppets leave, and the host's hero stops
+/// replicating (it is tagged again if this machine hosts once more).
+pub(super) fn stop(world: &mut World) {
+    use bevy_replicon_renet2::netcode::NetcodeServerTransport;
+    use bevy_replicon_renet2::renet2::RenetServer;
+    let transport = world.remove_resource::<NetcodeServerTransport>();
+    if let Some(mut server) = world.remove_resource::<RenetServer>() {
+        if let Some(mut transport) = transport {
+            transport.disconnect_all(&mut server);
+        } else {
+            server.disconnect_all();
+        }
+    }
+    let mut puppets = world.query_filtered::<Entity, With<Peer>>();
+    let gone: Vec<Entity> = puppets.iter(world).collect();
+    for e in gone {
+        world.despawn(e);
+    }
+    let mut tagged = world.query_filtered::<Entity, With<NetHero>>();
+    let tagged: Vec<Entity> = tagged.iter(world).collect();
+    for e in tagged {
+        world
+            .entity_mut(e)
+            .remove::<(Replicated, Look, NetHero, NetPos)>();
+    }
+    info!("survivors: co-op: stopped hosting");
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -433,6 +470,7 @@ mod tests {
             display: 0,
             race: 1,
             sex: 0,
+            password: String::new(),
         };
         let stays = app.world_mut().spawn(Peer { player: 1 }).id();
         let goes = app.world_mut().spawn(Peer { player: 2 }).id();
@@ -446,6 +484,6 @@ mod tests {
         assert_eq!(session.guests[0].player, 1);
         assert!(app.world().get_entity(stays).is_ok());
         assert!(app.world().get_entity(goes).is_err());
-        assert_eq!(free_slot(&app.world().resource::<Session>().guests), Some(2));
+        assert_eq!(free_slot(&app.world().resource::<Session>().guests, 3), Some(2));
     }
 }

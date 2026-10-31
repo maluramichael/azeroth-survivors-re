@@ -75,7 +75,7 @@ fn step_aside(
 
 /// Leave the session: the link goes, every replicated entity goes, and this machine is a solo
 /// player at its menu again.
-fn leave(world: &mut World) {
+pub(super) fn leave(world: &mut World) {
     use bevy_replicon_renet2::netcode::NetcodeClientTransport;
     use bevy_replicon_renet2::renet2::RenetClient;
     if let Some(mut client) = world.remove_resource::<RenetClient>() {
@@ -164,6 +164,7 @@ fn greet(
         display,
         race,
         sex,
+        password: session.join_password.clone(),
     });
 }
 
@@ -191,6 +192,7 @@ fn receive(
     }
     for w in welcomes.read() {
         session.player = Some(w.player);
+        session.link = super::Link::Joined;
         info!("survivors: co-op: seated as player {}", w.player);
     }
     for s in starts.read() {
