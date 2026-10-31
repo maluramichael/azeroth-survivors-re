@@ -21,8 +21,9 @@ use super::{Phase, Run};
 const MAX_LINES: usize = 100;
 /// Lines on screen.
 const VISIBLE: usize = 8;
-/// Seconds experience and gold are summed before they print.
-const AGG_SECS: f32 = 4.0;
+/// Seconds experience and gold are summed before they print: short enough to read as live, long
+/// enough that a pack of kills is one line, not ten.
+const AGG_SECS: f32 = 1.0;
 /// Seconds without a new line or the cursor before the window starts to fade, and how long the
 /// fade takes.
 const FADE_AFTER: f32 = 10.0;
