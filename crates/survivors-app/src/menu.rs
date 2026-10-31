@@ -159,6 +159,10 @@ struct ZoneLevels {
     hi: u32,
 }
 
+/// A zone row's second line: the selected class's best there ([`super::records::note`]).
+#[derive(Component)]
+struct ZoneBest(usize);
+
 /// A zone row, painted by selection and hover.
 #[derive(Component)]
 struct ZoneRow(usize);
@@ -580,27 +584,48 @@ fn zone_panel(ui: &mut ChildSpawnerCommands, fonts: &KitFonts, lock: Option<Hand
                     ))
                     .with_children(|row| {
                         row.spawn((ZoneName(i), kit::title(fonts, map.name, 18.0)));
+                        // The level range over the best run, right-aligned; the best's line
+                        // keeps its height when empty so the rows stay level.
                         row.spawn(Node {
-                            align_items: AlignItems::Center,
-                            column_gap: px(4.0),
+                            flex_direction: FlexDirection::Column,
+                            align_items: AlignItems::FlexEnd,
                             ..default()
                         })
                         .with_children(|right| {
-                            // The padlock of a zone the character is too low for.
-                            right.spawn((
-                                ZoneLock(i),
-                                Visibility::Hidden,
-                                lock.clone().map(ImageNode::new).unwrap_or_default(),
-                                Node {
-                                    width: px(13.0),
-                                    height: px(13.0),
+                            right
+                                .spawn(Node {
+                                    align_items: AlignItems::Center,
+                                    column_gap: px(4.0),
                                     ..default()
-                                },
-                            ));
-                            right.spawn((
-                                ZoneLevels { map: i, lo, hi },
-                                kit::body(fonts, level_range(lo, hi), 11.0, kit::MUTED),
-                            ));
+                                })
+                                .with_children(|top| {
+                                    // The padlock of a zone the character is too low for.
+                                    top.spawn((
+                                        ZoneLock(i),
+                                        Visibility::Hidden,
+                                        lock.clone().map(ImageNode::new).unwrap_or_default(),
+                                        Node {
+                                            width: px(13.0),
+                                            height: px(13.0),
+                                            ..default()
+                                        },
+                                    ));
+                                    top.spawn((
+                                        ZoneLevels { map: i, lo, hi },
+                                        kit::body(fonts, level_range(lo, hi), 11.0, kit::MUTED),
+                                    ));
+                                });
+                            right
+                                .spawn(Node {
+                                    height: px(12.0),
+                                    ..default()
+                                })
+                                .with_children(|line| {
+                                    line.spawn((
+                                        ZoneBest(i),
+                                        kit::body(fonts, "", 10.0, kit::MUTED),
+                                    ));
+                                });
                         });
                     });
                 }
@@ -1019,6 +1044,10 @@ fn refresh_zone_rows(
     mut rows: Query<(&ZoneRow, &Interaction, &mut BackgroundColor, &mut BorderColor)>,
     mut names: Query<(&ZoneName, &mut TextColor), Without<ZoneLevels>>,
     mut levels: Query<(&ZoneLevels, &mut Text, &mut TextColor), Without<ZoneName>>,
+    mut bests: Query<
+        (&ZoneBest, &mut Text, &mut TextColor),
+        (Without<ZoneLevels>, Without<ZoneName>),
+    >,
     mut locks: Query<(&ZoneLock, &mut Visibility)>,
 ) {
     let profile = profile.as_deref();
@@ -1058,6 +1087,25 @@ fn refresh_zone_rows(
         }
         if color.0 != kit::MUTED {
             color.0 = kit::MUTED;
+        }
+    }
+    // The selected class's best per zone, in gold once it has won there.
+    let class_id = selection.class.map(|c| data::CLASSES[c].id);
+    for (zone, mut text, mut color) in &mut bests {
+        let best = class_id
+            .zip(profile)
+            .and_then(|(id, p)| p.records.get(&super::records::key(zone.0, id)));
+        let want = super::records::note(best);
+        if text.0 != want {
+            text.0 = want;
+        }
+        let want = if best.is_some_and(|b| b.wins > 0) {
+            kit::TITLE
+        } else {
+            kit::MUTED
+        };
+        if color.0 != want {
+            color.0 = want;
         }
     }
     for (lock, mut vis) in &mut locks {
