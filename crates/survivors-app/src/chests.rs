@@ -14,7 +14,7 @@ use super::hero::Hero;
 use super::items::drop_boost;
 use super::pickups::Beacons;
 use super::units::{self, flat, Fx};
-use super::{Phase, Rng, Run};
+use super::{Rng, Run};
 
 /// `GameObjectDisplayInfo` 259, `TreasureChest01.mdx`.
 const CHEST_DISPLAY: u32 = 259;
@@ -43,7 +43,7 @@ pub(super) fn plugin(app: &mut App) {
         (drop_chests, open_chests)
             .chain()
             .after(WorldStage::Input)
-            .run_if(in_state(Phase::Playing))
+            .run_if(super::run_on)
             .run_if(|l: Res<benilla_app::survivors_host::loading_screen::LoadingScreen>| !l.covering()),
     );
 }

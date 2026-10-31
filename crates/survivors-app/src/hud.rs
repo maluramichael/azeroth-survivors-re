@@ -15,7 +15,7 @@ use super::data::{self, AbilityDef, Effect, Kind, PassiveDef, Stat};
 use super::hero::{self, Hero};
 use super::minimap::{self, MiniMap};
 use super::profile::Profile;
-use super::{Owned, Phase, Rng, Run, Selection, Stats};
+use super::{HeroState, Owned, Phase, Rng, Run, Selection, Stats};
 
 const GOLD: Color = Color::srgb(1.0, 0.82, 0.0);
 /// The mobility button's edge, an action button's 36 units.
@@ -197,6 +197,102 @@ pub(super) struct Offer {
     /// Choices banished this run, by [`choice_key`]: they never come back. Cleared when the run's
     /// first hand is dealt ([`roll_offer`]).
     pub(super) banished: Vec<&'static str>,
+    /// Every pick and skip, kept while `Some`: a co-op guest sends them to its host, who applies
+    /// them to the guest's hero there.
+    pub(super) log: Option<Vec<Picked>>,
+}
+
+/// A pick named by keys, not by places in the hero's lists, so another machine can apply it to
+/// its copy of the hero ([`resolve`]).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum Picked {
+    NewAbility(&'static str),
+    Upgrade(&'static str),
+    NewPassive(&'static str),
+    UpPassive(&'static str),
+    /// The evolved spell's key.
+    Evolve(&'static str),
+    Heal,
+    /// The hand was skipped for this much gold.
+    Skip(u32),
+}
+
+/// `choice` by keys, for the hero it was dealt to.
+pub(crate) fn picked(choice: Choice, hero: &HeroState) -> Option<Picked> {
+    Some(match choice {
+        Choice::NewAbility(def) => Picked::NewAbility(def.key),
+        Choice::Upgrade(k) => Picked::Upgrade(hero.abilities.get(k)?.def.key),
+        Choice::NewPassive(p) => Picked::NewPassive(p.key),
+        Choice::UpPassive(k) => Picked::UpPassive(hero.passives.get(k)?.0.key),
+        Choice::Evolve(evo) => Picked::Evolve(evo.into),
+        Choice::Heal => Picked::Heal,
+    })
+}
+
+/// The choice `picked` names for `hero`, if the hero may take it now: a spell of its class it has
+/// no slot or rank left for, a passive it has maxed, an evolution whose recipe does not hold, are
+/// all refused. A skip is no choice.
+pub(crate) fn resolve(hero: &HeroState, picked: Picked) -> Option<Choice> {
+    match picked {
+        Picked::NewAbility(key) => {
+            let def = data::ABILITIES.iter().find(|a| a.key == key)?;
+            (hero.class.pool.contains(&key)
+                && hero.abilities.len() < data::MAX_ABILITIES
+                && !hero.abilities.iter().any(|o| o.def.key == key)
+                && !super::evolutions::evolved_from(hero, key))
+            .then_some(Choice::NewAbility(def))
+        }
+        Picked::Upgrade(key) => hero
+            .abilities
+            .iter()
+            .position(|o| o.def.key == key && o.level < data::MAX_ABILITY_LEVEL)
+            .map(Choice::Upgrade),
+        Picked::NewPassive(key) => {
+            let p = data::PASSIVES.iter().find(|p| p.key == key)?;
+            (hero.passives.len() < data::MAX_PASSIVES
+                && !hero.passives.iter().any(|(q, _)| q.key == key))
+            .then_some(Choice::NewPassive(p))
+        }
+        Picked::UpPassive(key) => hero
+            .passives
+            .iter()
+            .position(|(p, l)| p.key == key && *l < data::MAX_PASSIVE_LEVEL)
+            .map(Choice::UpPassive),
+        Picked::Evolve(into) => super::evolutions::ready(hero)
+            .into_iter()
+            .find(|e| e.into == into)
+            .map(Choice::Evolve),
+        Picked::Heal => Some(Choice::Heal),
+        Picked::Skip(_) => None,
+    }
+}
+
+/// `choice` taken by `hero`; returns the banner it earns, if any.
+pub(crate) fn apply_choice(hero: &mut HeroState, choice: Choice) -> Option<String> {
+    let mut banner = None;
+    match choice {
+        Choice::NewAbility(def) => hero.abilities.push(Owned {
+            def,
+            level: 1,
+            cd: 0.3,
+        }),
+        Choice::Upgrade(k) => hero.abilities[k].level += 1,
+        Choice::NewPassive(p) => hero.passives.push((p, 1)),
+        Choice::UpPassive(k) => hero.passives[k].1 += 1,
+        Choice::Evolve(evo) => {
+            if let Some(o) = hero.abilities.iter_mut().find(|o| o.def.key == evo.from) {
+                *o = Owned {
+                    def: data::ability(evo.into),
+                    level: data::EVOLVED_LEVEL,
+                    cd: 0.3,
+                };
+                banner = Some(format!("It evolves into {}!", evo.name));
+            }
+        }
+        Choice::Heal => hero.hp = hero.stats().max_hp,
+    }
+    hero.version += 1;
+    banner
 }
 
 /// The key a choice is banished by: the ability's key for a new spell or a rank of it, the
@@ -1118,28 +1214,12 @@ pub(super) fn pick(
     let Some(&choice) = offer.choices.get(i) else {
         return;
     };
-    match choice {
-        Choice::NewAbility(def) => run.abilities.push(Owned {
-            def,
-            level: 1,
-            cd: 0.3,
-        }),
-        Choice::Upgrade(k) => run.abilities[k].level += 1,
-        Choice::NewPassive(p) => run.passives.push((p, 1)),
-        Choice::UpPassive(k) => run.passives[k].1 += 1,
-        Choice::Evolve(evo) => {
-            if let Some(o) = run.abilities.iter_mut().find(|o| o.def.key == evo.from) {
-                *o = Owned {
-                    def: data::ability(evo.into),
-                    level: data::EVOLVED_LEVEL,
-                    cd: 0.3,
-                };
-                run.banner = Some((format!("It evolves into {}!", evo.name), 4.0));
-            }
-        }
-        Choice::Heal => run.hp = run.stats().max_hp,
+    if let (Some(log), Some(p)) = (offer.log.as_mut(), picked(choice, &run.me)) {
+        log.push(p);
     }
-    run.version += 1;
+    if let Some(text) = apply_choice(&mut run.me, choice) {
+        run.banner = Some((text, 4.0));
+    }
     advance(run, offer, rng, next);
 }
 

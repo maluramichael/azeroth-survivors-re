@@ -171,7 +171,7 @@ pub(super) fn plugin(app: &mut App) {
             (summon, hunt, finale_slain)
                 .chain()
                 .after(WorldStage::Input)
-                .run_if(in_state(Phase::Playing))
+                .run_if(super::run_on)
                 .run_if(super::simulates)
                 .run_if(|l: Res<benilla_app::survivors_host::loading_screen::LoadingScreen>| !l.covering()),
         )

@@ -653,7 +653,7 @@ fn shake_offsets(trauma: f32, t: f32, arm: f32) -> (Vec3, Vec3) {
 /// Damage the hero takes from one blow, after immunity, armour and the shield; returns what got
 /// through.
 pub(super) fn hurt_hero(hero: &mut HeroState, raw: f32) -> f32 {
-    if hero.immune_t > 0.0 || hero.dead_t.is_some() {
+    if hero.immune_t > 0.0 || hero.dead_t.is_some() || hero.picking {
         return 0.0;
     }
     let mut dmg = (raw - hero.stats().armor).max(1.0);
@@ -664,6 +664,18 @@ pub(super) fn hurt_hero(hero: &mut HeroState, raw: f32) -> f32 {
     }
     hero.hp -= dmg;
     dmg
+}
+
+/// This machine's hero is choosing cards while the co-op world goes on ([`HeroState::picking`]).
+pub(super) fn mark_picking(
+    phase: Res<State<Phase>>,
+    role: Res<super::NetRole>,
+    mut run: ResMut<Run>,
+) {
+    let picking = *phase.get() == Phase::LevelUp && *role != super::NetRole::Solo;
+    if run.picking != picking {
+        run.picking = picking;
+    }
 }
 
 /// The clock, regeneration, the timed buffs and their visuals, death and victory. A co-op guest's

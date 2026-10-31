@@ -10,7 +10,7 @@ use bevy_replicon::prelude::{ClientState, ClientSystems, Remote};
 use super::{Session, ASIDE_YARDS};
 use super::smooth;
 use super::wire::{
-    EndRun, FxBatch, Hello, Look, MoveInput, NetAuras, NetBuild, NetEnemy, NetFx, NetHero, NetPos,
+    CardAction, EndRun, FxBatch, NetPicked, Hello, Look, MoveInput, NetAuras, NetBuild, NetEnemy, NetFx, NetHero, NetPos,
     NetRun, NetVitals, Refused, RunOver, StartRun, Welcome,
 };
 use crate::chatlog::ChatLine;
@@ -42,8 +42,16 @@ pub(super) struct OwnPuppet;
 #[derive(Component)]
 struct Killed;
 
+/// When this guest last sent a level-up pick (wall-clock seconds): until the host's word on the
+/// hero's build has had time to come back, an older word does not undo the pick here.
+#[derive(Resource, Default)]
+struct RecentPick(f64);
+
+/// Seconds a pick here outranks the host's word on the build.
+const PICK_GRACE: f64 = 0.6;
+
 pub(super) fn plugin(app: &mut App) {
-    app.add_systems(
+    app.init_resource::<RecentPick>().add_systems(
         Update,
         (
             watch_link,
@@ -69,7 +77,7 @@ pub(super) fn plugin(app: &mut App) {
     )
     .add_systems(
         PostUpdate,
-        send_moves
+        (send_moves, send_picks)
             .before(ClientSystems::Send)
             .run_if(resource_equals(NetRole::Client)),
     );
@@ -127,6 +135,7 @@ pub(super) fn leave(world: &mut World) {
     }
     *world.resource_mut::<NetRole>() = NetRole::Solo;
     world.resource_mut::<Session>().player = None;
+    world.resource_mut::<hud::Offer>().log = None;
     if *world.resource::<State<Phase>>().get() != Phase::Menu {
         world.resource_mut::<NextState<Phase>>().set(Phase::Menu);
     }
@@ -308,7 +317,28 @@ fn send_moves(
         yaw: tf.rotation.to_euler(EulerRot::YXZ).0,
         pace: mv.speed,
         flags: mv.flags,
+        picking: *phase.get() == Phase::LevelUp,
     });
+}
+
+/// This guest's level-up picks and skips, to the host, which applies them to the guest's hero
+/// there. The picker keeps a log of them for as long as this machine is a guest.
+fn send_picks(
+    time: Res<Time<Real>>,
+    mut offer: ResMut<hud::Offer>,
+    mut recent: ResMut<RecentPick>,
+    mut out: MessageWriter<CardAction>,
+) {
+    // Without touching the change ticks: the cards are dealt again whenever the offer changes.
+    let offer = offer.bypass_change_detection();
+    let log = offer.log.get_or_insert_with(Vec::new);
+    if log.is_empty() {
+        return;
+    }
+    for p in log.drain(..) {
+        out.write(CardAction(NetPicked::from_picked(p)));
+    }
+    recent.0 = time.elapsed_secs_f64();
 }
 
 /// The serials of the bodies built here, counting up from [`BODY_SERIAL_BASE`].
@@ -458,6 +488,8 @@ fn sync_auras(
 fn sync_me(
     mut run: ResMut<Run>,
     phase: Res<State<Phase>>,
+    time: Res<Time<Real>>,
+    recent: Res<RecentPick>,
     puppet: Query<(&NetVitals, &NetBuild), With<OwnPuppet>>,
     mut hero: Query<(Entity, &Guid, &mut ObjectStore, &mut Marks), (With<Hero>, Without<OwnPuppet>)>,
     mut fields: MessageWriter<FieldChanged>,
@@ -498,27 +530,20 @@ fn sync_me(
             }
         }
     }
-    if fresh_build {
+    // Right after a pick here the host's build may still be the one from before it.
+    let settled = time.elapsed_secs_f64() - recent.0 > PICK_GRACE;
+    if fresh_build && (settled || same_lists(me, build)) {
         apply_build(me, build);
+    } else if fresh_build {
+        // Looked at again next frame.
+        *seen = None;
     }
 }
 
 /// `build` into `hero`: the ranks and cooldowns, and the lists themselves when a spell or passive
 /// came or went (the HUD rebuilds its icon rows then).
 fn apply_build(hero: &mut crate::HeroState, build: &NetBuild) {
-    let same = hero.abilities.len() == build.abilities.len()
-        && hero
-            .abilities
-            .iter()
-            .zip(&build.abilities)
-            .all(|(o, (key, level, _))| o.def.key == key && o.level == *level)
-        && hero.passives.len() == build.passives.len()
-        && hero
-            .passives
-            .iter()
-            .zip(&build.passives)
-            .all(|((p, l), (key, level))| p.key == key && l == level);
-    if same {
+    if same_lists(hero, build) {
         for (o, (_, _, cd)) in hero.abilities.iter_mut().zip(&build.abilities) {
             o.cd = f32::from(*cd) / 100.0;
         }
@@ -549,10 +574,27 @@ fn apply_build(hero: &mut crate::HeroState, build: &NetBuild) {
     hero.version += 1;
 }
 
+/// Whether `hero` has exactly the spells, passives and ranks `build` names.
+fn same_lists(hero: &crate::HeroState, build: &NetBuild) -> bool {
+    hero.abilities.len() == build.abilities.len()
+        && hero
+            .abilities
+            .iter()
+            .zip(&build.abilities)
+            .all(|(o, (key, level, _))| o.def.key == key && o.level == *level)
+        && hero.passives.len() == build.passives.len()
+        && hero
+            .passives
+            .iter()
+            .zip(&build.passives)
+            .all(|((p, l), (key, level))| p.key == key && l == level)
+}
+
 /// The party's clock, kills, level and experience are the host's; a new banner shows here too.
 fn sync_run(
     mut run: ResMut<Run>,
     phase: Res<State<Phase>>,
+    mut next: ResMut<NextState<Phase>>,
     shared: Query<Ref<NetRun>>,
     mut shown: Local<Option<u32>>,
 ) {
@@ -576,6 +618,14 @@ fn sync_run(
         run.banner = Some((text.clone(), 3.5));
     }
     *shown = Some(*seq);
+    // Each level the party reaches is a hand of cards for this hero too; the world goes on
+    // behind them.
+    if run.level > was {
+        run.pending_levels += run.level - was;
+        if *phase.get() == Phase::Playing {
+            next.set(Phase::LevelUp);
+        }
+    }
     // The party's level teaches this hero its mobility, as it does the host's.
     if was < crate::mobility::LEARN_LEVEL && run.level >= crate::mobility::LEARN_LEVEL {
         if let Some(m) = crate::mobility::for_class(run.class.id) {

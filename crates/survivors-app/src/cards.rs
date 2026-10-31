@@ -23,7 +23,7 @@ const CARD_W: f32 = 250.0;
 /// A hand of four (the perk) gets narrower cards so the row still fits a 1024-wide screen.
 const CARD_W_FOUR: f32 = 220.0;
 /// Gold per level for skipping a hand.
-const SKIP_GOLD_PER_LEVEL: u32 = 10;
+pub(super) const SKIP_GOLD_PER_LEVEL: u32 = 10;
 const CARD_H: f32 = 370.0;
 /// Seconds between one card landing and the next.
 const DEAL_STAGGER: f32 = 0.09;
@@ -803,6 +803,39 @@ pub(super) fn animate_cards(
     }
 }
 
+/// Seconds a hand may stay open in a co-op run before a card is picked at random: the one choosing
+/// is spared by the horde, which must not last.
+pub(super) const PICK_LIMIT_SECS: f32 = 20.0;
+
+/// In a co-op run, a hand left open past [`PICK_LIMIT_SECS`] picks one of its cards at random.
+/// Every new hand (a reroll, a banish, the next level) starts the clock again.
+pub(super) fn pick_in_time(
+    time: Res<Time<Real>>,
+    phase: Res<State<Phase>>,
+    role: Res<super::NetRole>,
+    offer: Res<Offer>,
+    mut pending: ResMut<PendingPick>,
+    mut rng: ResMut<Rng>,
+    mut chat: MessageWriter<super::chatlog::ChatLine>,
+    mut open: Local<f32>,
+) {
+    if *phase.get() != Phase::LevelUp || *role == super::NetRole::Solo {
+        *open = 0.0;
+        return;
+    }
+    if offer.is_changed() {
+        *open = 0.0;
+    }
+    *open += time.delta_secs();
+    if *open >= PICK_LIMIT_SECS && pending.0.is_none() && offer.len() > 0 {
+        pending.0 = Some((rng.index(offer.len()), 0.0));
+        chat.write(super::chatlog::ChatLine::system(
+            "Time is up: a card was picked for you.",
+        ));
+        *open = 0.0;
+    }
+}
+
 /// A click on a card, or 1/2/3/4: start its burst; the choice applies when it finishes. Also the
 /// banish, reroll and skip buttons (R and X for the last two).
 #[allow(clippy::too_many_arguments)]
@@ -872,6 +905,9 @@ pub(super) fn choose_card(
             }
             LevelUpAction::Skip => {
                 let gold = skip_gold(&run);
+                if let Some(log) = offer.log.as_mut() {
+                    log.push(hud::Picked::Skip(gold));
+                }
                 run.gold += gold;
                 run.banner = Some((format!("Skipped, +{gold} gold"), 2.5));
                 run.version += 1;
@@ -1093,6 +1129,39 @@ mod tests {
         }
         // The ranks still open are on offer.
         assert!(upgrades > 0);
+    }
+
+    #[test]
+    fn a_pick_named_by_keys_lands_the_same_on_another_copy_and_only_once() {
+        for class in data::CLASSES {
+            let mut here = crate::HeroState::new(class, 1, Default::default(), Default::default());
+            let mut there = crate::HeroState::new(class, 1, Default::default(), Default::default());
+            let mut rng = Rng(5);
+            for _ in 0..40 {
+                let mut probe = Run {
+                    level: 3,
+                    me: std::mem::take(&mut here),
+                    ..Run::default()
+                };
+                let hand = hud::choices_for(&probe, &mut rng, &[], 3);
+                here = std::mem::take(&mut probe.me);
+                let choice = hand[0];
+                let named = hud::picked(choice, &here).expect("named");
+                let theirs = hud::resolve(&there, named).expect("allowed there too");
+                hud::apply_choice(&mut here, choice);
+                hud::apply_choice(&mut there, theirs);
+                let keys = |h: &crate::HeroState| {
+                    (
+                        h.abilities.iter().map(|o| (o.def.key, o.level)).collect::<Vec<_>>(),
+                        h.passives.iter().map(|(p, l)| (p.key, *l)).collect::<Vec<_>>(),
+                    )
+                };
+                assert_eq!(keys(&here), keys(&there), "{}", class.name);
+                if matches!(named, hud::Picked::NewAbility(_) | hud::Picked::NewPassive(_)) {
+                    assert!(hud::resolve(&there, named).is_none(), "a new pick twice");
+                }
+            }
+        }
     }
 
     #[test]

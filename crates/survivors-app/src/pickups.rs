@@ -13,7 +13,7 @@ use super::finale::Reaper;
 use super::hero::Hero;
 use super::items::drop_boost;
 use super::units::{flat, Fx, Marks};
-use super::{Phase, Rng, Run, RunEntity};
+use super::{Rng, Run, RunEntity};
 
 /// Shards lying on the ground at once; past it the dead drop none.
 const MAX_SHARDS: usize = 4;
@@ -54,7 +54,7 @@ pub(super) fn plugin(app: &mut App) {
         (drop_shards, collect_shards)
             .chain()
             .after(WorldStage::Input)
-            .run_if(in_state(Phase::Playing))
+            .run_if(super::run_on)
             .run_if(super::simulates)
             .run_if(|l: Res<benilla_app::survivors_host::loading_screen::LoadingScreen>| !l.covering()),
     );

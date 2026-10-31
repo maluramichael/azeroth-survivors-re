@@ -56,7 +56,7 @@ pub(super) fn plugin(app: &mut App) {
             (arm, drop_items, collect_items)
                 .chain()
                 .after(WorldStage::Input)
-                .run_if(in_state(Phase::Playing))
+                .run_if(super::run_on)
                 .run_if(|l: Res<benilla_app::survivors_host::loading_screen::LoadingScreen>| !l.covering()),
         )
         .add_systems(Update, show_strip.run_if(in_run))

@@ -27,7 +27,7 @@ use bevy::prelude::*;
 
 use super::hero::{arena, Hero};
 use super::units::flat;
-use super::{Phase, RunEntity, Selection};
+use super::{RunEntity, Selection};
 
 /// Yards per cell.
 const CELL: f32 = 1.0;
@@ -717,7 +717,7 @@ pub(super) fn plugin(app: &mut App) {
             track_hero
                 .after(WorldStage::Input)
                 .before(super::enemies::move_enemies)
-                .run_if(in_state(Phase::Playing))
+                .run_if(super::run_on)
                 // The same gates as the chase it feeds.
                 .run_if(|l: Res<benilla_app::survivors_host::loading_screen::LoadingScreen>| !l.covering()),
         );

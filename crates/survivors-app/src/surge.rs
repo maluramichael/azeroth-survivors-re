@@ -24,7 +24,7 @@ const Z: i32 = 401;
 
 pub(super) fn plugin(app: &mut App) {
     app.init_resource::<Surge>()
-        .add_systems(Update, tick.run_if(in_state(Phase::Playing)))
+        .add_systems(Update, tick.run_if(super::run_on))
         .add_systems(Update, refresh_text)
         .add_systems(OnEnter(Phase::Menu), reset);
 }

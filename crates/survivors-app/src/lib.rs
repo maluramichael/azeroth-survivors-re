@@ -127,6 +127,7 @@ impl Plugin for SurvivorsPlugin {
             .add_systems(
                 Update,
                 (
+                    hero::mark_picking,
                     enemies::spawn_enemies,
                     enemies::move_enemies,
                     abilities::cast_abilities,
@@ -139,7 +140,7 @@ impl Plugin for SurvivorsPlugin {
                 )
                     .chain()
                     .after(WorldStage::Input)
-                    .run_if(in_state(Phase::Playing))
+                    .run_if(run_on)
                     .run_if(simulates)
                     // Entering a battleground raises its loading screen: the run waits behind it.
                     .run_if(|l: Res<benilla_app::survivors_host::loading_screen::LoadingScreen>| !l.covering()),
@@ -162,6 +163,7 @@ impl Plugin for SurvivorsPlugin {
                     menu::refresh_menu_ui.before(benilla_app::survivors_host::glue::GlueVisuals),
                     cards::deal_cards,
                     cards::choose_card,
+                    cards::pick_in_time,
                     cards::animate_cards,
                     hud::refresh_hud,
                     hud::refresh_results,
@@ -315,6 +317,16 @@ pub(crate) struct CoopUi {
     pub open: bool,
 }
 
+/// Run condition: the run's world moves. Alone only while playing; in a co-op party also behind
+/// the level-up cards and the pause menu, which stop no one there.
+pub(crate) fn run_on(phase: Res<State<Phase>>, role: Res<NetRole>) -> bool {
+    match phase.get() {
+        Phase::Playing => true,
+        Phase::LevelUp | Phase::Paused => *role != NetRole::Solo,
+        Phase::Menu | Phase::GameOver => false,
+    }
+}
+
 /// Run condition: this machine simulates the run (alone or as the host); a guest only shows the
 /// host's.
 pub(crate) fn simulates(role: Res<NetRole>) -> bool {
@@ -372,6 +384,9 @@ pub(crate) struct HeroState {
     mobile: mobility::MobilityState,
     /// Seconds since the hero fell, while the death plays out.
     pub dead_t: Option<f32>,
+    /// Choosing level-up cards in a co-op run, where the world goes on: the horde leaves the hero
+    /// be and nothing hurts it meanwhile.
+    pub picking: bool,
     pub damage_done: f64,
     /// Bumped whenever abilities or passives change, so the HUD rebuilds the icon rows once.
     pub version: u32,
@@ -437,6 +452,7 @@ impl Default for HeroState {
             meta: profile::MetaBonus::default(),
             mobile: mobility::MobilityState::default(),
             dead_t: None,
+            picking: false,
             damage_done: 0.0,
             version: 0,
             gear: mods::StatMods::default(),
@@ -579,8 +595,11 @@ fn seed_rng(mut rng: ResMut<Rng>) {
     }
 }
 
-fn pause(mut time: ResMut<Time<Virtual>>) {
-    time.pause();
+/// The level-up cards and the pause menu stop the clock, when playing alone.
+fn pause(mut time: ResMut<Time<Virtual>>, role: Res<NetRole>) {
+    if *role == NetRole::Solo {
+        time.pause();
+    }
 }
 
 fn unpause(mut time: ResMut<Time<Virtual>>) {

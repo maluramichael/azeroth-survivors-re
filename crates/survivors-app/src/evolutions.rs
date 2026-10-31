@@ -48,7 +48,7 @@ fn holds(evo: &Evolution, abilities: &[(&str, u8)], passives: &[(&str, u8)]) -> 
 }
 
 /// The recipes that hold for the run now.
-pub(super) fn ready(run: &Run) -> Vec<&'static Evolution> {
+pub(super) fn ready(run: &super::HeroState) -> Vec<&'static Evolution> {
     let abilities: Vec<(&str, u8)> = run.abilities.iter().map(|o| (o.def.key, o.level)).collect();
     let passives: Vec<(&str, u8)> = run.passives.iter().map(|&(p, l)| (p.key, l)).collect();
     data::EVOLUTIONS
@@ -58,7 +58,7 @@ pub(super) fn ready(run: &Run) -> Vec<&'static Evolution> {
 }
 
 /// Whether the run's `key` ability has already evolved into its stronger spell.
-pub(super) fn evolved_from(run: &Run, key: &str) -> bool {
+pub(super) fn evolved_from(run: &super::HeroState, key: &str) -> bool {
     data::EVOLUTIONS
         .iter()
         .any(|e| e.from == key && run.abilities.iter().any(|o| o.def.key == e.into))

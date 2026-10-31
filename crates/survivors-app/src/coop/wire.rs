@@ -126,6 +126,54 @@ pub(crate) struct Hello {
     pub password: String,
 }
 
+/// A level-up pick or skip by keys ([`crate::hud::Picked`]).
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub(crate) enum NetPicked {
+    NewAbility(String),
+    Upgrade(String),
+    NewPassive(String),
+    UpPassive(String),
+    Evolve(String),
+    Heal,
+    Skip(u32),
+}
+
+impl NetPicked {
+    pub fn from_picked(p: crate::hud::Picked) -> Self {
+        use crate::hud::Picked as P;
+        match p {
+            P::NewAbility(k) => Self::NewAbility(k.into()),
+            P::Upgrade(k) => Self::Upgrade(k.into()),
+            P::NewPassive(k) => Self::NewPassive(k.into()),
+            P::UpPassive(k) => Self::UpPassive(k.into()),
+            P::Evolve(k) => Self::Evolve(k.into()),
+            P::Heal => Self::Heal,
+            P::Skip(g) => Self::Skip(g),
+        }
+    }
+
+    /// The pick with this machine's own keys; `None` for a key it does not know.
+    pub fn to_picked(&self) -> Option<crate::hud::Picked> {
+        use crate::data;
+        use crate::hud::Picked as P;
+        let ability = |k: &str| data::ABILITIES.iter().find(|a| a.key == k).map(|a| a.key);
+        let passive = |k: &str| data::PASSIVES.iter().find(|p| p.key == k).map(|p| p.key);
+        Some(match self {
+            Self::NewAbility(k) => P::NewAbility(ability(k)?),
+            Self::Upgrade(k) => P::Upgrade(ability(k)?),
+            Self::NewPassive(k) => P::NewPassive(passive(k)?),
+            Self::UpPassive(k) => P::UpPassive(passive(k)?),
+            Self::Evolve(k) => P::Evolve(ability(k)?),
+            Self::Heal => P::Heal,
+            Self::Skip(g) => P::Skip(*g),
+        })
+    }
+}
+
+/// The guest took a level-up card or skipped a hand.
+#[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub(crate) struct CardAction(pub NetPicked);
+
 /// Where the guest's own hero is, 20 times a second.
 #[derive(Message, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
 pub(crate) struct MoveInput {
@@ -133,6 +181,8 @@ pub(crate) struct MoveInput {
     pub yaw: f32,
     pub pace: f32,
     pub flags: u32,
+    /// The level-up cards are open ([`crate::HeroState::picking`]).
+    pub picking: bool,
 }
 
 // Host to guest --------------------------------------------------------------------------------
@@ -290,6 +340,7 @@ pub(super) fn protocol(app: &mut App) {
         .replicate::<NetRun>()
         .add_client_message::<Hello>(Channel::Ordered)
         .add_client_message::<MoveInput>(Channel::Unreliable)
+        .add_client_message::<CardAction>(Channel::Ordered)
         .add_server_message::<Welcome>(Channel::Ordered)
         .add_server_message::<Refused>(Channel::Ordered)
         .make_message_independent::<Refused>()

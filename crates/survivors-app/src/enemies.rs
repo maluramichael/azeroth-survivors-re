@@ -555,6 +555,7 @@ pub(super) fn move_enemies(
         local: true,
         down: run.dead_t.is_some(),
         vanished: run.mobile.vanish_t > 0.0,
+        picking: run.picking,
     }];
     prey.extend(peers.iter().map(|(e, tf, s)| Prey {
         e,
@@ -562,6 +563,7 @@ pub(super) fn move_enemies(
         local: false,
         down: s.dead_t.is_some(),
         vanished: s.mobile.vanish_t > 0.0,
+        picking: s.picking,
     }));
     let hero_down = prey.iter().all(|p| p.down);
 
@@ -641,6 +643,7 @@ pub(super) fn move_enemies(
             local: true,
             down: true,
             vanished: false,
+            picking: false,
         });
         let hpos = quarry.pos;
         let to_hero = flat(hpos - pos);
@@ -741,12 +744,14 @@ struct Prey {
     down: bool,
     /// Under Fade: only bosses still see it.
     vanished: bool,
+    /// Choosing cards in a co-op run: no one goes for it.
+    picking: bool,
 }
 
 /// The nearest standing hero an enemy at `pos` sees, on the ground plane.
 fn nearest_prey(prey: &[Prey], pos: Vec3, boss: bool) -> Option<&Prey> {
     prey.iter()
-        .filter(|p| !p.down && (boss || !p.vanished))
+        .filter(|p| !p.down && !p.picking && (boss || !p.vanished))
         .min_by(|a, b| flat(a.pos - pos).length().total_cmp(&flat(b.pos - pos).length()))
 }
 
@@ -884,6 +889,7 @@ pub(super) fn collect_gems(
     time: Res<Time>,
     mut run: ResMut<Run>,
     mut rng: ResMut<Rng>,
+    phase: Res<State<Phase>>,
     mut next: ResMut<NextState<Phase>>,
     hero: Query<&Transform, (With<Hero>, Without<Gem>)>,
     mut peers: Query<(Entity, &Transform, &mut HeroState), (With<Peer>, Without<Hero>, Without<Gem>)>,
@@ -983,7 +989,9 @@ pub(super) fn collect_gems(
             }
         }
     }
-    if run.pending_levels > 0 {
+    // In a co-op run the world goes on behind the cards: a level reached meanwhile waits in the
+    // same hand queue.
+    if run.pending_levels > 0 && *phase.get() != Phase::LevelUp {
         next.set(Phase::LevelUp);
     }
 }
