@@ -3,6 +3,7 @@
 //! (now and then five); a chest with nothing left to rank up pays gold and a full heal instead.
 
 use benilla_world::schedule::WorldStage;
+use benilla_world::world_point::WorldPoint;
 use bevy::prelude::*;
 
 use super::chatlog::{ChatKind, ChatLine};
@@ -24,6 +25,9 @@ const BEAM_HEIGHT: f32 = 6.0;
 const LIFE: f32 = 120.0;
 /// How near the hero must walk, in yards.
 const OPEN_RADIUS: f32 = 2.2;
+/// A chest lands at least this far from the hero, so one dropped at its feet is not opened by
+/// accident (upstream issue #7).
+const CLEAR_OF_HERO: f32 = 5.0;
 /// Chance an elite drops a chest; a boss always does.
 const ELITE_CHANCE: f32 = 0.6;
 /// Chance a chest holds the larger count.
@@ -82,7 +86,20 @@ fn draw(mut pool: Vec<Target>, n: usize, mut pick: impl FnMut(usize) -> usize) -
     out
 }
 
-/// Elites and bosses leave a chest where they fall.
+/// Where a chest dropped at `at` lands: there, or pushed out along the line from the hero to
+/// [`CLEAR_OF_HERO`] yards.
+fn clear_of(hero: Vec3, at: Vec3) -> Vec3 {
+    let d = flat(at - hero);
+    let len = d.length();
+    if len >= CLEAR_OF_HERO {
+        return at;
+    }
+    let dir = if len > 0.01 { d / len } else { Vec3::X };
+    let p = hero + dir * CLEAR_OF_HERO;
+    Vec3::new(p.x, at.y, p.z)
+}
+
+/// Elites and bosses leave a chest where they fall, but never at the hero's feet.
 #[allow(clippy::too_many_arguments)]
 fn drop_chests(
     mut commands: Commands,
@@ -91,8 +108,11 @@ fn drop_chests(
     mut beacons: ResMut<Beacons>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    hero: Query<&Transform, (With<Hero>, Without<Enemy>)>,
+    world: WorldPoint,
     dead: Query<(&Transform, &Enemy, Has<Elite>, Has<Finale>), Added<Dying>>,
 ) {
+    let hpos = hero.single().map(|h| h.translation).ok();
     for (tf, enemy, elite, finale) in &dead {
         // The finale ends the run on the spot; there is no one left to open its chest.
         if finale || !(enemy.boss || elite) {
@@ -107,13 +127,12 @@ fn drop_chests(
             (false, true) | (true, false) => 3,
             (true, true) => 5,
         };
-        let e = units::spawn_object(
-            &mut commands,
-            run.guid(),
-            CHEST_DISPLAY,
-            CHEST_SCALE,
-            tf.translation,
-        );
+        let mut at = tf.translation;
+        if let Some(h) = hpos {
+            at = clear_of(h, at);
+            at.y = world.terrain_height_under(at).unwrap_or(at.y);
+        }
+        let e = units::spawn_object(&mut commands, run.guid(), CHEST_DISPLAY, CHEST_SCALE, at);
         commands.entity(e).insert(Chest { ranks, life: LIFE });
         beacons.attach(
             &mut commands,
@@ -214,6 +233,18 @@ fn banner(names: &[String]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_chest_lands_clear_of_the_hero() {
+        let hero = Vec3::new(10.0, 3.0, 10.0);
+        let near = clear_of(hero, Vec3::new(11.0, 2.0, 10.0));
+        assert!((flat(near - hero).length() - CLEAR_OF_HERO).abs() < 1e-4);
+        assert_eq!(near.y, 2.0);
+        let on_top = clear_of(hero, hero);
+        assert!((flat(on_top - hero).length() - CLEAR_OF_HERO).abs() < 1e-4);
+        let far = Vec3::new(30.0, 0.0, 10.0);
+        assert_eq!(clear_of(hero, far), far);
+    }
 
     #[test]
     fn maxed_ranks_are_not_candidates() {
