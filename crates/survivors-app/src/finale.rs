@@ -143,7 +143,7 @@ fn build(map: &str, bosses: &[EnemyDef]) -> Plan {
 }
 
 /// When the finale comes; `WOW_SURVIVORS_FINALE=<seconds>` moves it, to photograph it.
-fn finale_at() -> f32 {
+pub(super) fn finale_at() -> f32 {
     static AT: OnceLock<f32> = OnceLock::new();
     *AT.get_or_init(|| {
         benilla_app::survivors_host::webenv::var("WOW_SURVIVORS_FINALE")

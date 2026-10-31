@@ -62,6 +62,8 @@ pub(super) struct Dot {
     pub dps: f32,
     pub left: f32,
     pub tick: f32,
+    /// The ability whose damage this is, for the damage meter.
+    pub source: Option<&'static data::AbilityDef>,
 }
 
 /// A corpse playing its death before it fades.

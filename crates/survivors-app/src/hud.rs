@@ -24,7 +24,6 @@ const EDGE: Color = Color::srgb(0.55, 0.45, 0.25);
 const BUTTON: Color = Color::srgba(0.18, 0.06, 0.04, 0.95);
 const BUTTON_HOT: Color = Color::srgba(0.36, 0.12, 0.06, 0.98);
 const DIM: Color = Color::srgb(0.6, 0.6, 0.6);
-pub(super) const DIM_GREY: Color = DIM;
 pub(super) const GOLD_TONE: Color = GOLD;
 
 #[derive(Component)]
@@ -47,6 +46,9 @@ pub(super) struct XpText;
 pub(super) struct LevelText;
 #[derive(Component)]
 pub(super) struct TimerText;
+/// The line under the clock: when the next boss, or the finale, comes ([`super::dmgmeter`]).
+#[derive(Component)]
+pub(super) struct NextBossText;
 #[derive(Component)]
 pub(super) struct KillText;
 #[derive(Component)]
@@ -227,24 +229,6 @@ fn text(font: &Handle<Font>, s: impl Into<String>, size: f32, color: Color) -> i
     )
 }
 
-pub(super) fn text_bundle(
-    font: &Handle<Font>,
-    s: impl Into<String>,
-    size: f32,
-    color: Color,
-) -> impl Bundle {
-    text(font, s, size, color)
-}
-
-pub(super) fn centered_bundle(
-    font: &Handle<Font>,
-    s: impl Into<String>,
-    size: f32,
-    color: Color,
-) -> impl Bundle {
-    centered(font, s, size, color)
-}
-
 fn centered(font: &Handle<Font>, s: impl Into<String>, size: f32, color: Color) -> impl Bundle {
     (
         text(font, s, size, color),
@@ -283,7 +267,7 @@ fn icon(spell: u32, size: f32) -> impl Bundle {
 
 /// The gold coin of `UI-MoneyIcons` (gold, silver and copper side by side), drawn by
 /// [`fill_art`].
-fn coin_icon(size: f32) -> impl Bundle {
+pub(super) fn coin_icon(size: f32) -> impl Bundle {
     (
         Node {
             width: Val::Px(size),
@@ -540,6 +524,10 @@ pub(super) fn setup_hud(
                 })
                 .with_children(|col| {
                     col.spawn((TimerText, centered(f, "00:00", 34.0, Color::WHITE)));
+                    col.spawn((
+                        NextBossText,
+                        centered(f, "", 13.0, Color::srgb(0.66, 0.62, 0.55)),
+                    ));
                     col.spawn(Node {
                         column_gap: Val::Px(14.0),
                         ..default()
@@ -1229,10 +1217,7 @@ pub(super) struct CardText {
     pub spell: u32,
     pub name: String,
     pub tag: String,
-    pub tag_color: Color,
     pub desc: String,
-    /// `(rank now, top rank)`, for the pips; `None` for the healthstone.
-    pub ranks: Option<(u8, u8)>,
 }
 
 pub(super) fn describe_card(
@@ -1240,7 +1225,6 @@ pub(super) fn describe_card(
     run: &Run,
     spells: Option<&benilla_app::survivors_host::ui_action::Spells>,
 ) -> CardText {
-    let new = Color::srgb(0.3, 1.0, 0.3);
     match choice {
         Choice::NewAbility(def) => {
             let stats = run.stats();
@@ -1249,9 +1233,7 @@ pub(super) fn describe_card(
                 spell: def.spell,
                 name: spell_name(spells, def.spell, def.key),
                 tag: "New spell".into(),
-                tag_color: new,
                 desc: format!("{}.", ability_body(def, &c)),
-                ranks: Some((0, data::MAX_ABILITY_LEVEL)),
             }
         }
         Choice::Upgrade(k) => {
@@ -1292,18 +1274,14 @@ pub(super) fn describe_card(
                 spell: o.def.spell,
                 name: spell_name(spells, o.def.spell, o.def.key),
                 tag: format!("Rank {} » {next}", o.level),
-                tag_color: Color::WHITE,
                 desc: lines.join("\n"),
-                ranks: Some((o.level, data::MAX_ABILITY_LEVEL)),
             }
         }
         Choice::NewPassive(p) => CardText {
             spell: p.spell,
             name: p.name.into(),
             tag: "New talent".into(),
-            tag_color: new,
             desc: passive_text(p.stat, p.per_level),
-            ranks: Some((0, data::MAX_PASSIVE_LEVEL)),
         },
         Choice::UpPassive(k) => {
             let (p, level) = run.passives[k];
@@ -1315,14 +1293,12 @@ pub(super) fn describe_card(
                 spell: p.spell,
                 name: p.name.into(),
                 tag: format!("Rank {level} » {}", level + 1),
-                tag_color: Color::WHITE,
                 desc: format!(
                     "{}\n{} » {}",
                     stat_label(p.stat),
                     fmt(p.per_level * f32::from(level)),
                     fmt(p.per_level * f32::from(level + 1)),
                 ),
-                ranks: Some((level, data::MAX_PASSIVE_LEVEL)),
             }
         }
         Choice::Evolve(evo) => {
@@ -1361,18 +1337,14 @@ pub(super) fn describe_card(
                 spell: new.spell,
                 name: evo.name.into(),
                 tag: "Evolution".into(),
-                tag_color: super::cards::LEGENDARY,
                 desc: lines.join("\n"),
-                ranks: Some((data::EVOLVED_LEVEL, data::MAX_ABILITY_LEVEL)),
             }
         }
         Choice::Heal => CardText {
             spell: 5720,
             name: "Healthstone".into(),
             tag: "Restore".into(),
-            tag_color: Color::WHITE,
             desc: "Everything is mastered. Restores all health.".into(),
-            ranks: None,
         },
     }
 }

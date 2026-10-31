@@ -6,6 +6,7 @@ use std::cmp::Ordering;
 use bevy::prelude::*;
 
 use super::data::{AbilityDef, Effect, Kind};
+use super::dmgmeter::DamageDone;
 use super::enemies::{self, Enemy, Loot};
 use super::focus::{Focus, Target};
 use super::hero::{self, Hero};
@@ -27,6 +28,8 @@ pub(super) struct Hit {
     pub splash: f32,
     pub crit: bool,
     pub color: u32,
+    /// The ability that threw it, for the damage meter; `None` for what no ability owns.
+    pub source: Option<&'static AbilityDef>,
 }
 
 impl Hit {
@@ -42,6 +45,7 @@ impl Hit {
             splash: 0.0,
             crit,
             color: COLOR_MELEE,
+            source: None,
         }
     }
 }
@@ -64,6 +68,7 @@ pub(super) struct GroundArea {
     mark: u32,
     /// The spell whose impact plays on each enemy a tick hits, 0 for none.
     impact: u32,
+    source: &'static AbilityDef,
 }
 
 #[derive(Component)]
@@ -75,6 +80,7 @@ pub(super) struct Totem {
     left: f32,
     tick: f32,
     pulse: bool,
+    source: &'static AbilityDef,
 }
 
 #[derive(Clone, Copy)]
@@ -109,7 +115,7 @@ fn mark_secs(def: &AbilityDef, duration: f32) -> f32 {
     }
 }
 
-fn hit_for(def: &AbilityDef, p: &Params, target: Entity, damage: f32, crit: bool) -> Hit {
+fn hit_for(def: &'static AbilityDef, p: &Params, target: Entity, damage: f32, crit: bool) -> Hit {
     Hit {
         target,
         damage,
@@ -129,6 +135,7 @@ fn hit_for(def: &AbilityDef, p: &Params, target: Entity, damage: f32, crit: bool
         } else {
             COLOR_SPELL
         },
+        source: Some(def),
     }
 }
 
@@ -397,6 +404,7 @@ pub(super) fn cast_abilities(
                             effect: def.effect,
                             mark: def.mark,
                             impact: if def.overhead { def.spell } else { 0 },
+                            source: def,
                         });
                         true
                     }
@@ -569,6 +577,7 @@ pub(super) fn cast_abilities(
                         left: p.duration,
                         tick: 0.3,
                         pulse: def.key == "magma_totem",
+                        source: def,
                     });
                     true
                 } else {
@@ -641,6 +650,7 @@ pub(super) fn tick_areas(
                     splash: 0.0,
                     crit,
                     color: COLOR_SPELL,
+                    source: Some(area.source),
                 });
             }
         }
@@ -674,6 +684,7 @@ pub(super) fn tick_areas(
                 let (dmg, crit) = roll(&mut rng, stats.crit, totem.damage);
                 hits.write(Hit {
                     color: COLOR_SPELL,
+                    source: Some(totem.source),
                     ..Hit::direct(f.e, dmg, crit)
                 });
             }
@@ -704,6 +715,7 @@ pub(super) fn tick_areas(
                 delay,
                 Hit {
                     color: COLOR_SPELL,
+                    source: Some(totem.source),
                     ..Hit::direct(f.e, dmg, crit)
                 },
             );
@@ -731,6 +743,7 @@ pub(super) fn apply_hits(
     mut loot: MessageWriter<Loot>,
     mut fields: MessageWriter<FieldChanged>,
     mut chat: MessageWriter<super::chatlog::ChatLine>,
+    mut meter: ResMut<DamageDone>,
 ) {
     let dt = time.delta_secs();
     let now = run.elapsed;
@@ -805,6 +818,7 @@ pub(super) fn apply_hits(
         if dmg > 0.0 {
             en.hp -= dmg;
             run.damage_done += f64::from(dmg);
+            meter.add(h.source, dmg);
             fx.number(e, dmg, h.crit, h.color);
             if let Effect::Drain(frac) = h.effect {
                 let max = run.stats().max_hp;
@@ -819,6 +833,7 @@ pub(super) fn apply_hits(
                 dps: h.dot,
                 left: h.dot_dur,
                 tick: 1.0,
+                source: h.source,
             });
         }
         let boss = en.boss;
@@ -860,6 +875,7 @@ pub(super) fn apply_hits(
             if d.tick <= 0.0 {
                 d.tick += 1.0;
                 dealt += d.dps;
+                meter.add(d.source, d.dps);
             }
         }
         en.dots.retain(|d| d.left > 0.0);
