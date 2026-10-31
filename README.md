@@ -20,6 +20,7 @@ as its own pull request. Newest first.
 
 | Feature | What it does | Screenshot | Upstream PR |
 | --- | --- | --- | --- |
+| Faster rebuilds | The survivors mode moved out of `benilla-app` into its own crate, `crates/survivors-app`. A one-line change now builds in 2 to 4 s instead of 6 to 12 s, the whole mode in 11 s instead of minutes. | | none, built on `features` |
 | Unit frames and quests | A player frame and a target frame at the top left; a left click on an enemy targets it and the abilities hit it first. Three quests a run (slay, gather drops, survive) in a tracker under the minimap, handed in for gold and experience. | <img src="docs/screenshots/fork-frames-quests.jpg" width="320" alt="The player frame at the top left and the quest tracker under the minimap"> | none, built on `features` |
 | Evolutions | An ability at rank 8 with its matching talent at rank 3 offers an orange **Evolution** card that turns it into a stronger spell (Frostbolt and Arcane Intellect become Glacial Volley). Found recipes stay in the spellbook on the level-up screen. | <img src="docs/screenshots/fork-evolutions.jpg" width="320" alt="An Evolution card for Glacial Volley"> | none, built on `features` |
 | Zone finale | The zone's dungeon boss (Hogger in Elwynn Forest) comes at 13:30 and killing it wins the run. After 30 minutes Lord Kazzak hunts the hero and cannot die. | <img src="docs/screenshots/fork-finale.jpg" width="320" alt="Hogger awaits: the finale boss arrives"> | none, built on `features` |
@@ -152,7 +153,7 @@ Or set it permanently by editing the single clearly-marked `DEFAULT_DATA_URL` li
 
 ## How it's built
 
-The survivors mode is `crates/benilla-app/src/survivors/`, running on two upstream projects:
+The survivors mode is `crates/survivors-app/src/`, running on two upstream projects:
 
 - [benilla](https://github.com/samwhosung/benilla): a from-scratch WoW 1.12.1 client.
 - [wenilla](https://github.com/Arnesen/wenilla): benilla compiled to WebAssembly, with a local
