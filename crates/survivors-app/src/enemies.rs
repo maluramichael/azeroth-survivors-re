@@ -10,10 +10,10 @@ use bevy::prelude::*;
 use super::abilities::Hit;
 use super::chatlog::ChatLine;
 use super::data::{self, EnemyDef};
-use super::hero::{self, Hero, HERO_RADIUS};
+use super::hero::{self, Hero, Peer, HERO_RADIUS};
 use super::nav::{NavGrid, SpawnProbe};
 use super::units::{self, flat, yaw_toward, Fx, Marks, UnitSpec, COLOR_HURT};
-use super::{Phase, Rng, Run, Selection};
+use super::{HeroState, Phase, Rng, Run, Selection};
 use benilla_app::survivors_host::creature_anim::{move_flags, MovementState};
 use benilla_app::survivors_host::net::{FieldChanged, Guid, ObjectStore};
 
@@ -67,6 +67,8 @@ pub(super) struct Dot {
     pub tick: f32,
     /// The ability whose damage this is, for the damage meter.
     pub source: Option<&'static data::AbilityDef>,
+    /// The co-op guest's puppet whose curse it is; `None` is this machine's hero.
+    pub by: Option<Entity>,
 }
 
 /// A corpse playing its death before it fades.
@@ -168,7 +170,11 @@ pub(super) fn spawn_enemy(
         pos,
         yaw_toward(hero - pos),
     );
-    let hp = def.hp * scale * run.difficulty.enemy_hp_mult() * if elite { ELITE_HP } else { 1.0 };
+    let hp = def.hp
+        * scale
+        * run.difficulty.enemy_hp_mult()
+        * party_hp(run.party)
+        * if elite { ELITE_HP } else { 1.0 };
     let mut marks = Marks::debuffs();
     if elite {
         marks.set(&[ELITE_AURA]);
@@ -202,6 +208,58 @@ pub(super) fn spawn_enemy(
         marks,
     ));
     e
+}
+
+/// The share more health each enemy has per hero past the first.
+const PARTY_HP: f32 = 0.5;
+/// The share more enemies alive at once per hero past the first.
+const PARTY_COUNT: f32 = 0.35;
+/// The most enemies alive at once, whatever the party.
+const MAX_ALIVE: usize = 400;
+/// A spawn never lands this close to a hero other than the one it rings.
+const SPAWN_CLEAR: f32 = 20.0;
+
+/// The health multiplier of a party of `n` heroes.
+pub(super) fn party_hp(n: u32) -> f32 {
+    1.0 + PARTY_HP * n.saturating_sub(1) as f32
+}
+
+/// How many enemies a party of `n` keeps alive where one hero has `target`.
+fn party_count(target: usize, n: u32) -> usize {
+    if n <= 1 {
+        return target;
+    }
+    let scaled = (target as f32 * (1.0 + PARTY_COUNT * (n - 1) as f32)).round() as usize;
+    scaled.min(MAX_ALIVE.max(target))
+}
+
+/// Where the standing heroes are: the local hero (if standing) and every standing co-op puppet.
+/// The local one is first.
+fn standing(
+    run: &Run,
+    hero: &Query<&Transform, With<Hero>>,
+    peers: &Query<(&Transform, &HeroState), (With<Peer>, Without<Hero>)>,
+) -> Vec<Vec3> {
+    let mut at: Vec<Vec3> = Vec::new();
+    if let Ok(h) = hero.single() {
+        if run.dead_t.is_none() {
+            at.push(h.translation);
+        }
+    }
+    at.extend(
+        peers
+            .iter()
+            .filter(|(_, s)| s.dead_t.is_none())
+            .map(|(tf, _)| tf.translation),
+    );
+    at
+}
+
+/// Whether `p` stands clear of every hero but `anchor`.
+fn clear_of_others(p: Vec3, anchor: Vec3, heroes: &[Vec3]) -> bool {
+    heroes
+        .iter()
+        .all(|h| *h == anchor || flat(*h - p).length() >= SPAWN_CLEAR)
 }
 
 fn ground(world: &WorldPoint, mut p: Vec3, fallback: f32) -> Vec3 {
@@ -246,15 +304,24 @@ pub(super) fn spawn_enemies(
     nav: Res<NavGrid>,
     probe: SpawnProbe,
     hero: Query<&Transform, With<Hero>>,
+    peers: Query<(&Transform, &HeroState), (With<Peer>, Without<Hero>)>,
     enemies: Query<(&Enemy, Has<Elite>)>,
     world: WorldPoint,
     mut chat: MessageWriter<ChatLine>,
+    mut turn: Local<usize>,
 ) {
-    let Ok(h) = hero.single() else { return };
-    if run.dead_t.is_some() {
+    if hero.single().is_err() || run.dead_t.is_some() {
         return;
     }
-    let hpos = h.translation;
+    // Each spawn rings the next standing hero in turn; alone, always this one.
+    let heroes = standing(&run, &hero, &peers);
+    if heroes.is_empty() {
+        return;
+    }
+    let mut next_anchor = || {
+        *turn = turn.wrapping_add(1);
+        heroes[*turn % heroes.len()]
+    };
     let elapsed = run.elapsed;
     let roster = data::roster(selection.map);
     let pool = data::wave_pool(elapsed, roster.enemies.len());
@@ -264,6 +331,7 @@ pub(super) fn spawn_enemies(
     let due_bosses = ((elapsed / data::BOSS_EVERY_SECS) as u32).min(timed.len() as u32);
     while run.bosses < due_bosses {
         let def = &timed[run.bosses as usize];
+        let hpos = next_anchor();
         let a = rng.range(0.0, std::f32::consts::TAU);
         // No free spot yet (the world is still coming in): the boss waits for the next frame.
         let Some(pos) = spawn_spot(&nav, &probe, &world, hpos, a, 30.0) else {
@@ -283,10 +351,13 @@ pub(super) fn spawn_enemies(
     if run.rings < due_rings {
         run.rings = due_rings;
         let def = &roster.enemies[pool[0]];
+        let hpos = next_anchor();
         let n = 28 + (data::progress(elapsed) * 60.0) as usize;
         for i in 0..n {
             let a = i as f32 / n as f32 * std::f32::consts::TAU;
-            let Some(pos) = spawn_spot(&nav, &probe, &world, hpos, a, 26.0) else {
+            let Some(pos) = spawn_spot(&nav, &probe, &world, hpos, a, 26.0)
+                .filter(|p| clear_of_others(*p, hpos, &heroes))
+            else {
                 continue;
             };
             spawn_enemy(&mut commands, &mut run, def, pos, hpos, false, false);
@@ -307,6 +378,7 @@ pub(super) fn spawn_enemies(
     if surge.active {
         target = target * 3 / 2;
     }
+    let target = party_count(target, run.party);
     if alive >= target {
         return;
     }
@@ -314,9 +386,12 @@ pub(super) fn spawn_enemies(
     let n = (((target - alive) as f32) / 6.0).ceil().min(batch_cap) as usize;
     for _ in 0..n {
         let def = &roster.enemies[pool[rng.index(pool.len())]];
+        let hpos = next_anchor();
         let a = rng.range(0.0, std::f32::consts::TAU);
         let r = rng.range(34.0, 42.0);
-        let Some(pos) = spawn_spot(&nav, &probe, &world, hpos, a, r) else {
+        let Some(pos) =
+            spawn_spot(&nav, &probe, &world, hpos, a, r).filter(|p| clear_of_others(*p, hpos, &heroes))
+        else {
             continue;
         };
         let elite =
@@ -382,7 +457,11 @@ pub(super) fn move_enemies(
     probe: SpawnProbe,
     world: WorldPoint,
     hero: Query<(Entity, &Transform), (With<Hero>, Without<Enemy>)>,
-    mut enemies: Query<(Entity, &mut Transform, &mut Enemy, &mut MovementState), Without<Hero>>,
+    mut peers: Query<(Entity, &Transform, &mut HeroState), (With<Peer>, Without<Hero>, Without<Enemy>)>,
+    mut enemies: Query<
+        (Entity, &mut Transform, &mut Enemy, &mut MovementState),
+        (Without<Hero>, Without<Peer>),
+    >,
     mut fx: Fx,
     mut hits: MessageWriter<Hit>,
 ) {
@@ -393,8 +472,22 @@ pub(super) fn move_enemies(
     let Ok((hero_e, htf)) = hero.single() else {
         return;
     };
-    let hpos = htf.translation;
-    let hero_down = run.dead_t.is_some();
+    // The heroes the horde may go for: this machine's, then every co-op puppet, standing or not.
+    let mut prey: Vec<Prey> = vec![Prey {
+        e: hero_e,
+        pos: htf.translation,
+        local: true,
+        down: run.dead_t.is_some(),
+        vanished: run.mobile.vanish_t > 0.0,
+    }];
+    prey.extend(peers.iter().map(|(e, tf, s)| Prey {
+        e,
+        pos: tf.translation,
+        local: false,
+        down: s.dead_t.is_some(),
+        vanished: s.mobile.vanish_t > 0.0,
+    }));
+    let hero_down = prey.iter().all(|p| p.down);
 
     // Separation over a coarse grid: only neighbours in the same or adjacent cells push.
     const CELL: f32 = 3.0;
@@ -462,6 +555,18 @@ pub(super) fn move_enemies(
             e.weaken = 1.0;
         }
         let pos = tf.translation;
+        // The nearest standing hero this enemy can see; under Fade a hero is lost to all but the
+        // bosses. With none, it mills where it stands.
+        let quarry = nearest_prey(&prey, pos, e.boss);
+        let lost = quarry.is_none() && !hero_down;
+        let quarry = quarry.or_else(|| prey.iter().find(|p| p.local)).copied().unwrap_or(Prey {
+            e: hero_e,
+            pos: htf.translation,
+            local: true,
+            down: true,
+            vanished: false,
+        });
+        let hpos = quarry.pos;
         let to_hero = flat(hpos - pos);
         let dist = to_hero.length();
 
@@ -480,8 +585,6 @@ pub(super) fn move_enemies(
             }
         }
 
-        // Under Fade the horde has lost the hero: it mills where it stands.
-        let lost = run.mobile.vanish_t > 0.0 && !e.boss;
         let held = e.stun_t > 0.0 || e.root_t > 0.0 || lost;
         let contact = dist <= HERO_RADIUS + e.radius + 0.35;
         let mut step = Vec3::ZERO;
@@ -528,17 +631,47 @@ pub(super) fn move_enemies(
         {
             e.attack_cd = if e.boss { 1.0 } else { 1.3 };
             let raw = e.damage * e.weaken;
-            let taken = hero::hurt_hero(&mut run, raw);
-            fx.swing(ent, hero_e, taken);
+            let victim = if quarry.local {
+                Some(&mut run.me)
+            } else {
+                peers.get_mut(quarry.e).ok().map(|(_, _, s)| s.into_inner())
+            };
+            let Some(victim) = victim else { continue };
+            let taken = hero::hurt_hero(victim, raw);
+            fx.swing(ent, quarry.e, taken);
             if taken > 0.0 {
-                fx.number(hero_e, taken, false, COLOR_HURT);
-                shake.add(hurt_trauma(taken, run.stats().max_hp));
+                fx.number(quarry.e, taken, false, COLOR_HURT);
+                if quarry.local {
+                    shake.add(hurt_trauma(taken, victim.stats().max_hp));
+                }
             }
-            if run.thorns_t > 0.0 {
-                hits.write(Hit::direct(ent, run.thorns * run.stats().might, false));
+            if victim.thorns_t > 0.0 {
+                hits.write(Hit {
+                    by: Some(quarry.e),
+                    ..Hit::direct(ent, victim.thorns * victim.stats().might, false)
+                });
             }
         }
     }
+}
+
+/// A hero the horde may chase ([`move_enemies`]).
+#[derive(Clone, Copy)]
+struct Prey {
+    e: Entity,
+    pos: Vec3,
+    /// This machine's hero, whose state is the run's.
+    local: bool,
+    down: bool,
+    /// Under Fade: only bosses still see it.
+    vanished: bool,
+}
+
+/// The nearest standing hero an enemy at `pos` sees, on the ground plane.
+fn nearest_prey(prey: &[Prey], pos: Vec3, boss: bool) -> Option<&Prey> {
+    prey.iter()
+        .filter(|p| !p.down && (boss || !p.vanished))
+        .min_by(|a, b| flat(a.pos - pos).length().total_cmp(&flat(b.pos - pos).length()))
 }
 
 /// Mark timers run down; the state kits reap with them.
@@ -674,6 +807,7 @@ pub(super) fn collect_gems(
     mut rng: ResMut<Rng>,
     mut next: ResMut<NextState<Phase>>,
     hero: Query<&Transform, (With<Hero>, Without<Gem>)>,
+    mut peers: Query<(Entity, &Transform, &mut HeroState), (With<Peer>, Without<Hero>, Without<Gem>)>,
     mut gems: Query<(Entity, &mut Transform, &mut Gem)>,
     fallen: Query<&Enemy, Added<Dying>>,
     mut chat: MessageWriter<ChatLine>,
@@ -689,33 +823,61 @@ pub(super) fn collect_gems(
     }
     let sweeping = *sweep > 0.0;
     *sweep = (*sweep - dt).max(0.0);
-    let stats = run.stats();
-    let target = h.translation + Vec3::Y * 1.0;
+    // Every standing hero's magnet: this machine's first (`None`), then the co-op puppets'.
+    let mut magnets: Vec<(Option<Entity>, Vec3, super::Stats)> =
+        vec![(None, h.translation + Vec3::Y * 1.0, run.stats())];
+    magnets.extend(
+        peers
+            .iter()
+            .filter(|(_, _, s)| s.dead_t.is_none())
+            .map(|(e, tf, s)| (Some(e), tf.translation + Vec3::Y * 1.0, s.stats())),
+    );
     for (e, mut tf, mut g) in &mut gems {
-        let d = target - tf.translation;
+        // A gem flies to the nearest hero; it is pulled once it is in any hero's reach.
+        let at = tf.translation;
+        let &(who, target, stats) = magnets
+            .iter()
+            .min_by(|a, b| (a.1 - at).length().total_cmp(&(b.1 - at).length()))
+            .expect("the local hero's magnet is always there");
+        let d = target - at;
         let dist = d.length();
-        if !g.pulled && (sweeping || flat(d).length() <= stats.magnet) {
+        if !g.pulled
+            && (sweeping || magnets.iter().any(|m| flat(m.1 - at).length() <= m.2.magnet))
+        {
             g.pulled = true;
         }
         if !g.pulled {
             continue;
         }
         if dist < 0.9 {
+            let collector = match who {
+                None => Some(&mut run.me),
+                Some(p) => peers.get_mut(p).ok().map(|(_, _, s)| s.into_inner()),
+            };
+            let local = who.is_none();
             match g.kind {
+                // Experience is the party's, whoever picks it up.
                 GemKind::Xp(xp) => {
                     let gain = xp as f32 * data::XP_RATE * stats.growth;
                     run.xp += gain;
                     chat.write(ChatLine::Xp(gain));
                 }
-                GemKind::Heal(hp) => run.hp = (run.hp + hp).min(stats.max_hp),
+                GemKind::Heal(hp) => {
+                    if let Some(c) = collector {
+                        c.hp = (c.hp + hp).min(stats.max_hp);
+                    }
+                }
                 GemKind::Gold(gold) => {
-                    // Greed rounds at random, so a small pile still feels a +10 %.
-                    let greed =
-                        run.meta.greed + run.gear.greed + run.buffs.greed + run.talents.greed;
-                    let worth = gold as f32 * greed;
-                    let looted = worth.floor() as u32 + u32::from(rng.f32() < worth.fract());
-                    run.gold += looted;
-                    chat.write(ChatLine::Gold(looted));
+                    if let Some(c) = collector {
+                        // Greed rounds at random, so a small pile still feels a +10 %.
+                        let greed = c.meta.greed + c.gear.greed + c.buffs.greed + c.talents.greed;
+                        let worth = gold as f32 * greed;
+                        let looted = worth.floor() as u32 + u32::from(rng.f32() < worth.fract());
+                        c.gold += looted;
+                        if local {
+                            chat.write(ChatLine::Gold(looted));
+                        }
+                    }
                 }
             }
             commands.entity(e).despawn();

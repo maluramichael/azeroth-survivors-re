@@ -7,7 +7,7 @@ use bevy::prelude::*;
 
 use super::data::{self, ClassDef};
 use super::units::{self, flat, wow_to_bevy, yaw_toward, Fx, Marks, UnitSpec};
-use super::{Phase, Run, Selection};
+use super::{HeroState, Phase, Run, Selection};
 use benilla_app::survivors_host::creature_anim::{move_flags, MovementState};
 use benilla_app::survivors_host::net::{FieldChanged, Guid, ObjectStore};
 
@@ -227,7 +227,7 @@ pub(super) fn hero_spec(
 }
 
 /// A co-op guest's puppet on the host: the guest's hero body in the class trainer's look, without
-/// [`Hero`] and [`Marks`].
+/// [`Hero`]. The host adds its [`HeroState`].
 #[cfg_attr(not(all(feature = "coop", not(target_arch = "wasm32"))), allow(dead_code))]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn spawn_peer(
@@ -241,7 +241,7 @@ pub(super) fn spawn_peer(
     player: u8,
 ) -> Entity {
     let e = units::spawn_unit(commands, &hero_spec(class, display, race, sex, serial), pos, 0.0);
-    commands.entity(e).insert(Peer { player });
+    commands.entity(e).insert((Peer { player }, Marks::buffs()));
     e
 }
 
@@ -652,31 +652,49 @@ fn shake_offsets(trauma: f32, t: f32, arm: f32) -> (Vec3, Vec3) {
 
 /// Damage the hero takes from one blow, after immunity, armour and the shield; returns what got
 /// through.
-pub(super) fn hurt_hero(run: &mut Run, raw: f32) -> f32 {
-    if run.immune_t > 0.0 || run.dead_t.is_some() {
+pub(super) fn hurt_hero(hero: &mut HeroState, raw: f32) -> f32 {
+    if hero.immune_t > 0.0 || hero.dead_t.is_some() {
         return 0.0;
     }
-    let mut dmg = (raw - run.stats().armor).max(1.0);
-    if run.shield_t > 0.0 && run.shield > 0.0 {
-        let absorbed = dmg.min(run.shield);
-        run.shield -= absorbed;
+    let mut dmg = (raw - hero.stats().armor).max(1.0);
+    if hero.shield_t > 0.0 && hero.shield > 0.0 {
+        let absorbed = dmg.min(hero.shield);
+        hero.shield -= absorbed;
         dmg -= absorbed;
     }
-    run.hp -= dmg;
+    hero.hp -= dmg;
     dmg
 }
 
-/// The clock, regeneration, the timed buffs and their visuals, death and victory.
+/// The clock, regeneration, the timed buffs and their visuals, death and victory. A co-op guest's
+/// puppet on the host lives by the same rules; its fall ends nothing.
+#[allow(clippy::type_complexity)]
 pub(super) fn hero_vitals(
     time: Res<Time>,
     mut run: ResMut<Run>,
     mut next: ResMut<NextState<Phase>>,
     mut hero: Query<(Entity, &Guid, &mut ObjectStore, &mut Marks), With<Hero>>,
+    mut peers: Query<
+        (Entity, &Guid, &mut ObjectStore, &mut Marks, &mut HeroState),
+        (With<Peer>, Without<Hero>),
+    >,
     mut fields: MessageWriter<FieldChanged>,
     mut fx: Fx,
 ) {
     let dt = time.delta_secs();
-    let stats = run.stats();
+    for (entity, guid, mut store, mut marks, mut state) in &mut peers {
+        if state.dead_t.is_none() {
+            tend(&mut state, dt);
+            show_buffs(&state, &mut marks);
+        }
+        marks.flush(entity, guid.0, &mut store, &mut fields);
+        if let Some(t) = state.dead_t.as_mut() {
+            *t += dt;
+        } else if state.hp <= 0.0 {
+            fall(&mut state, &mut store, &mut marks);
+            marks.flush(entity, guid.0, &mut store, &mut fields);
+        }
+    }
     let Ok((entity, guid, mut store, mut marks)) = hero.single_mut() else {
         return;
     };
@@ -688,47 +706,12 @@ pub(super) fn hero_vitals(
         return;
     }
     run.elapsed += dt;
-    let r = &mut run.me;
-    for t in [&mut r.shield_t, &mut r.immune_t, &mut r.thorns_t] {
-        *t = (*t - dt).max(0.0);
-    }
-    let mut heal = stats.regen * dt;
-    if run.heal_t > 0.0 {
-        heal += run.heal_rate * dt.min(run.heal_t);
-        run.heal_t = (run.heal_t - dt).max(0.0);
-    }
-    run.hp = (run.hp + heal).min(stats.max_hp);
-
-    // The buffs show as their own state kits: the shield bubble, the immunity glow, the orbs.
-    let mut shown: Vec<u32> = Vec::new();
-    if run.shield_t > 0.0 && run.shield > 0.0 {
-        shown.push(17);
-    }
-    if run.immune_t > 0.0 {
-        shown.push(642);
-    }
-    if run.thorns_t > 0.0 {
-        shown.push(run.thorns_spell);
-    }
-    if run.heal_t > 0.0 {
-        shown.push(774);
-    }
-    for owned in &run.abilities {
-        if owned.def.key == "lightning_shield" {
-            shown.push(owned.def.spell);
-        }
-    }
-    if run.passives.iter().any(|(p, _)| p.key == "renew") {
-        shown.push(139);
-    }
-    marks.set(&shown);
+    tend(&mut run.me, dt);
+    show_buffs(&run.me, &mut marks);
     marks.flush(entity, guid.0, &mut store, &mut fields);
 
     if run.hp <= 0.0 {
-        run.hp = 0.0;
-        run.dead_t = Some(0.0);
-        units::kill_unit(&mut store);
-        marks.clear();
+        fall(&mut run.me, &mut store, &mut marks);
         marks.flush(entity, guid.0, &mut store, &mut fields);
     } else if run.elapsed >= data::VICTORY_SECS {
         run.won = true;
@@ -736,6 +719,54 @@ pub(super) fn hero_vitals(
         fx.cast(entity, 642, &[entity], None);
         next.set(Phase::GameOver);
     }
+}
+
+/// One frame of a standing hero's timers and healing.
+fn tend(hero: &mut HeroState, dt: f32) {
+    let stats = hero.stats();
+    for t in [&mut hero.shield_t, &mut hero.immune_t, &mut hero.thorns_t] {
+        *t = (*t - dt).max(0.0);
+    }
+    let mut heal = stats.regen * dt;
+    if hero.heal_t > 0.0 {
+        heal += hero.heal_rate * dt.min(hero.heal_t);
+        hero.heal_t = (hero.heal_t - dt).max(0.0);
+    }
+    hero.hp = (hero.hp + heal).min(stats.max_hp);
+}
+
+/// The buffs show as their own state kits: the shield bubble, the immunity glow, the orbs.
+fn show_buffs(hero: &HeroState, marks: &mut Marks) {
+    let mut shown: Vec<u32> = Vec::new();
+    if hero.shield_t > 0.0 && hero.shield > 0.0 {
+        shown.push(17);
+    }
+    if hero.immune_t > 0.0 {
+        shown.push(642);
+    }
+    if hero.thorns_t > 0.0 {
+        shown.push(hero.thorns_spell);
+    }
+    if hero.heal_t > 0.0 {
+        shown.push(774);
+    }
+    for owned in &hero.abilities {
+        if owned.def.key == "lightning_shield" {
+            shown.push(owned.def.spell);
+        }
+    }
+    if hero.passives.iter().any(|(p, _)| p.key == "renew") {
+        shown.push(139);
+    }
+    marks.set(&shown);
+}
+
+/// The hero falls: the body plays its death and the buffs go.
+fn fall(hero: &mut HeroState, store: &mut ObjectStore, marks: &mut Marks) {
+    hero.hp = 0.0;
+    hero.dead_t = Some(0.0);
+    units::kill_unit(store);
+    marks.clear();
 }
 
 /// The movement flags for running `dir` while facing `look`: forward, backpedal or strafe, by

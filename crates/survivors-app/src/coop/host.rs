@@ -18,7 +18,7 @@ use crate::chatlog::ChatLine;
 use crate::data::{self, ClassDef};
 use crate::hero::{self, Hero, Peer};
 use benilla_app::survivors_host::creature_anim::MovementState;
-use crate::{NetRole, Phase, Run, Selection};
+use crate::{HeroState, NetRole, Owned, Phase, Rng, Run, Selection};
 
 /// How often the host replicates, per second, on the wall clock.
 const RATE: f32 = 20.0;
@@ -41,6 +41,14 @@ pub(super) fn plugin(app: &mut App) {
                 .run_if(hosting),
         )
         .add_systems(Update, (tag_local_hero, farewell).run_if(hosting))
+        .add_systems(PreUpdate, count_party)
+        .add_systems(
+            Update,
+            level_puppets
+                .after(crate::hero::hero_vitals)
+                .run_if(hosting)
+                .run_if(in_state(Phase::Playing)),
+        )
         .add_systems(
             PostUpdate,
             (pulse, mirror.run_if(due), tick.run_if(due))
@@ -130,7 +138,11 @@ fn spawn_puppet(commands: &mut Commands, run: &mut Run, guest: &Guest, class: &'
     let h = &guest.hello;
     let serial = run.guid();
     let e = hero::spawn_peer(commands, class, h.display, h.race, h.sex, serial, at, guest.player);
+    // The guest plays with the plain numbers of its class for now; its profile's bonuses come
+    // with stage three.
+    let state = HeroState::new(class, h.race, Default::default(), Default::default());
     commands.entity(e).insert((
+        state,
         Replicated,
         Look::from_spec(&hero::hero_spec(class, h.display, h.race, h.sex, serial)),
         NetHero {
@@ -368,6 +380,85 @@ fn apply_moves(
     }
 }
 
+/// The heroes in the run, for the horde's size ([`Run::party`]): this one and every puppet.
+fn count_party(mut run: ResMut<Run>, puppets: Query<(), With<Peer>>) {
+    let n = 1 + puppets.iter().count() as u32;
+    if run.party != n {
+        run.party = n;
+    }
+}
+
+/// Each level the party reaches ranks every guest's hero up by one pick of its own, at random:
+/// a new spell or passive, or a rank on one it has. Until the guests get cards (stage three).
+fn level_puppets(
+    run: Res<Run>,
+    mut rng: ResMut<Rng>,
+    mut puppets: Query<&mut HeroState, With<Peer>>,
+    mut seen: Local<u32>,
+) {
+    if run.level < *seen {
+        // A new run.
+        *seen = run.level;
+    }
+    while *seen < run.level {
+        *seen += 1;
+        if *seen == 1 {
+            continue;
+        }
+        for mut state in &mut puppets {
+            if state.dead_t.is_none() {
+                rank_up(&mut state, &mut rng);
+            }
+        }
+    }
+}
+
+/// One random rank for `hero`: what the level-up cards would offer, without evolutions; nothing
+/// when everything is at its top.
+pub(super) fn rank_up(hero: &mut HeroState, rng: &mut Rng) {
+    enum Pick {
+        Up(usize),
+        New(&'static data::AbilityDef),
+        UpPassive(usize),
+        NewPassive(&'static data::PassiveDef),
+    }
+    let mut pool: Vec<Pick> = Vec::new();
+    for (i, o) in hero.abilities.iter().enumerate() {
+        if o.level < data::MAX_ABILITY_LEVEL {
+            pool.push(Pick::Up(i));
+        }
+    }
+    if hero.abilities.len() < data::MAX_ABILITIES {
+        for key in hero.class.pool {
+            if !hero.abilities.iter().any(|o| o.def.key == *key) {
+                pool.push(Pick::New(data::ability(key)));
+            }
+        }
+    }
+    for (i, (_, level)) in hero.passives.iter().enumerate() {
+        if *level < data::MAX_PASSIVE_LEVEL {
+            pool.push(Pick::UpPassive(i));
+        }
+    }
+    if hero.passives.len() < data::MAX_PASSIVES {
+        for p in data::PASSIVES {
+            if !hero.passives.iter().any(|(q, _)| q.key == p.key) {
+                pool.push(Pick::NewPassive(p));
+            }
+        }
+    }
+    if pool.is_empty() {
+        return;
+    }
+    match pool.swap_remove(rng.index(pool.len())) {
+        Pick::Up(i) => hero.abilities[i].level += 1,
+        Pick::New(def) => hero.abilities.push(Owned { def, level: 1, cd: 0.3 }),
+        Pick::UpPassive(i) => hero.passives[i].1 += 1,
+        Pick::NewPassive(p) => hero.passives.push((p, 1)),
+    }
+    hero.version += 1;
+}
+
 /// A guest whose connection is gone: its puppet leaves the run and its seat is free again.
 fn farewell(
     mut commands: Commands,
@@ -462,6 +553,23 @@ mod tests {
         assert!(!bad(&|m| m.at = [0.0, 1.0e7, 0.0]));
         assert!(!bad(&|m| m.at = [0.0, -400.0, 0.0]));
         assert!(bad(&|m| m.at = [0.0, 60.0, 0.0]));
+    }
+
+    #[test]
+    fn a_puppet_ranks_up_until_everything_is_at_the_top() {
+        let class = &data::CLASSES[0];
+        let mut hero = HeroState::new(class, 1, Default::default(), Default::default());
+        let mut rng = Rng::default();
+        for _ in 0..500 {
+            rank_up(&mut hero, &mut rng);
+        }
+        assert!(hero.abilities.len() <= data::MAX_ABILITIES);
+        assert!(hero.passives.len() <= data::MAX_PASSIVES);
+        assert!(hero.abilities.iter().all(|o| o.level == data::MAX_ABILITY_LEVEL));
+        assert!(hero.passives.iter().all(|(_, l)| *l == data::MAX_PASSIVE_LEVEL));
+        let before = hero.version;
+        rank_up(&mut hero, &mut rng);
+        assert_eq!(hero.version, before, "nothing left to rank");
     }
 
     #[test]
