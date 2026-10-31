@@ -28,7 +28,7 @@ dev = [
 webgl2 = ["benilla-app/webgl2"]
 webgpu = ["benilla-app/webgpu"]
 # Direct-IP co-op over UDP ([`coop`]), native only.
-coop = ["dep:bevy_replicon", "dep:bevy_replicon_renet2"]
+coop = ["dep:bevy_replicon", "dep:bevy_replicon_renet2", "dep:if-addrs"]
 
 [dependencies]
 # `default-features = false` on the benilla crates: a path dependency resolves its own defaults,
@@ -50,3 +50,5 @@ toml = "0.8"
 web-time = "1"
 bevy_replicon = { workspace = true, optional = true }
 bevy_replicon_renet2 = { workspace = true, optional = true }
+# Broadcast addresses of the local interfaces, for the LAN search (`coop`).
+if-addrs = { version = "0.15", optional = true }
