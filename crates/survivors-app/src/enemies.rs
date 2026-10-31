@@ -95,6 +95,16 @@ pub(super) enum GemKind {
     Gold(u32),
 }
 
+/// Yards per second a gem starts at when it is pulled toward the hero.
+const GEM_START_SPEED: f32 = 12.0;
+
+/// Yards per second each second a pulled gem speeds up, so a pull is quick but still visible.
+const GEM_ACCEL: f32 = 60.0;
+
+/// Seconds after a boss falls during which every gem on the field is pulled, long enough to
+/// catch the boss's own drops, which spawn a frame later.
+const BOSS_SWEEP_SECS: f32 = 1.5;
+
 #[derive(Component)]
 pub(super) struct Gem {
     kind: GemKind,
@@ -589,11 +599,12 @@ fn spawn_gem(commands: &mut Commands, serial: u64, pos: Vec3, kind: GemKind) {
     commands.entity(e).insert(Gem {
         kind,
         pulled: false,
-        speed: 6.0,
+        speed: GEM_START_SPEED,
     });
 }
 
-/// Gems in the magnet's reach fly to the hero; levels bank as they land.
+/// Gems in the magnet's reach fly to the hero; levels bank as they land. When a boss falls,
+/// every gem on the field flies in at once.
 pub(super) fn collect_gems(
     mut commands: Commands,
     time: Res<Time>,
@@ -602,19 +613,26 @@ pub(super) fn collect_gems(
     mut next: ResMut<NextState<Phase>>,
     hero: Query<&Transform, (With<Hero>, Without<Gem>)>,
     mut gems: Query<(Entity, &mut Transform, &mut Gem)>,
+    fallen: Query<&Enemy, Added<Dying>>,
     mut chat: MessageWriter<ChatLine>,
+    mut sweep: Local<f32>,
 ) {
     let Ok(h) = hero.single() else { return };
     if run.dead_t.is_some() {
         return;
     }
     let dt = time.delta_secs();
+    if fallen.iter().any(|e| e.boss) {
+        *sweep = BOSS_SWEEP_SECS;
+    }
+    let sweeping = *sweep > 0.0;
+    *sweep = (*sweep - dt).max(0.0);
     let stats = run.stats();
     let target = h.translation + Vec3::Y * 1.0;
     for (e, mut tf, mut g) in &mut gems {
         let d = target - tf.translation;
         let dist = d.length();
-        if !g.pulled && flat(d).length() <= stats.magnet {
+        if !g.pulled && (sweeping || flat(d).length() <= stats.magnet) {
             g.pulled = true;
         }
         if !g.pulled {
@@ -641,7 +659,7 @@ pub(super) fn collect_gems(
             commands.entity(e).despawn();
             continue;
         }
-        g.speed += 30.0 * dt;
+        g.speed += GEM_ACCEL * dt;
         tf.translation += d / dist * (g.speed * dt).min(dist);
     }
     while run.xp >= data::xp_to_next(run.level) {
