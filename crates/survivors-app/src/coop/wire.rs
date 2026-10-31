@@ -2,54 +2,17 @@
 //! guest and its host. Registered in one order on both ends ([`protocol`]); replicon checks the
 //! two match at the handshake.
 
+use bevy::ecs::entity::{EntityMapper, MapEntities};
 use bevy::prelude::*;
 use bevy_replicon::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::data::Weapon;
-use crate::units::UnitSpec;
+use crate::units::{AreaLook, FxRecord, ObjLook, Still};
+
 
 // Replicated components ------------------------------------------------------------------------
 
-/// What a unit's body is built from: [`UnitSpec`] without the serial, which each machine picks.
-#[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
-pub(crate) struct Look {
-    pub display: u32,
-    pub scale: f32,
-    pub level: u32,
-    pub faction: u32,
-    pub bytes0: u32,
-    pub weapons: Vec<Weapon>,
-    pub sheath: u8,
-}
-
-impl Look {
-    pub fn from_spec(spec: &UnitSpec) -> Self {
-        Self {
-            display: spec.display,
-            scale: spec.scale,
-            level: spec.level,
-            faction: spec.faction,
-            bytes0: spec.bytes0,
-            weapons: spec.weapons.to_vec(),
-            sheath: spec.sheath,
-        }
-    }
-
-    /// The spec to build this look's body under `serial`.
-    pub fn spec(&self, serial: u64) -> UnitSpec<'_> {
-        UnitSpec {
-            serial,
-            display: self.display,
-            scale: self.scale,
-            level: self.level,
-            faction: self.faction,
-            bytes0: self.bytes0,
-            weapons: &self.weapons,
-            sheath: self.sheath,
-        }
-    }
-}
+pub(crate) use crate::units::Look;
 
 /// Where a unit stands, quantised: centimetres, a 256-step facing, and the walk the animation
 /// shows (pace in cm/s and the movement flags). From deanmathieson's fork (`coop/wire.rs`).
@@ -99,6 +62,56 @@ pub(crate) struct NetHero {
     pub class_id: u8,
 }
 
+/// An enemy as a guest needs it: which creature (by [`crate::enemies::def_ref`]), its health,
+/// and what kind it is.
+#[derive(Component, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+pub(crate) struct NetEnemy {
+    pub def: (u8, u16),
+    pub hp: f32,
+    pub max_hp: f32,
+    pub boss: bool,
+    pub elite: bool,
+    pub dead: bool,
+}
+
+/// A hero's health, shield, fall and gold this run.
+#[derive(Component, Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct NetVitals {
+    pub hp: f32,
+    pub max_hp: f32,
+    pub shield: f32,
+    pub dead: bool,
+    pub gold: u32,
+    /// Damage dealt this run, for the results.
+    pub damage: f64,
+}
+
+/// A hero's spells (key, rank, cooldown left in centiseconds) and passives (key, rank).
+#[derive(Component, Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+pub(crate) struct NetBuild {
+    pub abilities: Vec<(String, u8, u16)>,
+    pub passives: Vec<(String, u8)>,
+}
+
+/// The auras a unit shows, slot by slot: the buff slots on a hero, the debuffs on an enemy.
+#[derive(Component, Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct NetAuras {
+    pub buffs: bool,
+    pub spells: [u32; 8],
+}
+
+/// What the party shares, on one entity of its own: the clock, the kills, the level and its
+/// experience, the banner.
+#[derive(Component, Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+pub(crate) struct NetRun {
+    pub elapsed: f32,
+    pub kills: u32,
+    pub level: u32,
+    pub xp: f32,
+    /// The last party-wide banner and its number ([`crate::Run::announce`]).
+    pub banner: (u32, String),
+}
+
 // Guest to host --------------------------------------------------------------------------------
 
 /// A guest's first word: who it is and what its hero looks like.
@@ -146,23 +159,175 @@ pub(crate) struct StartRun {
 #[derive(Message, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct EndRun;
 
+/// The host's run is over: won, or its hero fell.
+#[derive(Message, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct RunOver {
+    pub won: bool,
+}
+
+/// One effect the host played, for the guest to play the same ([`FxRecord`]).
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub(crate) enum NetFx {
+    Cast {
+        caster: Entity,
+        spell: u32,
+        hits: Vec<Entity>,
+        dest: Option<[f32; 3]>,
+    },
+    Impact {
+        target: Entity,
+        spell: u32,
+    },
+    Swing {
+        attacker: Entity,
+        victim: Entity,
+        damage: f32,
+    },
+    Number {
+        anchor: Entity,
+        amount: f32,
+        crit: bool,
+        color: u32,
+    },
+}
+
+impl NetFx {
+    pub fn from_record(r: &FxRecord) -> Self {
+        match r.clone() {
+            FxRecord::Cast {
+                caster,
+                spell,
+                hits,
+                dest,
+            } => Self::Cast {
+                caster,
+                spell,
+                hits,
+                dest: dest.map(|d| d.to_array()),
+            },
+            FxRecord::Impact { target, spell } => Self::Impact { target, spell },
+            FxRecord::Swing {
+                attacker,
+                victim,
+                damage,
+            } => Self::Swing {
+                attacker,
+                victim,
+                damage,
+            },
+            FxRecord::Number {
+                anchor,
+                amount,
+                crit,
+                color,
+            } => Self::Number {
+                anchor,
+                amount,
+                crit,
+                color,
+            },
+        }
+    }
+
+    /// Every entity the effect names.
+    pub fn entities(&self) -> Vec<Entity> {
+        match self {
+            Self::Cast { caster, hits, .. } => std::iter::once(*caster).chain(hits.iter().copied()).collect(),
+            Self::Impact { target, .. } => vec![*target],
+            Self::Swing {
+                attacker, victim, ..
+            } => vec![*attacker, *victim],
+            Self::Number { anchor, .. } => vec![*anchor],
+        }
+    }
+
+    /// The same effect with every entity passed through `f`.
+    pub fn map(&mut self, mut f: impl FnMut(Entity) -> Entity) {
+        match self {
+            Self::Cast { caster, hits, .. } => {
+                *caster = f(*caster);
+                for h in hits {
+                    *h = f(*h);
+                }
+            }
+            Self::Impact { target, .. } => *target = f(*target),
+            Self::Swing {
+                attacker, victim, ..
+            } => {
+                *attacker = f(*attacker);
+                *victim = f(*victim);
+            }
+            Self::Number { anchor, .. } => *anchor = f(*anchor),
+        }
+    }
+}
+
+/// A frame's effects, in the order the host played them. The entities are the host's and are
+/// mapped to the guest's on arrival.
+#[derive(Message, Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+pub(crate) struct FxBatch(pub Vec<NetFx>);
+
+impl MapEntities for FxBatch {
+    fn map_entities<E: EntityMapper>(&mut self, mapper: &mut E) {
+        for fx in &mut self.0 {
+            fx.map(|e| mapper.get_mapped(e));
+        }
+    }
+}
+
 /// The replication rules and messages, in the one order both ends register them.
 pub(super) fn protocol(app: &mut App) {
     app.replicate::<Look>()
         .replicate::<NetPos>()
         .replicate::<NetHero>()
+        .replicate::<ObjLook>()
+        .replicate::<AreaLook>()
+        .replicate::<Still>()
+        .replicate::<NetEnemy>()
+        .replicate::<NetVitals>()
+        .replicate::<NetBuild>()
+        .replicate::<NetAuras>()
+        .replicate::<NetRun>()
         .add_client_message::<Hello>(Channel::Ordered)
         .add_client_message::<MoveInput>(Channel::Unreliable)
         .add_server_message::<Welcome>(Channel::Ordered)
         .add_server_message::<Refused>(Channel::Ordered)
         .make_message_independent::<Refused>()
         .add_server_message::<StartRun>(Channel::Ordered)
-        .add_server_message::<EndRun>(Channel::Ordered);
+        .add_server_message::<EndRun>(Channel::Ordered)
+        .add_server_message::<RunOver>(Channel::Ordered)
+        .add_mapped_server_message::<FxBatch>(Channel::Ordered);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::units::UnitSpec;
+
+    #[test]
+    fn an_effect_maps_every_entity_it_names() {
+        let a = Entity::from_raw_u32(1).unwrap();
+        let b = Entity::from_raw_u32(2).unwrap();
+        let c = Entity::from_raw_u32(3).unwrap();
+        let mut fx = NetFx::from_record(&FxRecord::Cast {
+            caster: a,
+            spell: 116,
+            hits: vec![b, c],
+            dest: Some(Vec3::new(1.0, 2.0, 3.0)),
+        });
+        assert_eq!(fx.entities(), vec![a, b, c]);
+        fx.map(|e| if e == b { a } else { e });
+        assert_eq!(fx.entities(), vec![a, a, c]);
+        let NetFx::Cast { dest, .. } = fx else { panic!("a cast") };
+        assert_eq!(dest, Some([1.0, 2.0, 3.0]));
+        let mut swing = NetFx::from_record(&FxRecord::Swing {
+            attacker: a,
+            victim: c,
+            damage: 12.0,
+        });
+        swing.map(|e| if e == c { b } else { e });
+        assert_eq!(swing.entities(), vec![a, b]);
+    }
 
     #[test]
     fn net_pos_round_trips_to_a_centimetre() {

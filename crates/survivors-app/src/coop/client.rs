@@ -9,12 +9,17 @@ use bevy_replicon::prelude::{ClientState, ClientSystems, Remote};
 
 use super::{Session, ASIDE_YARDS};
 use super::smooth;
-use super::wire::{EndRun, Hello, Look, MoveInput, NetHero, NetPos, Refused, StartRun, Welcome};
+use super::wire::{
+    EndRun, FxBatch, Hello, Look, MoveInput, NetAuras, NetBuild, NetEnemy, NetFx, NetHero, NetPos,
+    NetRun, NetVitals, Refused, RunOver, StartRun, Welcome,
+};
 use crate::chatlog::ChatLine;
+use crate::enemies::{self, Elite, Enemy};
 use crate::hero::Hero;
 use crate::profile::Profile;
-use crate::units::unit_bundle;
-use crate::{NetRole, Phase, Run, RunEntity, Selection, data, hud};
+use crate::units::{self, area_bundle, object_bundle, unit_bundle, AreaLook, Fx, Marks, ObjLook};
+use crate::{NetRole, Owned, Phase, Run, RunEntity, Selection, data, hud};
+use benilla_app::survivors_host::net::{FieldChanged, Guid, ObjectStore};
 
 /// How often the guest reports where its hero is, in seconds of wall clock.
 const MOVE_EVERY: f32 = 1.0 / 20.0;
@@ -28,10 +33,32 @@ const BODY_SERIAL_BASE: u64 = 1 << 40;
 #[derive(Component)]
 pub(super) struct RemoteBody;
 
+/// This guest's own hero as the host keeps it: it gets no body here; what the host says of it is
+/// this machine's hero's ([`sync_me`]), and its effects play on this machine's hero.
+#[derive(Component)]
+pub(super) struct OwnPuppet;
+
+/// A replicated body whose death has been played.
+#[derive(Component)]
+struct Killed;
+
 pub(super) fn plugin(app: &mut App) {
     app.add_systems(
         Update,
-        (watch_link, greet, receive, step_aside, build_bodies, smooth_bodies)
+        (
+            watch_link,
+            greet,
+            receive,
+            step_aside,
+            build_bodies,
+            build_objects,
+            smooth_bodies,
+            sync_enemies,
+            sync_auras,
+            sync_me,
+            sync_run,
+            play_fx,
+        )
             .chain()
             .run_if(resource_equals(NetRole::Client)),
     )
@@ -194,6 +221,7 @@ fn receive(
     mut refusals: MessageReader<Refused>,
     mut starts: MessageReader<StartRun>,
     mut ends: MessageReader<EndRun>,
+    mut overs: MessageReader<RunOver>,
     mut session: ResMut<Session>,
     mut selection: ResMut<Selection>,
     mut run: ResMut<Run>,
@@ -223,6 +251,15 @@ fn receive(
         if *phase.get() != Phase::Menu {
             session.host_sent_menu = true;
             next.set(Phase::Menu);
+        }
+    }
+    // The host's run is over: this guest's ends with it, and shows its results.
+    if let Some(over) = overs.read().last() {
+        if matches!(phase.get(), Phase::Playing | Phase::LevelUp | Phase::Paused) {
+            run.won = over.won;
+            next.set(Phase::GameOver);
+            // Leaving the results for the menu keeps the party: the host's next run follows.
+            session.host_sent_menu = true;
         }
     }
     for s in starts.read() {
@@ -274,33 +311,324 @@ fn send_moves(
     });
 }
 
-/// Another player's hero arrives: its replicated entity gets a body built from its look. This
-/// player's own puppet on the host gets none, and nothing is built before the host has said which
-/// seat this player has (the arrival waits) or while the menu is up (there is no run to stand in).
+/// The serials of the bodies built here, counting up from [`BODY_SERIAL_BASE`].
+#[derive(Resource, Default)]
+struct Serials(u64);
+
+impl Serials {
+    fn next(&mut self) -> u64 {
+        self.0 += 1;
+        BODY_SERIAL_BASE + self.0
+    }
+}
+
+/// A unit arrives (another player's hero, an enemy, a totem): its replicated entity gets a body
+/// built from its look, with aura slots when the host shows marks on it. This player's own puppet
+/// on the host gets none, and nothing is built before the host has said which seat this player
+/// has (the arrival waits) or while the menu is up (there is no run to stand in).
 #[allow(clippy::type_complexity)]
 fn build_bodies(
     mut commands: Commands,
     session: Res<Session>,
     phase: Res<State<Phase>>,
-    fresh: Query<(Entity, &Look, &NetHero, &NetPos), Without<RemoteBody>>,
-    mut made: Local<u64>,
+    fresh: Query<
+        (Entity, &Look, Option<&NetHero>, &NetPos, Option<&NetAuras>),
+        (With<Remote>, Without<RemoteBody>, Without<OwnPuppet>),
+    >,
+    mut serials: Local<Serials>,
 ) {
     let Some(me) = session.player else { return };
     if *phase.get() == Phase::Menu {
         return;
     }
-    for (e, look, hero, pos) in &fresh {
-        if hero.player == me {
+    for (e, look, hero, pos, auras) in &fresh {
+        if hero.is_some_and(|h| h.player == me) {
+            commands.entity(e).insert(OwnPuppet);
             continue;
         }
-        *made += 1;
-        let spec = look.spec(BODY_SERIAL_BASE + *made);
-        commands
-            .entity(e)
+        let spec = look.spec(serials.next());
+        let mut entity = commands.entity(e);
+        entity
             .insert((unit_bundle(&spec, pos.pos(), pos.yaw()), RemoteBody))
             // The replicated entity belongs to replicon, not to the run: the run's cleanup must
             // not despawn it.
             .remove::<RunEntity>();
+        if let Some(auras) = auras {
+            entity.insert(if auras.buffs { Marks::buffs() } else { Marks::debuffs() });
+        }
+    }
+}
+
+/// A pickup, chest, quest item or ground spell arrives: it gets its object, as the host built it.
+#[allow(clippy::type_complexity)]
+fn build_objects(
+    mut commands: Commands,
+    phase: Res<State<Phase>>,
+    objects: Query<(Entity, &ObjLook, &NetPos), (With<Remote>, Without<RemoteBody>)>,
+    areas: Query<(Entity, &AreaLook, &NetPos), (With<Remote>, Without<RemoteBody>)>,
+    mut serials: Local<Serials>,
+) {
+    if *phase.get() == Phase::Menu {
+        return;
+    }
+    for (e, look, pos) in &objects {
+        commands
+            .entity(e)
+            .insert((object_bundle(serials.next(), look.display, look.scale, pos.pos()), RemoteBody))
+            .remove::<RunEntity>();
+    }
+    for (e, look, pos) in &areas {
+        commands
+            .entity(e)
+            .insert((area_bundle(serials.next(), look.spell, look.radius, pos.pos()), RemoteBody))
+            .remove::<RunEntity>();
+    }
+}
+
+/// An enemy's body knows what it is and how it stands, for the plates, frames and minimap, and
+/// plays its death once when the host says it fell.
+#[allow(clippy::type_complexity)]
+fn sync_enemies(
+    mut commands: Commands,
+    selection: Res<Selection>,
+    mut bodies: Query<
+        (Entity, Ref<NetEnemy>, Option<&mut Enemy>, &mut ObjectStore, Has<Killed>),
+        With<RemoteBody>,
+    >,
+) {
+    for (e, net, enemy, mut store, killed) in &mut bodies {
+        match enemy {
+            None => {
+                if let Some(def) = enemies::def_at(selection.stage, net.def) {
+                    let mut entity = commands.entity(e);
+                    entity.insert(enemies::shown_enemy(
+                        def, net.hp, net.max_hp, net.boss, net.elite, net.dead,
+                    ));
+                    if net.elite {
+                        entity.insert(Elite);
+                    }
+                }
+            }
+            Some(mut en) if net.is_changed() => {
+                en.hp = net.hp;
+                en.max_hp = net.max_hp;
+                en.dead = net.dead;
+            }
+            Some(_) => {}
+        }
+        if net.dead && !killed {
+            units::kill_unit(&mut store);
+            commands.entity(e).insert(Killed);
+        }
+    }
+}
+
+/// The marks the host shows on a unit show here too; those on this guest's puppet show on this
+/// machine's hero.
+#[allow(clippy::type_complexity)]
+fn sync_auras(
+    mut bodies: Query<
+        (Entity, &Guid, Ref<NetAuras>, &mut Marks, &mut ObjectStore),
+        (With<RemoteBody>, Without<Hero>),
+    >,
+    puppet: Query<Ref<NetAuras>, (With<OwnPuppet>, Without<RemoteBody>)>,
+    mut hero: Query<(Entity, &Guid, &mut Marks, &mut ObjectStore), (With<Hero>, Without<RemoteBody>)>,
+    run: Res<Run>,
+    mut fields: MessageWriter<FieldChanged>,
+) {
+    for (e, guid, net, mut marks, mut store) in &mut bodies {
+        if net.is_changed() || marks.is_added() {
+            marks.set(&net.spells);
+            marks.flush(e, guid.0, &mut store, &mut fields);
+        }
+    }
+    let (Ok(net), Ok((e, guid, mut marks, mut store))) = (puppet.single(), hero.single_mut()) else {
+        return;
+    };
+    if net.is_changed() && run.dead_t.is_none() {
+        marks.set(&net.spells);
+        marks.flush(e, guid.0, &mut store, &mut fields);
+    }
+}
+
+/// What the host says of this guest's hero is this machine's hero: its health, shield, gold and
+/// fall, and its spells, ranks and cooldowns. A guest plays with its class's plain numbers for
+/// now, so the profile's bonuses are taken off here as they are on the host.
+#[allow(clippy::type_complexity)]
+fn sync_me(
+    mut run: ResMut<Run>,
+    phase: Res<State<Phase>>,
+    puppet: Query<(&NetVitals, &NetBuild), With<OwnPuppet>>,
+    mut hero: Query<(Entity, &Guid, &mut ObjectStore, &mut Marks), (With<Hero>, Without<OwnPuppet>)>,
+    mut fields: MessageWriter<FieldChanged>,
+    mut seen: Local<Option<(NetVitals, NetBuild)>>,
+) {
+    if *phase.get() == Phase::Menu {
+        *seen = None;
+        return;
+    }
+    let Ok((vitals, build)) = puppet.single() else {
+        return;
+    };
+    // Compared by value, not by change ticks: the host's word may have come while this waited
+    // at the menu, and the run's start set this machine's hero to its own numbers since.
+    let fresh_vitals = seen.as_ref().is_none_or(|(v, _)| v != vitals);
+    let fresh_build = seen.as_ref().is_none_or(|(_, b)| b != build);
+    if fresh_vitals || fresh_build {
+        *seen = Some((*vitals, build.clone()));
+    }
+    let me = &mut run.me;
+    me.meta = Default::default();
+    me.talents = Default::default();
+    me.gear = Default::default();
+    me.buffs = Default::default();
+    if fresh_vitals {
+        me.hp = vitals.hp;
+        me.shield = vitals.shield;
+        me.shield_t = if vitals.shield > 0.0 { 1.0 } else { 0.0 };
+        me.gold = vitals.gold;
+        me.damage_done = vitals.damage;
+        if vitals.dead && me.dead_t.is_none() {
+            me.hp = 0.0;
+            me.dead_t = Some(0.0);
+            if let Ok((e, guid, mut store, mut marks)) = hero.single_mut() {
+                units::kill_unit(&mut store);
+                marks.clear();
+                marks.flush(e, guid.0, &mut store, &mut fields);
+            }
+        }
+    }
+    if fresh_build {
+        apply_build(me, build);
+    }
+}
+
+/// `build` into `hero`: the ranks and cooldowns, and the lists themselves when a spell or passive
+/// came or went (the HUD rebuilds its icon rows then).
+fn apply_build(hero: &mut crate::HeroState, build: &NetBuild) {
+    let same = hero.abilities.len() == build.abilities.len()
+        && hero
+            .abilities
+            .iter()
+            .zip(&build.abilities)
+            .all(|(o, (key, level, _))| o.def.key == key && o.level == *level)
+        && hero.passives.len() == build.passives.len()
+        && hero
+            .passives
+            .iter()
+            .zip(&build.passives)
+            .all(|((p, l), (key, level))| p.key == key && l == level);
+    if same {
+        for (o, (_, _, cd)) in hero.abilities.iter_mut().zip(&build.abilities) {
+            o.cd = f32::from(*cd) / 100.0;
+        }
+        return;
+    }
+    hero.abilities = build
+        .abilities
+        .iter()
+        .filter_map(|(key, level, cd)| {
+            let def = data::ABILITIES.iter().find(|a| a.key == key)?;
+            Some(Owned {
+                def,
+                level: *level,
+                cd: f32::from(*cd) / 100.0,
+            })
+        })
+        .collect();
+    hero.passives = build
+        .passives
+        .iter()
+        .filter_map(|(key, level)| {
+            data::PASSIVES
+                .iter()
+                .find(|p| p.key == key)
+                .map(|p| (p, *level))
+        })
+        .collect();
+    hero.version += 1;
+}
+
+/// The party's clock, kills, level and experience are the host's; a new banner shows here too.
+fn sync_run(
+    mut run: ResMut<Run>,
+    phase: Res<State<Phase>>,
+    shared: Query<Ref<NetRun>>,
+    mut shown: Local<Option<u32>>,
+) {
+    if *phase.get() == Phase::Menu {
+        *shown = None;
+        return;
+    }
+    let Ok(net) = shared.single() else { return };
+    if !net.is_changed() {
+        return;
+    }
+    let was = run.level;
+    run.elapsed = net.elapsed;
+    run.kills = net.kills;
+    run.level = net.level;
+    run.xp = net.xp;
+    // The first word only marks where the numbering stands: a banner from before this guest
+    // came in is old news.
+    let (seq, text) = &net.banner;
+    if shown.is_some_and(|s| s != *seq) && !text.is_empty() {
+        run.banner = Some((text.clone(), 3.5));
+    }
+    *shown = Some(*seq);
+    // The party's level teaches this hero its mobility, as it does the host's.
+    if was < crate::mobility::LEARN_LEVEL && run.level >= crate::mobility::LEARN_LEVEL {
+        if let Some(m) = crate::mobility::for_class(run.class.id) {
+            run.banner = Some((format!("You have learned {}! Press F.", m.name), 4.0));
+        }
+    }
+}
+
+/// The host's effects play here as they played there: casts and their missiles, impacts, swings
+/// and numbers. One on this guest's puppet plays on this machine's hero.
+fn play_fx(
+    mut batches: MessageReader<FxBatch>,
+    phase: Res<State<Phase>>,
+    puppet: Query<Entity, With<OwnPuppet>>,
+    hero: Query<Entity, With<Hero>>,
+    bodies: Query<(), With<Guid>>,
+    mut fx: Fx,
+) {
+    if *phase.get() == Phase::Menu {
+        batches.clear();
+        return;
+    }
+    let own = puppet.single().ok();
+    let me = hero.single().ok();
+    for batch in batches.read() {
+        for f in &batch.0 {
+            let mut f = f.clone();
+            f.map(|e| if Some(e) == own { me.unwrap_or(e) } else { e });
+            // A body still being built (or never built) cannot show it.
+            if !f.entities().iter().all(|e| bodies.contains(*e)) {
+                continue;
+            }
+            match f {
+                NetFx::Cast {
+                    caster,
+                    spell,
+                    hits,
+                    dest,
+                } => fx.cast(caster, spell, &hits, dest.map(Vec3::from_array)),
+                NetFx::Impact { target, spell } => fx.impact(target, spell),
+                NetFx::Swing {
+                    attacker,
+                    victim,
+                    damage,
+                } => fx.swing(attacker, victim, damage),
+                NetFx::Number {
+                    anchor,
+                    amount,
+                    crit,
+                    color,
+                } => fx.number(anchor, amount, crit, color),
+            }
+        }
     }
 }
 
@@ -310,7 +638,7 @@ fn smooth_bodies(
     time: Res<Time<Real>>,
     phase: Res<State<Phase>>,
     mut bodies: Query<
-        (&NetPos, &mut Transform, &mut MovementState, &mut Visibility),
+        (&NetPos, &mut Transform, Option<&mut MovementState>, &mut Visibility),
         With<RemoteBody>,
     >,
 ) {
@@ -323,8 +651,12 @@ fn smooth_bodies(
     for (pos, mut tf, mut mv, mut vis) in &mut bodies {
         tf.translation = smooth::follow(tf.translation, pos.pos(), dt);
         tf.rotation = Quat::from_rotation_y(pos.yaw());
-        mv.speed = pos.pace();
-        mv.flags = pos.flags;
+        if let Some(mv) = mv.as_deref_mut() {
+            if mv.speed != pos.pace() || mv.flags != pos.flags {
+                mv.speed = pos.pace();
+                mv.flags = pos.flags;
+            }
+        }
         if *vis != shown {
             *vis = shown;
         }

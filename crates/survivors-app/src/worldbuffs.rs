@@ -168,7 +168,8 @@ struct BuffTimer;
 
 pub(super) fn plugin(app: &mut App) {
     app.init_resource::<Buffs>()
-        .add_systems(Update, drive.run_if(in_state(Phase::Playing)))
+        // The guests' world buffs come with co-op stage three: until then only the host picks.
+        .add_systems(Update, drive.run_if(in_state(Phase::Playing)).run_if(super::simulates))
         .add_systems(OnEnter(Phase::Menu), teardown)
         .add_systems(OnEnter(Phase::GameOver), teardown)
         .add_systems(OnEnter(Phase::LevelUp), show_panel::<false>)

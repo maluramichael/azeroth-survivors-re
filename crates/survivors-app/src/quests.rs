@@ -49,7 +49,8 @@ pub(super) fn plugin(app: &mut App) {
         .add_systems(
             Update,
             (
-                roll_quests.run_if(playing),
+                // A co-op guest's quests come with stage three; the host's are the host's.
+                roll_quests.run_if(playing).run_if(super::simulates),
                 count_kills,
                 pick_up.run_if(playing),
                 settle.run_if(playing),

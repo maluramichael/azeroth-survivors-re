@@ -120,8 +120,8 @@ pub(super) struct Session {
     pub join_password: String,
     /// The window's status line: what happened last, in words.
     pub status: String,
-    /// A guest's return to the menu was the host's doing ([`wire::EndRun`]); any other return
-    /// leaves the party.
+    /// A guest's return to the menu was the host's doing ([`wire::EndRun`]) or comes from the
+    /// results of a run the host ended ([`wire::RunOver`]); any other return leaves the party.
     pub host_sent_menu: bool,
 }
 
@@ -149,6 +149,8 @@ pub(super) fn host_now(world: &mut World) -> Result<String, String> {
         net::host(world.resource::<RepliconChannels>(), port).map_err(|e| e.to_string())?;
     world.insert_resource(server);
     world.insert_resource(transport);
+    // From now on every effect played is kept for the guests ([`host::send_fx`]).
+    world.init_resource::<crate::units::FxOut>();
     *world.resource_mut::<NetRole>() = NetRole::Host;
     let mut session = world.resource_mut::<Session>();
     session.player = Some(0);

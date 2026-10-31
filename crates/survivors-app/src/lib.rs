@@ -336,6 +336,9 @@ pub(crate) struct Run {
     pub next_guid: u64,
     /// A centre-screen announcement and its seconds left.
     pub banner: Option<(String, f32)>,
+    /// The last announcement for the whole party ([`Run::announce`]), numbered so a co-op guest
+    /// shows each once; a banner about this hero alone goes straight into `banner`.
+    pub party_banner: (u32, String),
     /// Picked at the pick screen ([`difficulty`]).
     pub difficulty: difficulty::Difficulty,
     /// Heroes in the run, this one included: 1 alone, up to 4 in a co-op party. Sizes the horde.
@@ -406,6 +409,7 @@ impl Default for Run {
             won: false,
             next_guid: 1,
             banner: None,
+            party_banner: (0, String::new()),
             difficulty: difficulty::Difficulty::default(),
             party: 1,
             me: HeroState::default(),
@@ -518,6 +522,12 @@ impl HeroState {
 }
 
 impl Run {
+    /// A banner for the whole party: a boss coming or falling, the ring closing in.
+    pub fn announce(&mut self, text: String, secs: f32) {
+        self.party_banner = (self.party_banner.0.wrapping_add(1), text.clone());
+        self.banner = Some((text, secs));
+    }
+
     pub fn guid(&mut self) -> u64 {
         self.next_guid += 1;
         self.next_guid

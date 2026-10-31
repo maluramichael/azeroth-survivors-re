@@ -58,7 +58,7 @@ fn enrage_bosses(
         e.damage *= ENRAGE_DAMAGE;
         commands.entity(ent).insert(Enraged);
         let line = format!("{} becomes enraged!", e.def.name);
-        run.banner = Some((line.clone(), ENRAGE_BANNER_SECS));
+        run.announce(line.clone(), ENRAGE_BANNER_SECS);
         chat.write(ChatLine::text(ChatKind::Boss, line));
         fx.impact(ent, ENRAGE_SPELL);
     }

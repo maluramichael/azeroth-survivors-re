@@ -944,7 +944,7 @@ pub(super) fn apply_hits(
             });
             run.kills += 1;
             if en.boss {
-                run.banner = Some((format!("{} is slain!", en.def.name), 3.0));
+                run.announce(format!("{} is slain!", en.def.name), 3.0);
                 chat.write(super::chatlog::ChatLine::text(
                     super::chatlog::ChatKind::Combat,
                     format!("{} dies.", en.def.name),

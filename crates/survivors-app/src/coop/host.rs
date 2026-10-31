@@ -11,8 +11,12 @@ use bevy_replicon::prelude::*;
 use bevy_replicon::server::server_tick::ServerTick;
 
 use super::wire::{
-    EndRun, Hello, Look, MoveInput, NetHero, NetPos, Refused, StartRun, Welcome,
+    EndRun, FxBatch, Hello, Look, MoveInput, NetAuras, NetBuild, NetEnemy, NetFx, NetHero,
+    NetPos, NetRun, NetVitals, Refused, RunOver, StartRun, Welcome,
 };
+use crate::enemies::{self, Elite, Enemy};
+use crate::units::{AreaLook, FxOut, Marks, ObjLook};
+use crate::RunEntity;
 use super::{admits, free_slot, Guest, Lobby, Session};
 use crate::chatlog::ChatLine;
 use crate::data::{self, ClassDef};
@@ -40,7 +44,7 @@ pub(super) fn plugin(app: &mut App) {
                 .after(ServerSystems::Receive)
                 .run_if(hosting),
         )
-        .add_systems(Update, (tag_local_hero, farewell).run_if(hosting))
+        .add_systems(Update, (tag_local_hero, farewell, log_traffic).run_if(hosting))
         .add_systems(PreUpdate, count_party)
         .add_systems(
             Update,
@@ -51,11 +55,20 @@ pub(super) fn plugin(app: &mut App) {
         )
         .add_systems(
             PostUpdate,
-            (pulse, mirror.run_if(due), tick.run_if(due))
+            (
+                pulse,
+                tag_world,
+                keep_run_entity,
+                mirror.run_if(due),
+                mirror_state.run_if(due),
+                send_fx,
+                tick.run_if(due),
+            )
                 .chain()
                 .before(ServerSystems::Send)
                 .run_if(hosting),
         )
+        .add_systems(OnEnter(Phase::GameOver), run_over.run_if(hosting))
         .add_systems(
             OnTransition {
                 exited: Phase::Menu,
@@ -151,6 +164,12 @@ fn spawn_puppet(commands: &mut Commands, run: &mut Run, guest: &Guest, class: &'
             class_id: class.id,
         },
         NetPos::new(at, 0.0, 0.0, 0),
+        NetVitals::default(),
+        NetBuild::default(),
+        NetAuras {
+            buffs: true,
+            spells: [0; 8],
+        },
     ));
 }
 
@@ -327,24 +346,236 @@ fn tag_local_hero(
                 class_id: class.id,
             },
             NetPos::new(tf.translation, yaw_of(tf.rotation), mv.speed, mv.flags),
+            NetVitals::default(),
+            NetBuild::default(),
+            NetAuras {
+                buffs: true,
+                spells: [0; 8],
+            },
         ));
     }
 }
 
-/// The host's hero and every puppet write where they stand into the replicated [`NetPos`], when it
-/// changed.
+/// Whether the run is on (or showing its results): the time the world is the guests' too.
+fn in_run(phase: &Phase) -> bool {
+    matches!(
+        phase,
+        Phase::Playing | Phase::LevelUp | Phase::Paused | Phase::GameOver
+    )
+}
+
+/// The run's world goes to the guests: every enemy, totem, pickup, chest, quest item and ground
+/// area is replicated once, from the frame it appears, with where it stands. An enemy also says
+/// which creature it is and shows its marks; one whose creature cannot be named goes as a body only.
 #[allow(clippy::type_complexity)]
-fn mirror(
-    mut bodies: Query<(&Transform, &MovementState, &mut NetPos), Or<(With<Hero>, With<Peer>)>>,
+fn tag_world(
+    mut commands: Commands,
+    phase: Res<State<Phase>>,
+    selection: Res<Selection>,
+    units: Query<
+        (Entity, &Transform, Option<&Enemy>, Has<Elite>, Option<&Marks>),
+        (
+            With<Look>,
+            With<RunEntity>,
+            Without<Replicated>,
+            Without<Hero>,
+            Without<Peer>,
+        ),
+    >,
+    objects: Query<
+        (Entity, &Transform),
+        (
+            Or<(With<ObjLook>, With<AreaLook>)>,
+            With<RunEntity>,
+            Without<Replicated>,
+        ),
+    >,
 ) {
-    for (tf, mv, mut pos) in &mut bodies {
-        pos.set_if_neq(NetPos::new(
-            tf.translation,
-            yaw_of(tf.rotation),
-            mv.speed,
-            mv.flags,
-        ));
+    if !in_run(phase.get()) {
+        return;
     }
+    for (e, tf, enemy, elite, marks) in &units {
+        let mut entity = commands.entity(e);
+        entity.insert((Replicated, NetPos::new(tf.translation, yaw_of(tf.rotation), 0.0, 0)));
+        if let Some(en) = enemy {
+            if let Some(def) = enemies::def_ref(selection.stage, en.def) {
+                entity.insert(net_enemy(def, en, elite));
+            }
+        }
+        if let Some(marks) = marks {
+            entity.insert(NetAuras {
+                buffs: marks.is_buffs(),
+                spells: marks.spells(),
+            });
+        }
+    }
+    for (e, tf) in &objects {
+        commands
+            .entity(e)
+            .insert((Replicated, NetPos::new(tf.translation, yaw_of(tf.rotation), 0.0, 0)));
+    }
+}
+
+fn net_enemy(def: (u8, u16), en: &Enemy, elite: bool) -> NetEnemy {
+    NetEnemy {
+        def,
+        hp: en.hp.max(0.0),
+        max_hp: en.max_hp,
+        boss: en.boss,
+        elite,
+        dead: en.dead,
+    }
+}
+
+/// The party's shared numbers ride on an entity of their own, made once per run (the run's cleanup
+/// takes it).
+fn keep_run_entity(
+    mut commands: Commands,
+    phase: Res<State<Phase>>,
+    present: Query<(), With<NetRun>>,
+) {
+    if in_run(phase.get()) && present.is_empty() {
+        commands.spawn((NetRun::default(), Replicated, RunEntity));
+    }
+}
+
+/// Every replicated body writes where it stands into its [`NetPos`], when that changed.
+fn mirror(mut bodies: Query<(&Transform, Option<&MovementState>, &mut NetPos)>) {
+    for (tf, mv, mut pos) in &mut bodies {
+        let (speed, flags) = mv.map_or((0.0, 0), |m| (m.speed, m.flags));
+        pos.set_if_neq(NetPos::new(tf.translation, yaw_of(tf.rotation), speed, flags));
+    }
+}
+
+/// A hero's health and gold as the guests see them.
+fn vitals_of(hero: &HeroState) -> NetVitals {
+    NetVitals {
+        hp: hero.hp.max(0.0),
+        max_hp: hero.stats().max_hp,
+        shield: if hero.shield_t > 0.0 { hero.shield } else { 0.0 },
+        dead: hero.dead_t.is_some(),
+        gold: hero.gold,
+        damage: hero.damage_done.round(),
+    }
+}
+
+/// A hero's spells and passives as the guests see them.
+fn build_of(hero: &HeroState) -> NetBuild {
+    NetBuild {
+        abilities: hero
+            .abilities
+            .iter()
+            .map(|o| {
+                let cd = (o.cd.max(0.0) * 100.0).round().min(f32::from(u16::MAX)) as u16;
+                (o.def.key.to_string(), o.level, cd)
+            })
+            .collect(),
+        passives: hero
+            .passives
+            .iter()
+            .map(|(p, level)| (p.key.to_string(), *level))
+            .collect(),
+    }
+}
+
+/// The state behind the bodies: each enemy's health and fall, each unit's marks, each hero's
+/// health, gold and build, and the party's clock and level.
+#[allow(clippy::type_complexity)]
+fn mirror_state(
+    run: Res<Run>,
+    mut enemies: Query<(&Enemy, &mut NetEnemy)>,
+    mut auras: Query<(&Marks, &mut NetAuras)>,
+    mut mine: Query<(&mut NetVitals, &mut NetBuild), (With<Hero>, Without<Peer>)>,
+    mut puppets: Query<(&HeroState, &mut NetVitals, &mut NetBuild), (With<Peer>, Without<Hero>)>,
+    mut shared: Query<&mut NetRun>,
+) {
+    for (en, mut net) in &mut enemies {
+        let now = net_enemy(net.def, en, net.elite);
+        net.set_if_neq(now);
+    }
+    for (marks, mut net) in &mut auras {
+        net.set_if_neq(NetAuras {
+            buffs: marks.is_buffs(),
+            spells: marks.spells(),
+        });
+    }
+    for (mut vitals, mut build) in &mut mine {
+        vitals.set_if_neq(vitals_of(&run.me));
+        build.set_if_neq(build_of(&run.me));
+    }
+    for (hero, mut vitals, mut build) in &mut puppets {
+        vitals.set_if_neq(vitals_of(hero));
+        build.set_if_neq(build_of(hero));
+    }
+    for mut net in &mut shared {
+        net.set_if_neq(NetRun {
+            elapsed: run.elapsed,
+            kills: run.kills,
+            level: run.level,
+            xp: run.xp,
+            banner: run.party_banner.clone(),
+        });
+    }
+}
+
+/// The frame's effects go to the guests, those naming only bodies they have.
+fn send_fx(
+    mut out: ResMut<FxOut>,
+    replicated: Query<(), With<Replicated>>,
+    mut batch: MessageWriter<ToClients<FxBatch>>,
+) {
+    if out.0.is_empty() {
+        return;
+    }
+    let fx: Vec<NetFx> = out
+        .0
+        .drain(..)
+        .map(|r| NetFx::from_record(&r))
+        .filter(|f| f.entities().iter().all(|e| replicated.contains(*e)))
+        .collect();
+    if !fx.is_empty() {
+        batch.write(ToClients {
+            targets: SendTargets::CLIENTS_ONLY,
+            message: FxBatch(fx),
+        });
+    }
+}
+
+/// Every ten seconds of a run, what each guest's link carries, in the log: the horde's share of
+/// the bandwidth is the thing to watch.
+fn log_traffic(
+    time: Res<Time<Real>>,
+    phase: Res<State<Phase>>,
+    server: Option<Res<bevy_replicon_renet2::renet2::RenetServer>>,
+    replicated: Query<(), With<Replicated>>,
+    mut since: Local<f32>,
+) {
+    *since += time.delta_secs();
+    if *since < 10.0 || !in_run(phase.get()) {
+        return;
+    }
+    *since = 0.0;
+    let Some(server) = server else { return };
+    for id in server.clients_id() {
+        if let Ok(net) = server.network_info(id) {
+            info!(
+                "survivors: co-op: guest {id}: {:.1} KB/s out, {:.1} KB/s in, rtt {:.0} ms, loss {:.1} %, {} entities replicated",
+                net.bytes_sent_per_second / 1024.0,
+                net.bytes_received_per_second / 1024.0,
+                net.rtt * 1000.0,
+                net.packet_loss * 100.0,
+                replicated.iter().count(),
+            );
+        }
+    }
+}
+
+/// The run is over here, so for the guests too.
+fn run_over(run: Res<Run>, mut over: MessageWriter<ToClients<RunOver>>) {
+    over.write(ToClients {
+        targets: SendTargets::CLIENTS_ONLY,
+        message: RunOver { won: run.won },
+    });
 }
 
 /// A guest's walk moves its puppet, if the report is sane ([`valid_move`]).
@@ -508,8 +739,9 @@ pub(super) fn stop(world: &mut World) {
     for e in tagged {
         world
             .entity_mut(e)
-            .remove::<(Replicated, Look, NetHero, NetPos)>();
+            .remove::<(Replicated, NetHero, NetPos, NetVitals, NetBuild, NetAuras)>();
     }
+    world.remove_resource::<FxOut>();
     info!("survivors: co-op: stopped hosting");
 }
 

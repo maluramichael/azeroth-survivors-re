@@ -138,6 +138,82 @@ fn look_for(kind: GemKind) -> (u32, f32) {
     }
 }
 
+/// Where `def` is listed for battleground `map`, so another machine finds the same creature:
+/// `(0, i)` the roster's i-th, `(1, i)` its i-th boss, `(2, i)` the clock's i-th boss, `(3, 0)` the
+/// finale, `(4, 0)` the reaper.
+#[cfg_attr(not(all(feature = "coop", not(target_arch = "wasm32"))), allow(dead_code))]
+pub(super) fn def_ref(map: usize, def: &'static EnemyDef) -> Option<(u8, u16)> {
+    let roster = data::roster(map);
+    let plan = super::finale::plan(map);
+    let find = |list: &[EnemyDef]| list.iter().position(|d| std::ptr::eq(d, def)).map(|i| i as u16);
+    if let Some(i) = find(&roster.enemies) {
+        return Some((0, i));
+    }
+    if let Some(i) = find(&roster.bosses) {
+        return Some((1, i));
+    }
+    if let Some(i) = find(&plan.timed) {
+        return Some((2, i));
+    }
+    if std::ptr::eq(&plan.finale, def) {
+        return Some((3, 0));
+    }
+    if std::ptr::eq(super::finale::reaper(), def) {
+        return Some((4, 0));
+    }
+    None
+}
+
+/// The creature [`def_ref`] named.
+#[cfg_attr(not(all(feature = "coop", not(target_arch = "wasm32"))), allow(dead_code))]
+pub(super) fn def_at(map: usize, r: (u8, u16)) -> Option<&'static EnemyDef> {
+    let roster = data::roster(map);
+    let plan = super::finale::plan(map);
+    let i = usize::from(r.1);
+    match r.0 {
+        0 => roster.enemies.get(i),
+        1 => roster.bosses.get(i),
+        2 => plan.timed.get(i),
+        3 => Some(&plan.finale),
+        4 => Some(super::finale::reaper()),
+        _ => None,
+    }
+}
+
+/// An enemy as a co-op guest keeps it: what it is and how it stands, for the plates, frames and
+/// minimap. It never moves or fights here; the host's does.
+#[cfg_attr(not(all(feature = "coop", not(target_arch = "wasm32"))), allow(dead_code))]
+pub(super) fn shown_enemy(
+    def: &'static EnemyDef,
+    hp: f32,
+    max_hp: f32,
+    boss: bool,
+    elite: bool,
+    dead: bool,
+) -> Enemy {
+    Enemy {
+        def,
+        hp,
+        max_hp,
+        speed: def.speed,
+        damage: def.damage,
+        radius: radius_for(def) * if elite { ELITE_SCALE } else { 1.0 },
+        xp: def.xp,
+        boss,
+        attack_cd: 0.0,
+        slow: 1.0,
+        slow_t: 0.0,
+        root_t: 0.0,
+        stun_t: 0.0,
+        fear_t: 0.0,
+        weaken: 1.0,
+        weaken_t: 0.0,
+        dots: Vec::new(),
+        knock: Vec3::ZERO,
+        dead,
+    }
+}
+
 /// Body radius: the big beasts need more room.
 fn radius_for(def: &EnemyDef) -> f32 {
     (if def.big { 1.3 } else { 0.6 }) * def.scale
@@ -339,7 +415,7 @@ pub(super) fn spawn_enemies(
         };
         spawn_enemy(&mut commands, &mut run, def, pos, hpos, true, false);
         run.bosses += 1;
-        run.banner = Some((format!("{} approaches!", def.name), 4.0));
+        run.announce(format!("{} approaches!", def.name), 4.0);
         chat.write(ChatLine::text(
             super::chatlog::ChatKind::Boss,
             format!("{} approaches!", def.name),
@@ -362,7 +438,7 @@ pub(super) fn spawn_enemies(
             };
             spawn_enemy(&mut commands, &mut run, def, pos, hpos, false, false);
         }
-        run.banner = Some(("They're surrounding you!".into(), 3.0));
+        run.announce("They're surrounding you!".into(), 3.0);
     }
 
     spawner.timer -= time.delta_secs();
@@ -791,11 +867,14 @@ fn spawn_gem(commands: &mut Commands, serial: u64, pos: Vec3, kind: GemKind) {
         0.5
     };
     let e = units::spawn_object(commands, serial, display, scale, pos + Vec3::Y * lift);
-    commands.entity(e).insert(Gem {
-        kind,
-        pulled: false,
-        speed: GEM_START_SPEED,
-    });
+    commands.entity(e).insert((
+        Gem {
+            kind,
+            pulled: false,
+            speed: GEM_START_SPEED,
+        },
+        units::Still,
+    ));
 }
 
 /// Gems in the magnet's reach fly to the hero; levels bank as they land. When a boss falls,
@@ -912,8 +991,8 @@ pub(super) fn collect_gems(
 /// Pickups hang still: a wisp's own loop (its circling motes and their trails) stops on its first
 /// frame, clip and global sequences alike, as soon as the model attaches.
 pub(super) fn still_gems(
-    mut players: Query<&mut AnimationPlayer, (With<Gem>, Added<AnimationPlayer>)>,
-    mut drives: Query<&mut GlobalSeqDrive, (With<Gem>, Added<GlobalSeqDrive>)>,
+    mut players: Query<&mut AnimationPlayer, (With<units::Still>, Added<AnimationPlayer>)>,
+    mut drives: Query<&mut GlobalSeqDrive, (With<units::Still>, Added<GlobalSeqDrive>)>,
 ) {
     for mut player in &mut players {
         for (_, active) in player.playing_animations_mut() {
@@ -928,6 +1007,37 @@ pub(super) fn still_gems(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_creature_of_a_battleground_is_found_again_by_its_ref() {
+        for map in 0..data::MAPS.len() {
+            let roster = data::roster(map);
+            let plan = super::super::finale::plan(map);
+            let all = roster
+                .enemies
+                .iter()
+                .chain(&roster.bosses)
+                .chain(&plan.timed)
+                .chain(std::iter::once(&plan.finale))
+                .chain(std::iter::once(super::super::finale::reaper()));
+            for def in all {
+                let r = def_ref(map, def).expect("listed");
+                let back = def_at(map, r).expect("found");
+                assert_eq!(back.name, def.name, "map {map}, ref {r:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn party_scaling_is_none_alone_and_capped() {
+        assert_eq!(party_hp(1), 1.0);
+        assert_eq!(party_hp(0), 1.0);
+        assert!((party_hp(4) - 2.5).abs() < 1e-6);
+        assert_eq!(party_count(100, 1), 100);
+        assert_eq!(party_count(100, 2), 135);
+        assert_eq!(party_count(350, 4), MAX_ALIVE);
+        assert_eq!(party_count(500, 1), 500, "alone the count is never cut");
+    }
 
     #[test]
     fn crits_knock_harder_than_plain_hits() {

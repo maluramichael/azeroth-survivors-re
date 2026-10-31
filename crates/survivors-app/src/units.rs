@@ -4,6 +4,7 @@
 use benilla_protocol::messages::{ObjectFields, ObjectType};
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
+use serde::{Deserialize, Serialize};
 
 use super::data::Weapon;
 use super::RunEntity;
@@ -68,6 +69,66 @@ pub(super) struct UnitSpec<'a> {
     pub sheath: u8,
 }
 
+/// What a unit's body is built from: [`UnitSpec`] without the serial, which each machine picks.
+/// Every unit carries it, so a co-op host can send the body to its guests.
+#[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub(crate) struct Look {
+    pub display: u32,
+    pub scale: f32,
+    pub level: u32,
+    pub faction: u32,
+    pub bytes0: u32,
+    pub weapons: Vec<Weapon>,
+    pub sheath: u8,
+}
+
+impl Look {
+    pub fn from_spec(spec: &UnitSpec) -> Self {
+        Self {
+            display: spec.display,
+            scale: spec.scale,
+            level: spec.level,
+            faction: spec.faction,
+            bytes0: spec.bytes0,
+            weapons: spec.weapons.to_vec(),
+            sheath: spec.sheath,
+        }
+    }
+
+    /// The spec to build this look's body under `serial`.
+    #[cfg_attr(not(all(feature = "coop", not(target_arch = "wasm32"))), allow(dead_code))]
+    pub fn spec(&self, serial: u64) -> UnitSpec<'_> {
+        UnitSpec {
+            serial,
+            display: self.display,
+            scale: self.scale,
+            level: self.level,
+            faction: self.faction,
+            bytes0: self.bytes0,
+            weapons: &self.weapons,
+            sheath: self.sheath,
+        }
+    }
+}
+
+/// What a generic GameObject shows ([`spawn_object`]): a pickup, a chest, a quest item.
+#[derive(Component, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+pub(crate) struct ObjLook {
+    pub display: u32,
+    pub scale: f32,
+}
+
+/// The ground spell a dynamic object shows ([`spawn_area_object`]).
+#[derive(Component, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+pub(crate) struct AreaLook {
+    pub spell: u32,
+    pub radius: f32,
+}
+
+/// A pickup whose model's own loop is held still ([`super::enemies::still_gems`]).
+#[derive(Component, Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Still;
+
 /// Spawn a unit the attach builds a body for; the caller adds its own components.
 pub(super) fn spawn_unit(commands: &mut Commands, spec: &UnitSpec, pos: Vec3, yaw: f32) -> Entity {
     commands.spawn(unit_bundle(spec, pos, yaw)).id()
@@ -113,6 +174,7 @@ pub(super) fn unit_bundle(spec: &UnitSpec, pos: Vec3, yaw: f32) -> impl Bundle {
         Transform::from_translation(pos).with_rotation(Quat::from_rotation_y(yaw)),
         Visibility::default(),
         RunEntity,
+        Look::from_spec(spec),
     )
 }
 
@@ -124,6 +186,11 @@ pub(super) fn spawn_object(
     scale: f32,
     pos: Vec3,
 ) -> Entity {
+    commands.spawn(object_bundle(serial, display, scale, pos)).id()
+}
+
+/// [`spawn_object`]'s components, to put on an entity that exists already.
+pub(super) fn object_bundle(serial: u64, display: u32, scale: f32, pos: Vec3) -> impl Bundle {
     let guid = HIGH_GAMEOBJECT | serial;
     let pairs = [
         (0, guid as u32),
@@ -134,20 +201,19 @@ pub(super) fn spawn_object(
         (FIELD_GO_STATE, GO_STATE_READY),
         (FIELD_GO_TYPE, GO_TYPE_GENERIC),
     ];
-    commands
-        .spawn((
-            Guid(guid),
-            NetEntity {
-                kind: benilla_protocol::EntityKind::GameObject,
-                display_id: Some(display),
-                scale,
-            },
-            ObjectStore(ObjectFields::from_pairs(&pairs)),
-            Transform::from_translation(pos),
-            Visibility::default(),
-            RunEntity,
-        ))
-        .id()
+    (
+        Guid(guid),
+        NetEntity {
+            kind: benilla_protocol::EntityKind::GameObject,
+            display_id: Some(display),
+            scale,
+        },
+        ObjectStore(ObjectFields::from_pairs(&pairs)),
+        Transform::from_translation(pos),
+        Visibility::default(),
+        RunEntity,
+        ObjLook { display, scale },
+    )
 }
 
 /// Zero health: the animation selector plays Death and holds the corpse pose.
@@ -166,35 +232,39 @@ pub(super) fn spawn_area_object(
     radius: f32,
     pos: Vec3,
 ) -> Entity {
+    commands.spawn(area_bundle(serial, spell, radius, pos)).id()
+}
+
+/// [`spawn_area_object`]'s components, to put on an entity that exists already.
+pub(super) fn area_bundle(serial: u64, spell: u32, radius: f32, pos: Vec3) -> impl Bundle {
     let guid = HIGH_DYNAMIC | serial;
     let wow = bevy_to_wow(pos);
-    commands
-        .spawn((
-            Guid(guid),
-            NetEntity {
-                kind: benilla_protocol::EntityKind::DynamicObject,
-                display_id: None,
-                scale: 1.0,
-            },
-            ObjectStore(ObjectFields::from_pairs(&[
-                (0, guid as u32),
-                (1, (guid >> 32) as u32),
-                (2, 0x41),
-                (3, spell),
-                (4, 1.0f32.to_bits()),
-                (8, 1),
-                (9, spell),
-                (10, radius.to_bits()),
-                (11, wow[0].to_bits()),
-                (12, wow[1].to_bits()),
-                (13, wow[2].to_bits()),
-                (14, 0),
-            ])),
-            Transform::from_translation(pos),
-            Visibility::default(),
-            RunEntity,
-        ))
-        .id()
+    (
+        Guid(guid),
+        NetEntity {
+            kind: benilla_protocol::EntityKind::DynamicObject,
+            display_id: None,
+            scale: 1.0,
+        },
+        ObjectStore(ObjectFields::from_pairs(&[
+            (0, guid as u32),
+            (1, (guid >> 32) as u32),
+            (2, 0x41),
+            (3, spell),
+            (4, 1.0f32.to_bits()),
+            (8, 1),
+            (9, spell),
+            (10, radius.to_bits()),
+            (11, wow[0].to_bits()),
+            (12, wow[1].to_bits()),
+            (13, wow[2].to_bits()),
+            (14, 0),
+        ])),
+        Transform::from_translation(pos),
+        Visibility::default(),
+        RunEntity,
+        AreaLook { spell, radius },
+    )
 }
 
 /// Eight aura slots we drive on a unit, from `base` (a multiple of 8, so one flag word covers
@@ -244,6 +314,18 @@ impl Marks {
             self.slots = want;
             self.dirty = true;
         }
+    }
+
+    /// The spells shown, slot by slot (0 for an empty slot).
+    #[cfg_attr(not(all(feature = "coop", not(target_arch = "wasm32"))), allow(dead_code))]
+    pub fn spells(&self) -> [u32; 8] {
+        self.slots.map(|s| s.0)
+    }
+
+    /// Whether these are the buff slots ([`Self::buffs`]), not the debuffs.
+    #[cfg_attr(not(all(feature = "coop", not(target_arch = "wasm32"))), allow(dead_code))]
+    pub fn is_buffs(&self) -> bool {
+        self.base < 32
     }
 
     pub fn clear(&mut self) {
@@ -308,6 +390,52 @@ pub(super) struct Fx<'w> {
     gos: MessageWriter<'w, SpellGoTargets>,
     swings: MessageWriter<'w, SwingMessage>,
     text: MessageWriter<'w, CombatTextSpawn>,
+    out: Option<ResMut<'w, FxOut>>,
+}
+
+/// Every effect [`Fx`] played this frame, kept while the resource is there: a co-op host sends
+/// them to its guests, who play them through their own [`Fx`].
+#[derive(Resource, Default)]
+pub(crate) struct FxOut(pub Vec<FxRecord>);
+
+/// One [`Fx`] call, as the guests replay it.
+#[cfg_attr(not(all(feature = "coop", not(target_arch = "wasm32"))), allow(dead_code))]
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum FxRecord {
+    Cast {
+        caster: Entity,
+        spell: u32,
+        hits: Vec<Entity>,
+        dest: Option<Vec3>,
+    },
+    Impact {
+        target: Entity,
+        spell: u32,
+    },
+    Swing {
+        attacker: Entity,
+        victim: Entity,
+        damage: f32,
+    },
+    Number {
+        anchor: Entity,
+        amount: f32,
+        crit: bool,
+        color: u32,
+    },
+}
+
+/// More effects than this in one frame are not kept for the guests.
+const MAX_FX_OUT: usize = 400;
+
+impl Fx<'_> {
+    fn record(&mut self, fx: impl FnOnce() -> FxRecord) {
+        if let Some(out) = self.out.as_deref_mut() {
+            if out.0.len() < MAX_FX_OUT {
+                out.0.push(fx());
+            }
+        }
+    }
 }
 
 /// More impacts than this per cast only cost frames.
@@ -316,6 +444,12 @@ const MAX_VISUAL_HITS: usize = 12;
 impl Fx<'_> {
     /// `SMSG_SPELL_GO`: the cast kit on the caster, and a missile or an impact at each hit.
     pub fn cast(&mut self, caster: Entity, spell: u32, hits: &[Entity], dest: Option<Vec3>) {
+        self.record(|| FxRecord::Cast {
+            caster,
+            spell,
+            hits: hits.iter().copied().take(MAX_VISUAL_HITS).collect(),
+            dest,
+        });
         let seq = self.seq.next();
         self.casts.write(CastEvent {
             entity: caster,
@@ -336,6 +470,7 @@ impl Fx<'_> {
 
     /// Only the spell's impact kit, on `target`: no cast animation on anyone.
     pub fn impact(&mut self, target: Entity, spell: u32) {
+        self.record(|| FxRecord::Impact { target, spell });
         let seq = self.seq.next();
         self.casts.write(CastEvent {
             entity: target,
@@ -349,6 +484,11 @@ impl Fx<'_> {
 
     /// A melee swing: the attack animation, the victim's flinch, blood and the hit sound.
     pub fn swing(&mut self, attacker: Entity, victim: Entity, damage: f32) {
+        self.record(|| FxRecord::Swing {
+            attacker,
+            victim,
+            damage,
+        });
         let seq = self.seq.next();
         self.swings.write(SwingMessage {
             attacker,
@@ -363,6 +503,12 @@ impl Fx<'_> {
 
     /// A floating number over `anchor`, 0xAARRGGBB.
     pub fn number(&mut self, anchor: Entity, amount: f32, crit: bool, color: u32) {
+        self.record(|| FxRecord::Number {
+            anchor,
+            amount,
+            crit,
+            color,
+        });
         let shown = amount.round().max(1.0) as i64;
         self.text.write(CombatTextSpawn {
             anchor,

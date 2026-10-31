@@ -108,6 +108,11 @@ static PLANS: LazyLock<Vec<Plan>> = LazyLock::new(|| {
 });
 
 /// The plan for the battleground at `map`.
+/// The creature that ends a run that lasts too long.
+pub(super) fn reaper() -> &'static EnemyDef {
+    &REAPER
+}
+
 pub(super) fn plan(map: usize) -> &'static Plan {
     &PLANS[map.min(PLANS.len() - 1)]
 }
@@ -211,7 +216,7 @@ fn summon(
         stage.finale = true;
         // It counts with the bosses the payout pays for.
         run.bosses += 1;
-        run.banner = Some((format!("{} awaits!", def.name), 4.0));
+        run.announce(format!("{} awaits!", def.name), 4.0);
         chat.write(ChatLine::text(
             ChatKind::Boss,
             format!("{} awaits! Slay it and the zone is yours.", def.name),
@@ -220,7 +225,7 @@ fn summon(
         let e = enemies::spawn_enemy(&mut commands, &mut run, &REAPER, pos, hpos, true, false);
         commands.entity(e).insert(Reaper);
         stage.reaper = true;
-        run.banner = Some((format!("{} hunts you!", REAPER.name), 5.0));
+        run.announce(format!("{} hunts you!", REAPER.name), 5.0);
         chat.write(ChatLine::text(
             ChatKind::Boss,
             format!("{} has come for you. Nothing can stop him.", REAPER.name),
