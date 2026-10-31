@@ -20,6 +20,7 @@ as its own pull request. Newest first.
 
 | Feature | What it does | Screenshot |
 | --- | --- | --- |
+| Co-op, stage one | One player hosts with `--host`, friends join with `--join <ip>` (UDP 37373, up to four players, no server in between). Both walk the same battleground and see each other; enemies and fights are shared from stage two on. Left the host, right the guest. | <img src="docs/screenshots/fork-coop.jpg" width="480" alt="The host's warlock and the guest's mage side by side, from both screens"> |
 | Wave surges | From the first minute, every 45 seconds the horde surges for 12 seconds, with a countdown under the clock. | <img src="docs/screenshots/fork-surge.jpg" width="480" alt="The horde surges, Hellfire burning around the warlock"> |
 | Hellfire and Sweeping Strikes visuals | Aura spells now show on the hero: Hellfire's ring of fire burns around the warlock each pulse. | <img src="docs/screenshots/fork-surge.jpg" width="480" alt="Hellfire's ring of fire around the warlock"> |
 | Best runs and racial traits | The hub shows the selected class's best time and kills under each zone, gold after a win. Each race lends a small bonus named after its racial, shown on the class panel and in the character window. | <img src="docs/screenshots/fork-records-racial.jpg" width="480" alt="The hub with a RACIAL box and best runs under the zones"> |
