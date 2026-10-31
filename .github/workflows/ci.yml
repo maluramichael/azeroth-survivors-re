@@ -49,4 +49,4 @@ jobs:
       - name: pass-span-lint
         run: scripts/pass-span-lint.py
       - name: player-tests
-        run: cargo test -p benilla-formats -p benilla-app --no-default-features --lib
+        run: cargo test -p benilla-formats -p benilla-app -p survivors-app --no-default-features --lib

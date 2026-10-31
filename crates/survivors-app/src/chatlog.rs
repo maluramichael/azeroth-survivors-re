@@ -291,7 +291,7 @@ fn teardown(mut commands: Commands, mut log: ResMut<ChatLog>) {
 /// run's abilities and passives with what it saw last.
 fn watch_picks(
     run: Res<Run>,
-    spells: Option<Res<crate::ui_action::Spells>>,
+    spells: Option<Res<benilla_app::survivors_host::ui_action::Spells>>,
     mut log: ResMut<ChatLog>,
 ) {
     let same = log.seen_abilities.len() == run.abilities.len()

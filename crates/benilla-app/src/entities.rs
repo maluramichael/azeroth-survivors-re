@@ -37,7 +37,7 @@ mod carried_light;
 use carried_light::spawn_carried_lights;
 
 /// Equipment from the descriptor and `ItemDisplayInfo`: armour, held items, helm and shoulders.
-mod equipment;
+pub(crate) mod equipment;
 use equipment::{attach_held_items, resolve_corpse_equipment, resolve_equipment};
 
 /// Item and enchant glows, hung on the item's own attachment points.
@@ -129,7 +129,7 @@ pub(crate) struct StandBoxHeight(pub(crate) f32);
 /// The model's bbox z-extent (model-local, pre-scale) for [`overhead_anchor`]'s fallback; `0.0`
 /// until the model loads, which anchors at the feet as the client does with no model.
 #[derive(Component)]
-pub(crate) struct OverheadFallback(pub(crate) f32);
+pub struct OverheadFallback(pub(crate) f32);
 
 /// The client's per-attachment z-bias table (`0x862708`, ids `0..=0x24`): how far above the unit's
 /// position a sound plays when its model lacks the attachment asked for.
@@ -173,7 +173,7 @@ impl AttachPoints<'_, '_> {
 /// propagates in `PostUpdate`, which an `Update` reader sees a frame late (the chat bubble slid
 /// against the head). That is exact because a streamed unit is a world-root entity; a mounted
 /// rider or a conform-tilted model, rooted elsewhere, still reads the late propagated frame.
-pub(crate) fn overhead_anchor<F: bevy::ecs::query::QueryFilter>(
+pub fn overhead_anchor<F: bevy::ecs::query::QueryFilter>(
     entity: Entity,
     tf: &Transform,
     anchors: &Query<&BoneAttach>,
@@ -231,7 +231,7 @@ impl CubeAssets {
 
 /// The creature display catalog and per-display [`DisplayModel`] cache; absent, NPCs are cubes.
 #[derive(Resource)]
-pub(crate) struct Creatures {
+pub struct Creatures {
     catalog: CreatureCatalog,
     models: HashMap<u32, DisplayModel>,
 }
@@ -243,7 +243,7 @@ impl Creatures {
     }
 
     /// A display's override race and sex (`CreatureDisplayInfoExtra`), `None` without one.
-    pub(crate) fn display_race_sex(&self, display_id: u32) -> Option<(u8, u8)> {
+    pub fn display_race_sex(&self, display_id: u32) -> Option<(u8, u8)> {
         self.catalog.display_race_sex(display_id)
     }
 

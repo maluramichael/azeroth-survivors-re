@@ -14,8 +14,8 @@ use super::hero::{self, Hero, HERO_RADIUS};
 use super::nav::{NavGrid, SpawnProbe};
 use super::units::{self, flat, yaw_toward, Fx, Marks, UnitSpec, COLOR_HURT};
 use super::{Phase, Rng, Run, Selection};
-use crate::creature_anim::{move_flags, MovementState};
-use crate::net::{FieldChanged, Guid, ObjectStore};
+use benilla_app::survivors_host::creature_anim::{move_flags, MovementState};
+use benilla_app::survivors_host::net::{FieldChanged, Guid, ObjectStore};
 
 #[derive(Component)]
 pub(super) struct Enemy {

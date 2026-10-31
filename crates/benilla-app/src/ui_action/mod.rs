@@ -84,8 +84,8 @@ pub(crate) enum GoOpener {
 
 /// The spell DBC catalogs, absent without client data; the cast-visual router shares the catalog.
 #[derive(Resource)]
-pub(crate) struct Spells {
-    pub(crate) catalog: SpellCatalog,
+pub struct Spells {
+    pub catalog: SpellCatalog,
     /// Form id to its `SpellShapeshiftForm.dbc` row: `BonusActionBar` pages the bar
     /// (`GetBonusBarOffset 0x4e7620`), `flags1` holds the stance and cancel bits.
     pub(crate) forms: std::collections::HashMap<u32, benilla_formats::ShapeshiftForm>,

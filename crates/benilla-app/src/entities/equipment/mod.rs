@@ -184,7 +184,7 @@ pub(crate) enum ItemModelKind {
 /// A body model's attachment points and event markers, each a bone and a Bevy-space offset from
 /// its bind pivot; the joint entities are `RigPose::anchor_for`'s.
 #[derive(Component)]
-pub(crate) struct BoneAttach {
+pub struct BoneAttach {
     pub(crate) points: HashMap<u16, (u16, Vec3)>,
     /// First record per FourCC (`0x7130e0`): the missile launch points `$CSL`/`$CSR`/`$CST`
     /// (`0x60c9b0`) and `$BWR`.

@@ -175,7 +175,7 @@ fn set<T: PartialEq>(slot: &mut T, v: T) {
 }
 
 /// The window's lines for the run as it stands.
-fn lines(run: &Run, char_level: u32, spells: Option<&crate::ui_action::Spells>) -> Vec<Line> {
+fn lines(run: &Run, char_level: u32, spells: Option<&benilla_app::survivors_host::ui_action::Spells>) -> Vec<Line> {
     let s = run.stats();
     let haste = s.haste.clamp(0.0, HASTE_CAP);
     let mut out = vec![Line {
@@ -282,7 +282,7 @@ fn refresh(
     run: Res<Run>,
     selection: Res<Selection>,
     profile: Option<Res<Profile>>,
-    spells: Option<Res<crate::ui_action::Spells>>,
+    spells: Option<Res<benilla_app::survivors_host::ui_action::Spells>>,
     mut vis: Query<&mut Visibility>,
     mut nodes: Query<&mut Node>,
     mut texts: Query<(&mut Text, &mut TextColor)>,

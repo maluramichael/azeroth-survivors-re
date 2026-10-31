@@ -27,7 +27,7 @@ const GLUE_MUSIC_FADE_OUT_MS: u64 = 3000;
 
 /// A glue-screen `PlaySound`: the SoundEntries kit name the 1.12 GlueXML plays for this click.
 #[derive(Message)]
-pub(crate) struct GlueSound(pub(crate) &'static str);
+pub struct GlueSound(pub &'static str);
 
 /// The held glue-music stream and its starvation watch. The handle is kept through the stop-fade
 /// so the watch still sees the stream during the world-entry load burst.

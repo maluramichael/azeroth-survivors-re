@@ -334,10 +334,10 @@ pub(crate) struct Casting {
 /// animation-bearing message carries a stamp (the wire in packet order, scene-time emitters when
 /// they fire), and the driver resolves a same-frame collision by the highest.
 #[derive(Resource, Default)]
-pub(crate) struct PlaySeq(u64);
+pub struct PlaySeq(u64);
 
 impl PlaySeq {
-    pub(crate) fn next(&mut self) -> u64 {
+    pub fn next(&mut self) -> u64 {
         self.0 += 1;
         self.0
     }
@@ -345,17 +345,17 @@ impl PlaySeq {
 
 /// A cast lifecycle edge on a streamed unit, off the wire.
 #[derive(Message, Clone, Copy)]
-pub(crate) struct CastEvent {
-    pub(crate) entity: Entity,
-    pub(crate) spell_id: u32,
-    pub(crate) kind: CastEventKind,
+pub struct CastEvent {
+    pub entity: Entity,
+    pub spell_id: u32,
+    pub kind: CastEventKind,
     /// `PlaySeq` stamp, carried to the kit's `EmoteAnim`.
-    pub(crate) seq: u64,
+    pub seq: u64,
 }
 
 /// Which cast edge fired.
 #[derive(Clone, Copy, PartialEq, Debug)]
-pub(crate) enum CastEventKind {
+pub enum CastEventKind {
     /// `SMSG_SPELL_START`: the precast kit persists from here.
     Start,
     /// `SMSG_SPELL_GO`: reaps the precast, plays the cast kit.
@@ -400,20 +400,20 @@ pub(crate) const HAND_GRIP_WEIGHT: f32 = 8.0;
 /// off-hand, `0x10000` suppresses the animation, `0x20` is an absorb (`0x6243e0`); the net bridge
 /// rewrites a full block's `victim_state` first.
 #[derive(Message, Clone, Copy)]
-pub(crate) struct SwingMessage {
-    pub(crate) attacker: Entity,
+pub struct SwingMessage {
+    pub attacker: Entity,
     /// The swing's target, when streamed.
-    pub(crate) victim: Option<Entity>,
-    pub(crate) hit_info: u32,
+    pub victim: Option<Entity>,
+    pub hit_info: u32,
     /// vmangos `VictimState`: 1 hit, 2 dodge, 3 parry, 4 interrupt, 5 block, 6 evade, 7 immune,
     /// 8 deflect.
-    pub(crate) victim_state: u32,
-    pub(crate) damage: u32,
+    pub victim_state: u32,
+    pub damage: u32,
     /// `0x625e40`'s display verdict: it gates only the floating number (`0x62440d`); animation,
     /// flinch, blood, sounds and timers run regardless.
-    pub(crate) displayed: bool,
+    pub displayed: bool,
     /// `PlaySeq` stamp, in packet order.
-    pub(crate) seq: u64,
+    pub seq: u64,
 }
 
 /// A one-shot anim emote over the gait; its clip's WeaponFlags (`0x10`) stow a drawn weapon, and
@@ -485,22 +485,22 @@ pub(crate) struct WoundAnim {
 /// One `SMSG_SPELL_GO`'s target lists: impacts inline for `Spell.dbc` Speed 0, else missiles (the
 /// reference's `0x6e8bf0` and `0x6e8a50`).
 #[derive(Message, Clone)]
-pub(crate) struct SpellGoTargets {
-    pub(crate) caster: Entity,
-    pub(crate) spell_id: u32,
+pub struct SpellGoTargets {
+    pub caster: Entity,
+    pub spell_id: u32,
     /// Units the spell landed on; each gets the impact hand-off.
-    pub(crate) hits: Vec<Entity>,
+    pub hits: Vec<Entity>,
     /// Missed units with `SpellMissInfo`: the arrival plays Dodge (30) or ShieldBlock (24), never
     /// Parry (`0x61ceb0`), and no impact kit; the deflect glance-off flight is not built.
-    pub(crate) misses: Vec<(Entity, u8)>,
+    pub misses: Vec<(Entity, u8)>,
     /// A dest-targeted cast's ground point, in bevy coords; not read, the reference's
     /// dest-anchored launch visual is untraced.
-    pub(crate) dest: Option<Vec3>,
+    pub dest: Option<Vec3>,
     /// The GO's ammo block (`castFlags & 0x20`): the ammo's `ItemDisplayInfo` id, the missile model
     /// when the visual chain has none (`0x479f40`).
-    pub(crate) ammo_display_id: Option<u32>,
+    pub ammo_display_id: Option<u32>,
     /// `PlaySeq` stamp, the GO's `CastEvent`'s.
-    pub(crate) seq: u64,
+    pub seq: u64,
 }
 
 /// The sheath policy: requests, ceremony overlays, the `AnimationData.dbc` table.

@@ -23,7 +23,7 @@ const STATE_DIR: &str = "benilla-config";
 /// It may not exist yet: [`write_atomic`] creates it, and a reader treats a missing file as
 /// defaults.
 #[cfg_attr(target_arch = "wasm32", allow(unreachable_code))]
-pub(crate) fn home() -> Option<PathBuf> {
+pub fn home() -> Option<PathBuf> {
     // On the page the folder is virtual: every resident is a small text file, and they live in
     // the browser's `localStorage` under keys named by these same paths (see [`web_store`]). The
     // callers' contract is unchanged — a path in, `read_to_string`/`write_atomic` on it — which
@@ -239,7 +239,7 @@ fn file_token(s: &str) -> String {
 
 /// Write a state file atomically, through `<path>.tmp` and a rename, so a crash leaves the old
 /// file intact.
-pub(crate) fn write_atomic(path: &Path, contents: &str) -> std::io::Result<()> {
+pub fn write_atomic(path: &Path, contents: &str) -> std::io::Result<()> {
     write_atomic_bytes(path, contents.as_bytes())
 }
 
@@ -269,7 +269,7 @@ fn write_atomic_fs(path: &Path, contents: &[u8]) -> std::io::Result<()> {
 /// Read a state file — the read twin of [`write_atomic`], and the only way a resident of the
 /// folder is read, so that the page's store answers too. Absent is `ErrorKind::NotFound` on both
 /// targets (every caller treats that as the first-run default).
-pub(crate) fn read_to_string(path: &Path) -> std::io::Result<String> {
+pub fn read_to_string(path: &Path) -> std::io::Result<String> {
     #[cfg(target_arch = "wasm32")]
     return web_store::get(path);
     #[cfg(not(target_arch = "wasm32"))]

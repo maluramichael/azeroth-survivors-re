@@ -333,7 +333,7 @@ pub(crate) struct UiQuadAppend;
 /// rejection has already written a plausible out-param (`0x484065`, `0x484067`), so the verdict
 /// must be honoured; plate and world-text callers destroy what they were placing. The chat bubble
 /// does not call this: its seat ignores the verdict, and a bubble slides off with its speaker.
-pub(crate) fn project_overlay(
+pub fn project_overlay(
     cam: &Camera,
     cam_tf: &GlobalTransform,
     world: Vec3,

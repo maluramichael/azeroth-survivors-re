@@ -10,8 +10,8 @@ description = "The browser entry point: a wasm-bindgen `#[start]` that boots ben
 # default (every browser, no secure context needed — but no storage buffers, so the glue screens
 # only), `WEB_GPU=1` for WebGPU (Chrome/Edge/Safari; Chrome on Linux behind
 # chrome://flags/#enable-unsafe-webgpu; needs https or localhost). Exactly one must be on.
-webgl2 = ["benilla-app/webgl2"]
-webgpu = ["benilla-app/webgpu"]
+webgl2 = ["benilla-app/webgl2", "survivors-app/webgl2"]
+webgpu = ["benilla-app/webgpu", "survivors-app/webgpu"]
 
 [lib]
 crate-type = ["cdylib"]
@@ -22,6 +22,8 @@ crate-type = ["cdylib"]
 # --no-default-features` would still pull benilla-app's OWN defaults (a path dep gets its own
 # feature resolution), silently linking the dev instruments into the page everyone visits.
 benilla-app = { path = "../benilla-app", default-features = false }
+# The survival mode; the same load-bearing `default-features = false` (its default is `dev`).
+survivors-app = { path = "../survivors-app", default-features = false }
 # Pinned exact (workspace-wide rule, `docs/BENILLA-WASM-SPIKE.md`'s plan): a newer wasm-bindgen
 # crate plus the 0.2.122 CLI `scripts/web-build.sh` invokes emits broken glue — verified.
 wasm-bindgen = "=0.2.122"

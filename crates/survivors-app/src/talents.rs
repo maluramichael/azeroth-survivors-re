@@ -21,12 +21,12 @@ use super::menu::MenuBuilt;
 use super::mods::StatMods;
 use super::profile::Profile;
 use super::{data, Phase, Selection};
-use crate::glue::art::{GlueArt, DIM, GOLD, NAME_EDGE};
-use crate::glue::backdrop::{backdrop_border, tiled_bg_node};
-use crate::glue::widgets::{
+use benilla_app::survivors_host::glue::art::{GlueArt, DIM, GOLD, NAME_EDGE};
+use benilla_app::survivors_host::glue::backdrop::{backdrop_border, tiled_bg_node};
+use benilla_app::survivors_host::glue::widgets::{
     abs, glue_button, outlined_text, GlueBtnKind, GlueCaption, GlueDisabled, GlueText,
 };
-use crate::glue::{GlueClicks, GlueVisuals};
+use benilla_app::survivors_host::glue::{GlueClicks, GlueVisuals};
 
 /// The first character level that earns a point.
 pub(super) const FIRST_LEVEL: u32 = 10;
@@ -1058,7 +1058,7 @@ fn panel(ui: &mut ChildSpawnerCommands, glue: &GlueArt, f: &Handle<Font>) {
                 ));
                 backdrop_border(frame, border, NAME_EDGE, FRAME_BORDER);
             } else {
-                frame.spawn((BackgroundColor(FRAME_FILL), crate::glue::widgets::overlay()));
+                frame.spawn((BackgroundColor(FRAME_FILL), benilla_app::survivors_host::glue::widgets::overlay()));
             }
             outlined_text(
                 frame,
@@ -1258,7 +1258,7 @@ fn show_panel(
     }
     if profile.ephemeral && *phase.get() == Phase::Menu && panel.iter().next().is_some() {
         if !*auto {
-            if let Some(mode) = crate::webenv::var("WOW_SURVIVORS_TALENTS") {
+            if let Some(mode) = benilla_app::survivors_host::webenv::var("WOW_SURVIVORS_TALENTS") {
                 *auto = true;
                 ui.open = true;
                 if mode == "spend" {

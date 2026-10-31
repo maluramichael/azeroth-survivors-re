@@ -60,7 +60,7 @@ const FLAG_IN_RANGE_ICON: u32 = 0x2;
 pub(super) const BLIP_BASIS_PX: f32 = 140.8;
 /// The player arrow's art, on the minimap and the world map, whose stock `WorldMapFrame.lua`
 /// `SetModel`s a pane to the same M2.
-pub(crate) const PLAYER_ARROW_TEXTURE: &str = "Interface\\Minimap\\MinimapArrow";
+pub const PLAYER_ARROW_TEXTURE: &str = "Interface\\Minimap\\MinimapArrow";
 /// `MinimapArrow.m2` is one 0.0262 × 0.0263-unit quad at 1280 px per model unit.
 pub(crate) const PLAYER_ARROW_QUAD_PX: f32 = 33.6;
 /// The quad's authored centre, (+0.0004, +0.00135) model units off the origin; it turns with

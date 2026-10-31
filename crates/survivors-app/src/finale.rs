@@ -146,7 +146,7 @@ fn build(map: &str, bosses: &[EnemyDef]) -> Plan {
 fn finale_at() -> f32 {
     static AT: OnceLock<f32> = OnceLock::new();
     *AT.get_or_init(|| {
-        crate::webenv::var("WOW_SURVIVORS_FINALE")
+        benilla_app::survivors_host::webenv::var("WOW_SURVIVORS_FINALE")
             .and_then(|v| v.parse().ok())
             .unwrap_or(FINALE_AT)
     })
@@ -167,7 +167,7 @@ pub(super) fn plugin(app: &mut App) {
                 .chain()
                 .after(WorldStage::Input)
                 .run_if(in_state(Phase::Playing))
-                .run_if(|l: Res<crate::loading_screen::LoadingScreen>| !l.covering()),
+                .run_if(|l: Res<benilla_app::survivors_host::loading_screen::LoadingScreen>| !l.covering()),
         )
         .add_systems(OnEnter(Phase::Menu), |mut stage: ResMut<Stage>| {
             *stage = Stage::default();

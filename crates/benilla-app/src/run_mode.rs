@@ -11,7 +11,7 @@ use bevy::prelude::*;
 /// Something other than the player authors the camera and the avatar this run. Only the capture
 /// harness inserts it; the type lives here because non-dev run conditions name it.
 #[derive(Resource)]
-pub(crate) struct CaptureMode;
+pub struct CaptureMode;
 
 /// The rig's derived character name when `$WOW_RIG` names a body, inserted by
 /// `capture::ProbeRigPlugin`. While present the roster ignores `$WOW_CHAR`: the rig may have to

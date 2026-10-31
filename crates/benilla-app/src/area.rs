@@ -42,7 +42,7 @@ use benilla_assets::{AssetSet, LockRecover, WorldAssets};
 /// The shared `AreaTable.dbc` catalog, read by the world map and this module; absent if the DBC
 /// failed to read.
 #[derive(Resource)]
-pub(crate) struct AreaTableRes(pub(crate) AreaTableCatalog);
+pub struct AreaTableRes(pub AreaTableCatalog);
 
 fn load_area_table(mut commands: Commands, assets: Option<Res<WorldAssets>>) {
     let Some(assets) = assets else { return };

@@ -51,7 +51,7 @@ pub(crate) struct DisplayFacing {
 /// A local unit whose facing its own game logic writes every frame: no wire facing exists to swing
 /// it back to, so [`drive_display_facing`] leaves it alone.
 #[derive(Component)]
-pub(crate) struct ScriptedFacing;
+pub struct ScriptedFacing;
 
 /// The signed yaw the facing pump applied this frame (positive turns left), the client's
 /// `0x607ed0` shuffle latch input; removed the frame the body stops moving.

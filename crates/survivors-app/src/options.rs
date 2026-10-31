@@ -18,13 +18,13 @@ use bevy::ui::{FocusPolicy, RelativeCursorPosition};
 use super::hud::{HudFont, MenuRoot, PauseRoot};
 use super::menu::MenuBuilt;
 use super::Phase;
-use crate::cvars::Cvars;
-use crate::glue::art::{GlueArt, GOLD, NAME_EDGE};
-use crate::glue::backdrop::{backdrop_border, tiled_bg_node};
-use crate::glue::widgets::{
+use benilla_app::survivors_host::cvars::Cvars;
+use benilla_app::survivors_host::glue::art::{GlueArt, GOLD, NAME_EDGE};
+use benilla_app::survivors_host::glue::backdrop::{backdrop_border, tiled_bg_node};
+use benilla_app::survivors_host::glue::widgets::{
     abs, glue_button, outlined_text, GlueBtnKind, GlueCaption, GlueDisabled, GlueText,
 };
-use crate::glue::{GlueClicks, GlueVisuals};
+use benilla_app::survivors_host::glue::{GlueClicks, GlueVisuals};
 
 const PANEL_W: f32 = 460.0;
 /// The browser build has no display row, so its window is shorter.
@@ -174,7 +174,7 @@ fn set_display(cvars: &mut Cvars, fullscreen: bool) {
 }
 
 fn display_note(cvars: &Cvars) -> String {
-    if crate::video::windowed_env() {
+    if benilla_app::survivors_host::video::windowed_env() {
         "Set by a launch option for this session".to_string()
     } else if fullscreen_now(cvars) {
         "Now: fullscreen".to_string()
@@ -308,7 +308,7 @@ fn panel(commands: &mut Commands, glue: &GlueArt, f: &Handle<Font>) -> Entity {
                     ));
                     backdrop_border(frame, border, NAME_EDGE, FRAME_BORDER);
                 } else {
-                    frame.spawn((BackgroundColor(FRAME_FILL), crate::glue::widgets::overlay()));
+                    frame.spawn((BackgroundColor(FRAME_FILL), benilla_app::survivors_host::glue::widgets::overlay()));
                 }
                 outlined_text(
                     frame,
@@ -391,7 +391,7 @@ fn panel(commands: &mut Commands, glue: &GlueArt, f: &Handle<Font>) -> Entity {
                         GlueText {
                             text: "",
                             size: 12.0,
-                            color: crate::glue::art::DIM,
+                            color: benilla_app::survivors_host::glue::art::DIM,
                             wrap: false,
                         },
                         f,
@@ -677,7 +677,7 @@ fn refresh(
         }
     }
     let fullscreen = fullscreen_now(&cvars);
-    let launch_owned = crate::video::windowed_env();
+    let launch_owned = benilla_app::survivors_host::video::windowed_env();
     for (button, action, mut disabled) in &mut buttons {
         let (off, caption) = match *action {
             OptionsAction::Mute => (
@@ -718,7 +718,7 @@ fn remember_windowed_size(
     mut seen: Local<(UVec2, f32)>,
 ) {
     let Ok(window) = windows.single() else { return };
-    if crate::video::windowed_env()
+    if benilla_app::survivors_host::video::windowed_env()
         || window.mode != bevy::window::WindowMode::Windowed
         || fullscreen_now(&cvars)
     {
@@ -739,7 +739,7 @@ fn remember_windowed_size(
     }
     let stored = cvars
         .get("gxResolution")
-        .and_then(crate::video::parse_resolution);
+        .and_then(benilla_app::survivors_host::video::parse_resolution);
     if stored != Some(size) {
         cvars.set("gxResolution", &format!("{}x{}", size.x, size.y));
         cvars.commit_latched();

@@ -850,13 +850,13 @@ fn debug_select_shot(
 }
 
 /// The WoW UI font, straight off the patch chain (Bevy's TTF loader over the `mpq://` source).
-pub(crate) fn wow_font(assets: &AssetServer) -> Handle<Font> {
+pub fn wow_font(assets: &AssetServer) -> Handle<Font> {
     assets.load("mpq://Fonts/FRIZQT__.ttf")
 }
 
 // ── 1.12 display names ──────────────────────────────────────────────────────────────────────────
 
-pub(crate) fn race_name(race: u8) -> &'static str {
+pub fn race_name(race: u8) -> &'static str {
     match race {
         1 => "Human",
         2 => "Orc",

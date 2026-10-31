@@ -147,7 +147,7 @@ run pass-span-lint scripts/pass-span-lint.py
 run player-tests env ${wow_data:+WOW_DATA="$wow_data"} \
     ${corpus:+BENILLA_ADDON_CORPUS="$root/wow-addons-vanilla"} \
     ${require_data:+BENILLA_REQUIRE_DATA=1} BENILLA_SKIP_LOG="$skips" \
-    cargo test -p benilla-formats -p benilla-app --no-default-features --lib
+    cargo test -p benilla-formats -p benilla-app -p survivors-app --no-default-features --lib
 report_skips player-tests
 
 echo "ALL GATES GREEN ($((SECONDS - chain_t0)) s; per-gate seconds in $timing)"

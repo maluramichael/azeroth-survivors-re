@@ -45,7 +45,7 @@ const DONE: Color = Color::srgb(0.6, 0.6, 0.6);
 pub(super) fn plugin(app: &mut App) {
     app.init_resource::<QuestLog>()
         .init_resource::<Tracker>()
-        .add_message::<crate::sound::GlueSound>()
+        .add_message::<benilla_app::survivors_host::sound::GlueSound>()
         .add_systems(
             Update,
             (
@@ -293,7 +293,7 @@ fn settle(
     mut log: ResMut<QuestLog>,
     mut run: ResMut<Run>,
     mut chat: MessageWriter<ChatLine>,
-    mut sound: MessageWriter<crate::sound::GlueSound>,
+    mut sound: MessageWriter<benilla_app::survivors_host::sound::GlueSound>,
 ) {
     if run.dead_t.is_some() {
         return;
@@ -314,7 +314,7 @@ fn settle(
         chat.write(ChatLine::system(format!("Quest completed: {}.", q.title)));
         chat.write(ChatLine::Xp(xp));
         chat.write(ChatLine::Gold(q.gold));
-        sound.write(crate::sound::GlueSound("QUESTCOMPLETED"));
+        sound.write(benilla_app::survivors_host::sound::GlueSound("QUESTCOMPLETED"));
     }
 }
 

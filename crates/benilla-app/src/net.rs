@@ -23,7 +23,7 @@ use benilla_world::schedule::WorldStage;
 mod apply;
 pub(crate) mod handlers;
 pub(crate) mod io;
-mod motion;
+pub(crate) mod motion;
 mod objects;
 pub(crate) use objects::tear_down;
 mod session;
@@ -41,8 +41,8 @@ use motion::{
 // `pub(crate)`: `creature_anim` reads the shuffle latch it produces, and a test runs both.
 pub(crate) use motion::drive_display_facing;
 pub(crate) use motion::{
-    ground_derived, grounded_y, jump_seed, CreatureSwimming, FacingStep, RemoteMotion,
-    ScriptedFacing, Spline, SplineStopped, UnitMoveModes,
+    ground_derived, grounded_y, jump_seed, CreatureSwimming, FacingStep, RemoteMotion, Spline,
+    SplineStopped, UnitMoveModes,
 };
 // Only the ground-census probe reads this, so a build without the instruments leaves it unused.
 // Not a `cfg`: seam knowledge lives in three fixed places, and this file is not one of them.
@@ -270,17 +270,17 @@ fn population_pulse(index: Res<GuidIndex>, time: Res<Time>, mut last: Local<f32>
 
 /// The server guid of a streamed entity.
 #[derive(Component, Clone, Copy)]
-pub(crate) struct Guid(pub(crate) u64);
+pub struct Guid(pub u64);
 
 /// A streamed entity's kind and display id, from which [`crate::entities`] builds its visual.
 #[derive(Component)]
-pub(crate) struct NetEntity {
-    pub(crate) kind: EntityKind,
-    pub(crate) display_id: Option<u32>,
+pub struct NetEntity {
+    pub kind: EntityKind,
+    pub display_id: Option<u32>,
     /// `OBJECT_FIELD_SCALE_X`, the complete render scale: the server already folds in the DBC
     /// scale, so it is never multiplied by ours. A live change eases over 2 s with a cosine
     /// smoothstep (`0x614bbf`), through `entities::live_display`.
-    pub(crate) scale: f32,
+    pub scale: f32,
 }
 
 /// A unit's movement speeds (yd/s) from its `LIVING` movement block. The animation selector runs
@@ -319,7 +319,7 @@ pub(crate) fn current_speed(s: &MoveSpeeds, flags: u32) -> f32 {
 /// A streamed object's descriptor fields, seeded by the create block and merged with each
 /// `Values` delta. Speeds and pose are movement-block data, not here.
 #[derive(Component, Clone, Default)]
-pub(crate) struct ObjectStore(pub(crate) ObjectFields);
+pub struct ObjectStore(pub ObjectFields);
 
 impl ObjectStore {
     /// The object manager's unit lookup (`0x468460`, `ecx = 8`): a unit or a player, which share
@@ -340,7 +340,7 @@ impl ObjectStore {
 /// `kind` is the store's class from its create block, since a raw index differs per class (`36`
 /// is a unit's `BYTES_0` and a corpse's `DYNAMIC_FLAGS`).
 #[derive(Message, Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct FieldChanged {
+pub struct FieldChanged {
     pub entity: Entity,
     pub guid: u64,
     pub kind: benilla_protocol::messages::ObjectType,

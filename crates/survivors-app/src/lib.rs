@@ -1,8 +1,8 @@
 //! Warcraft Survivors: a top-down survival mode on the benilla world, started by
-//! [`crate::run_survivors`]. There is no server: the hero, the enemies and the spells are local
-//! entities dressed by the same attach, animation and spell-visual systems a streamed unit gets,
-//! on a battleground picked at the menu ([`data::MAPS`]), with the player controller and FrameXML
-//! off ([`crate::run_mode::CaptureMode`]).
+//! `benilla_app::run_survivors` with [`plugin`]. There is no server: the hero, the enemies and the
+//! spells are local entities dressed by the same attach, animation and spell-visual systems a
+//! streamed unit gets, on a battleground picked at the menu ([`data::MAPS`]), with the player
+//! controller and FrameXML off (`CaptureMode`).
 
 mod abilities;
 mod auto;
@@ -43,14 +43,9 @@ use bevy::prelude::*;
 
 use data::{AbilityDef, ClassDef, PassiveDef, Stat};
 
-/// Set by [`crate::run_survivors`] before the app builds. wasm32 has no process environment, so
-/// the flag lives here; `WOW_SURVIVORS` (`?survivors=1` / `__wenilla_env.survivors` on the web)
-/// still turns it on from outside.
-pub(crate) static ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
-pub(crate) fn active() -> bool {
-    ACTIVE.load(std::sync::atomic::Ordering::Relaxed)
-        || crate::webenv::var("WOW_SURVIVORS").is_some()
+/// The mode's entry, handed to `benilla_app::run_survivors` by the launcher and the browser entry.
+pub fn plugin(app: &mut App) {
+    app.add_plugins(SurvivorsPlugin);
 }
 
 pub(crate) struct SurvivorsPlugin;
@@ -58,7 +53,7 @@ pub(crate) struct SurvivorsPlugin;
 impl Plugin for SurvivorsPlugin {
     fn build(&self, app: &mut App) {
         // Present before `OnEnter(InWorld)`, where the UI lifecycle decides not to load FrameXML.
-        app.insert_resource(crate::run_mode::CaptureMode)
+        app.insert_resource(benilla_app::survivors_host::run_mode::CaptureMode)
             .add_plugins(grade::plugin)
             .add_plugins((
                 trainer::plugin,
@@ -128,7 +123,7 @@ impl Plugin for SurvivorsPlugin {
                     .after(WorldStage::Input)
                     .run_if(in_state(Phase::Playing))
                     // Entering a battleground raises its loading screen: the run waits behind it.
-                    .run_if(|l: Res<crate::loading_screen::LoadingScreen>| !l.covering()),
+                    .run_if(|l: Res<benilla_app::survivors_host::loading_screen::LoadingScreen>| !l.covering()),
             )
             .add_systems(
                 Update,
@@ -145,7 +140,7 @@ impl Plugin for SurvivorsPlugin {
                     menu::restore_pick,
                     menu::build_menu,
                     menu::menu_clicks,
-                    menu::refresh_menu_ui.before(crate::glue::GlueVisuals),
+                    menu::refresh_menu_ui.before(benilla_app::survivors_host::glue::GlueVisuals),
                     cards::deal_cards,
                     cards::choose_card,
                     cards::animate_cards,
@@ -192,7 +187,7 @@ impl Plugin for SurvivorsPlugin {
 
 /// The screen the mode is on.
 #[derive(States, Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-pub(super) enum Phase {
+pub(crate) enum Phase {
     #[default]
     Menu,
     Playing,
@@ -203,11 +198,11 @@ pub(super) enum Phase {
 
 /// Everything spawned for a run, despawned when the next begins.
 #[derive(Component)]
-pub(super) struct RunEntity;
+pub(crate) struct RunEntity;
 
 /// The class, look and battleground picked at the menu; the battleground holds for the run.
 #[derive(Resource, Default)]
-pub(super) struct Selection {
+pub(crate) struct Selection {
     pub class: Option<usize>,
     /// `(display, race, sex)`, one per race and sex the class's trainers come in.
     pub looks: Vec<(u32, u8, u8)>,
@@ -237,7 +232,7 @@ impl Selection {
 }
 
 /// An ability the hero has, with its own cooldown.
-pub(super) struct Owned {
+pub(crate) struct Owned {
     pub def: &'static AbilityDef,
     pub level: u8,
     pub cd: f32,
@@ -265,7 +260,7 @@ impl Owned {
 
 /// The hero's derived numbers, from the base and the passives.
 #[derive(Clone, Copy)]
-pub(super) struct Stats {
+pub(crate) struct Stats {
     pub might: f32,
     pub max_hp: f32,
     pub speed: f32,
@@ -278,13 +273,13 @@ pub(super) struct Stats {
     pub crit: f32,
 }
 
-pub(super) const BASE_HP: f32 = 120.0;
-pub(super) const BASE_SPEED: f32 = 7.0;
-pub(super) const BASE_MAGNET: f32 = 4.5;
+pub(crate) const BASE_HP: f32 = 120.0;
+pub(crate) const BASE_SPEED: f32 = 7.0;
+pub(crate) const BASE_MAGNET: f32 = 4.5;
 
 /// One run's state.
 #[derive(Resource)]
-pub(super) struct Run {
+pub(crate) struct Run {
     pub class: &'static ClassDef,
     pub race: u8,
     pub elapsed: f32,
@@ -427,7 +422,7 @@ impl Run {
 
 /// xorshift64*: the mode's dice, seeded from the clock.
 #[derive(Resource)]
-pub(super) struct Rng(u64);
+pub(crate) struct Rng(u64);
 
 impl Default for Rng {
     fn default() -> Self {

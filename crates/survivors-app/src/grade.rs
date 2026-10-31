@@ -66,7 +66,7 @@ impl FullscreenMaterial for Grade {
 struct GradeOn(bool);
 
 pub(super) fn plugin(app: &mut App) {
-    let on = crate::webenv::var("WOW_GRADE").is_none_or(|v| v != "0");
+    let on = benilla_app::survivors_host::webenv::var("WOW_GRADE").is_none_or(|v| v != "0");
     app.add_plugins(FullscreenMaterialPlugin::<Grade>::default())
         .insert_resource(GradeOn(on))
         .add_systems(Update, (attach, toggle, drive).chain());

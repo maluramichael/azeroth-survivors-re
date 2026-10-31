@@ -31,7 +31,7 @@ build. A round runs like this:
    brief lists exactly which files or functions the agent owns; agents edit only those (Edit,
    never a whole-file rewrite of a shared file), never touch `mod.rs`, run no git command that
    changes state, never launch the game, and check with
-   `cargo check -p benilla-app --profile play`, ignoring errors in files they do not own.
+   `CC=gcc cargo check -p survivors-app --profile play`, ignoring errors in files they do not own.
 3. The orchestrator then builds once (`cargo survivors`), fixes what breaks between features,
    runs the game (auto mode with `WOW_SURVIVORS_SHOTS`) and looks at the screenshots, reads the
    diffs, sends targeted follow-ups to the agents, and commits one commit per feature with its
@@ -41,7 +41,7 @@ build. A round runs like this:
 
 - Take a screenshot that shows the feature. `WOW_SURVIVORS_AUTO=<class>[:idle|:all|:late]`,
   `WOW_SURVIVORS_MAP=<zone>` and `WOW_SURVIVORS_SHOTS=<dir>` play a run by themselves and save
-  screenshots without anyone at the keyboard (`crates/benilla-app/src/survivors/auto.rs`).
+  screenshots without anyone at the keyboard (`crates/survivors-app/src/auto.rs`).
 - Save it as JPEG, 1600 px wide, as `docs/screenshots/fork-<feature>.jpg`, and keep a copy in
   `~/.claude/screenshots/azeroth-survivors-re/`.
 - Add a row at the top of the "What this fork adds" table in `README.md`: feature, what it does in

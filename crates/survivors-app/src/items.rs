@@ -57,7 +57,7 @@ pub(super) fn plugin(app: &mut App) {
                 .chain()
                 .after(WorldStage::Input)
                 .run_if(in_state(Phase::Playing))
-                .run_if(|l: Res<crate::loading_screen::LoadingScreen>| !l.covering()),
+                .run_if(|l: Res<benilla_app::survivors_host::loading_screen::LoadingScreen>| !l.covering()),
         )
         .add_systems(Update, show_strip.run_if(in_run))
         .add_systems(OnEnter(Phase::GameOver), (bank_best, teardown))
@@ -74,7 +74,7 @@ fn in_run(phase: Res<State<Phase>>) -> bool {
 pub(super) fn drop_boost() -> f32 {
     static BOOST: OnceLock<f32> = OnceLock::new();
     *BOOST.get_or_init(|| {
-        crate::webenv::var("WOW_SURVIVORS_DROPS")
+        benilla_app::survivors_host::webenv::var("WOW_SURVIVORS_DROPS")
             .and_then(|v| v.parse::<f32>().ok())
             .map_or(1.0, |v| v.clamp(0.0, 1000.0))
     })
@@ -486,11 +486,11 @@ struct Bank {
 
 /// An automated run (`WOW_SURVIVORS_AUTO`) reads and writes no bank, as it saves no profile.
 fn ephemeral() -> bool {
-    crate::webenv::var("WOW_SURVIVORS_AUTO").is_some()
+    benilla_app::survivors_host::webenv::var("WOW_SURVIVORS_AUTO").is_some()
 }
 
 fn bank_path() -> Option<std::path::PathBuf> {
-    crate::local_state::home().map(|h| h.join("survivors-items.toml"))
+    benilla_app::survivors_host::local_state::home().map(|h| h.join("survivors-items.toml"))
 }
 
 fn load_bank(mut bank: ResMut<Bank>) {
@@ -498,14 +498,14 @@ fn load_bank(mut bank: ResMut<Bank>) {
         return;
     }
     let Some(path) = bank_path() else { return };
-    let Ok(text) = crate::local_state::read_to_string(&path) else {
+    let Ok(text) = benilla_app::survivors_host::local_state::read_to_string(&path) else {
         return;
     };
     match toml::from_str::<Bank>(&text) {
         Ok(b) => *bank = b,
         Err(e) => {
             warn!("survivors: item bank unreadable, starting empty ({e})");
-            let _ = crate::local_state::write_atomic(&path.with_extension("bad"), &text);
+            let _ = benilla_app::survivors_host::local_state::write_atomic(&path.with_extension("bad"), &text);
         }
     }
 }
@@ -517,7 +517,7 @@ fn save_bank(bank: &Bank) {
     let Some(path) = bank_path() else { return };
     match toml::to_string(bank) {
         Ok(text) => {
-            if let Err(e) = crate::local_state::write_atomic(&path, &text) {
+            if let Err(e) = benilla_app::survivors_host::local_state::write_atomic(&path, &text) {
                 warn!("survivors: item bank not saved ({e})");
             }
         }

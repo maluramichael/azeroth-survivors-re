@@ -65,13 +65,13 @@ use benilla_world::view::WorldCamera;
 /// Spawn one floating text over `anchor`. The producer applies Gate A, so a spawn here shows
 /// unless the cap drops it.
 #[derive(Message)]
-pub(crate) struct CombatTextSpawn {
-    pub(crate) anchor: Entity,
-    pub(crate) text: String,
+pub struct CombatTextSpawn {
+    pub anchor: Entity,
+    pub text: String,
     /// Config category 0-5 ([`CATEGORIES`]).
-    pub(crate) category: u8,
+    pub category: u8,
     /// The emitter override ([`damage_color`]); `None` is the row's default.
-    pub(crate) color: Option<u32>,
+    pub color: Option<u32>,
 }
 
 /// One live WORLDTEXTSTRING. `pos` is a spawn-time snapshot, so a unit that walks away leaves its

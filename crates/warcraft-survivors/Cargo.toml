@@ -10,11 +10,13 @@ workspace = true
 
 [features]
 default = ["dev"]
-dev = ["benilla-app/dev", "benilla-formats/dev"]
+dev = ["benilla-app/dev", "benilla-formats/dev", "survivors-app/dev"]
 
 [dependencies]
 benilla-app = { path = "../benilla-app", default-features = false }
 benilla-formats = { path = "../benilla-formats", default-features = false }
+# The mode itself; without defaults, `dev` arrives through the feature above.
+survivors-app = { path = "../survivors-app", default-features = false }
 clap.workspace = true
 
 [build-dependencies]

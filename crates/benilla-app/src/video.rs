@@ -25,7 +25,7 @@ pub(crate) fn novsync_env() -> bool {
 
 /// Whether this run sizes its own window (a capture, a background run) and so stays windowed.
 /// Session-only: `gxWindow`/`gxResolution` are env-overridden while it holds, never saved over.
-pub(crate) fn windowed_env() -> bool {
+pub fn windowed_env() -> bool {
     std::env::var_os("WOW_WIN").is_some()
         || std::env::var_os("WOW_CAPTURE").is_some()
         || std::env::var_os("WOW_CAPTURE_UI").is_some()
@@ -80,7 +80,7 @@ pub(crate) fn display_from_flag(v: f32) -> DisplayMode {
 
 /// `gxResolution`'s value (`"1280x800"`, parsed by the reference with `sscanf("%d%c%d")`) to a
 /// size. A zero extent is refused rather than handed to the windowing system.
-pub(crate) fn parse_resolution(value: &str) -> Option<UVec2> {
+pub fn parse_resolution(value: &str) -> Option<UVec2> {
     let (w, h) = value.split_once(['x', 'X'])?;
     let size = UVec2::new(w.trim().parse().ok()?, h.trim().parse().ok()?);
     (size.x > 0 && size.y > 0).then_some(size)

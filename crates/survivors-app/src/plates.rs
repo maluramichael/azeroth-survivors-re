@@ -12,7 +12,7 @@ use super::hero::Hero;
 use super::hud::{HudFont, GOLD_TONE};
 use super::profile::Profile;
 use super::{Phase, Selection};
-use crate::vplates::{
+use benilla_app::survivors_host::vplates::{
     con_color, gx_px, plate_basis, text_px, BAR_H, BAR_OFF_X, BAR_OFF_Y, BAR_W, LEVEL_H,
     LEVEL_OFF_X, LEVEL_OFF_Y, PLATE_H, PLATE_W,
 };
@@ -33,7 +33,7 @@ pub(super) fn plugin(app: &mut App) {
             Update,
             (toggle, drive)
                 .chain()
-                .after(crate::survivors::hero::place_camera)
+                .after(crate::hero::place_camera)
                 .after(enemies::move_enemies)
                 .run_if(in_run),
         )
@@ -222,11 +222,11 @@ fn drive(
     cams: Query<(&Camera, &Transform), With<WorldCamera>>,
     enemies: Query<(Entity, &Enemy, &Transform)>,
     anchor_q: (
-        Query<&crate::entities::BoneAttach>,
+        Query<&benilla_app::survivors_host::entities::BoneAttach>,
         Query<&benilla_world::rig_anim::RigPose>,
-        Query<&crate::entities::OverheadFallback>,
+        Query<&benilla_app::survivors_host::entities::OverheadFallback>,
         Query<&GlobalTransform>,
-        Query<(), With<crate::entities::mount::MountChild>>,
+        Query<(), With<benilla_app::survivors_host::entities::mount::MountChild>>,
     ),
     mut nodes: Query<(&mut Node, &mut Visibility)>,
     mut texts: Query<(&mut Text, &mut TextFont, &mut TextColor)>,
@@ -273,7 +273,7 @@ fn drive(
                     }
                     horde += 1;
                 }
-                let anchor = crate::entities::overhead_anchor(
+                let anchor = benilla_app::survivors_host::entities::overhead_anchor(
                     c.entity,
                     &c.tf,
                     &anchor_q.0,
@@ -283,7 +283,7 @@ fn drive(
                     &anchor_q.4,
                 );
                 // Off screen or behind the camera: no bar.
-                let Some(screen) = crate::ui_pass::project_overlay(
+                let Some(screen) = benilla_app::survivors_host::ui_pass::project_overlay(
                     cam,
                     cam_tf,
                     anchor + Vec3::Y * 0.67,

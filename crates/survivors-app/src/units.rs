@@ -7,9 +7,9 @@ use bevy::prelude::*;
 
 use super::data::Weapon;
 use super::RunEntity;
-use crate::combat_text::CombatTextSpawn;
-use crate::creature_anim::{CastEvent, CastEventKind, PlaySeq, SpellGoTargets, SwingMessage};
-use crate::net::{FieldChanged, Guid, NetEntity, ObjectStore};
+use benilla_app::survivors_host::combat_text::CombatTextSpawn;
+use benilla_app::survivors_host::creature_anim::{CastEvent, CastEventKind, PlaySeq, SpellGoTargets, SwingMessage};
+use benilla_app::survivors_host::net::{FieldChanged, Guid, NetEntity, ObjectStore};
 
 const FIELD_HEALTH: u16 = 22;
 const FIELD_MAX_HEALTH: u16 = 28;
@@ -103,8 +103,8 @@ pub(super) fn spawn_unit(commands: &mut Commands, spec: &UnitSpec, pos: Vec3, ya
                 scale: spec.scale,
             },
             ObjectStore(ObjectFields::from_pairs(&pairs)),
-            crate::creature_anim::MovementState::default(),
-            crate::net::ScriptedFacing,
+            benilla_app::survivors_host::creature_anim::MovementState::default(),
+            benilla_app::survivors_host::net::ScriptedFacing,
             Transform::from_translation(pos).with_rotation(Quat::from_rotation_y(yaw)),
             Visibility::default(),
             RunEntity,

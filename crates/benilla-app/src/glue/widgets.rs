@@ -16,31 +16,31 @@ use super::backdrop::{backdrop_border, tiled_bg_node};
 /// A button's `HighlightTexture`, lit on hover or by [`LockHighlight`]. Its visibility belongs to
 /// [`super::glue_hilights`] alone.
 #[derive(Component)]
-pub(crate) struct Hilight;
+pub struct Hilight;
 /// `Button:LockHighlight()`: hold this button's [`Hilight`] lit, as every glue list marks its
 /// selected row.
 #[derive(Component, Default)]
-pub(crate) struct LockHighlight(pub(crate) bool);
+pub struct LockHighlight(pub bool);
 /// A button with a plain-fill face for missing art, the only kind whose `BackgroundColor` a hover
 /// pass may shade (every `Node` carries one).
 #[derive(Component)]
 pub(crate) struct FallbackFace;
 /// An icon button's name label, the `HighlightText` shown on hover or selection.
 #[derive(Component)]
-pub(crate) struct HoverLabel;
+pub struct HoverLabel;
 /// A glue-panel button.
 #[derive(Component)]
 pub(crate) struct GlueBtn;
 /// A glue-panel button's `Enable()`/`Disable()` state: the screen toggles it,
 /// [`super::glue_button_visuals`] renders it.
 #[derive(Component, Default)]
-pub(crate) struct GlueDisabled(pub(crate) bool);
+pub struct GlueDisabled(pub bool);
 /// A template's own `TexCoords` crop, used in place of [`BUTTON_TC`].
 #[derive(Component, Clone, Copy)]
 pub(crate) struct BtnTexCoords(pub(crate) [f32; 4]);
 /// A glue button's caption: gold at rest, white on hover (`HighlightFont`).
 #[derive(Component)]
-pub(crate) struct GlueCaption;
+pub struct GlueCaption;
 /// A two-state button face (spinner arrows, rotate): pressed shows `down`.
 #[derive(Component)]
 pub(crate) struct ArtSwap {
@@ -60,7 +60,7 @@ pub(crate) struct OutlineCopy {
 // ── Layout helpers ───────────────────────────────────────────────────────────────────────────────
 
 /// An absolutely-positioned node at the authored `(left, top, w, h)`, scaled by `s`.
-pub(crate) fn abs(s: f32, left: f32, top: f32, w: f32, h: f32) -> Node {
+pub fn abs(s: f32, left: f32, top: f32, w: f32, h: f32) -> Node {
     Node {
         position_type: PositionType::Absolute,
         left: Val::Px(left * s),
@@ -72,7 +72,7 @@ pub(crate) fn abs(s: f32, left: f32, top: f32, w: f32, h: f32) -> Node {
 }
 
 /// A full-parent absolute overlay (highlights, border sheets).
-pub(crate) fn overlay() -> Node {
+pub fn overlay() -> Node {
     Node {
         position_type: PositionType::Absolute,
         left: Val::Px(0.0),
@@ -85,7 +85,7 @@ pub(crate) fn overlay() -> Node {
 
 /// A glue string's look before the outline. `text` is markup, decoded as every
 /// `CSimpleFontString` decodes it, and `color` is the base its escapes override.
-pub(crate) struct GlueText<'a> {
+pub struct GlueText<'a> {
     pub text: &'a str,
     pub size: f32,
     pub color: Color,
@@ -95,7 +95,7 @@ pub(crate) struct GlueText<'a> {
 /// A glue text with the glue fonts' `outline="NORMAL"` (GlueFonts.xml): eight black copies one
 /// device pixel out, then the real text with the MasterFont (1,−1) shadow on top.
 /// `wrapper_extra` rides the wrapper of all nine, `text_extra` the real text, which is returned.
-pub(crate) fn outlined_text<W: Bundle, T: Bundle>(
+pub fn outlined_text<W: Bundle, T: Bundle>(
     parent: &mut ChildSpawnerCommands,
     node: Node,
     wrapper_extra: W,
@@ -284,7 +284,7 @@ fn outlined_spans<W: Bundle, T: Bundle>(
 ///
 /// It carries its own [`LockHighlight`]: `SetCharacterRace`/`Class`/`Gender` lock these by hand
 /// (`CharacterCreate.lua` l.171/254/326), and the screen's query needs the component present.
-pub(crate) fn icon_button<A: Component, I: Bundle, L: Bundle>(
+pub fn icon_button<A: Component, I: Bundle, L: Bundle>(
     parent: &mut ChildSpawnerCommands,
     font: &Handle<Font>,
     action: A,
@@ -434,7 +434,7 @@ pub(crate) fn dial_arrow<A: Component>(
 /// A glue button template (`GlueButtons.xml`, `GlueDialog.xml`): its caption font and its
 /// per-template `<ButtonText>` CENTER offset.
 #[derive(Clone, Copy)]
-pub(crate) enum GlueBtnKind {
+pub enum GlueBtnKind {
     /// `GlueButtonTemplate` (170×45): GlueFontNormal, ButtonText CENTER (−3, 3).
     Normal,
     /// `GlueButtonSmallTemplate` (150×38): GlueFontNormalSmall, ButtonText CENTER (0, 3).
@@ -690,7 +690,7 @@ pub(crate) fn glue_edit_box<E: Bundle, T: Bundle + Clone>(
 
 /// A glue-panel button on `Glue-Panel-Button` art with its hover sheen, or a plain fill. Returns
 /// the button's entity.
-pub(crate) fn glue_button<A: Component>(
+pub fn glue_button<A: Component>(
     parent: &mut ChildSpawnerCommands,
     art: &GlueArt,
     font: &Handle<Font>,

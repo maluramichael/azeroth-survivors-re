@@ -284,8 +284,8 @@ pub(crate) fn incapacitated_flags(flags: u32, translate_gated: bool, turn_gated:
 /// Our avatar: until `active` the camera free-flies, then we drive the body the server placed.
 /// `PartialEq` serves the test that the session end resets the whole of it to `Player::default()`.
 #[derive(Resource, Default, PartialEq)]
-pub(crate) struct Player {
-    pub(crate) active: bool,
+pub struct Player {
+    pub active: bool,
     /// The modes the server has granted our mover.
     pub(super) modes: MoveModes,
     /// Autorun: the reference's input bit `0x1000` at `[MOVE+4]`, flipped by `ToggleAutoRun`
@@ -302,7 +302,7 @@ pub(crate) struct Player {
     /// controller reads it.
     pub(super) auto_forward: bool,
     /// Free-fly (`F`): the camera moves on its own and the avatar/server position is frozen.
-    pub(crate) detached: bool,
+    pub detached: bool,
     /// `SMSG_CLIENT_CONTROL_UPDATE` with `allowMove = 0` named the unit we drive: us, while someone
     /// mind-controls us, or our possessed creature when feared or confused, the possession
     /// standing. The reference zeroes its mover; vmangos neither roots a charmed player nor refuses
@@ -317,7 +317,7 @@ pub(crate) struct Player {
     /// at the take-control edge.
     pub(crate) reseat: bool,
     /// Feet position in Bevy coords, converted to WoW coords only for the wire.
-    pub(crate) pos: Vec3,
+    pub pos: Vec3,
     /// Vertical velocity (yd/s, Bevy +Y up), zeroed while grounded.
     pub(super) vel_y: f32,
     /// Horizontal velocity (yd/s): from input while grounded, the frozen take-off momentum while
@@ -341,7 +341,7 @@ pub(crate) struct Player {
     /// Holding the body still, gravity off, after a teleport, summon or login until the
     /// destination's colliders stream in. Released by the terrain streamer on residency or at
     /// [`SETTLE_TIMEOUT`], never by ground contact, which a flyer or a swimmer never makes.
-    pub(crate) settling: bool,
+    pub settling: bool,
     /// When to give up settling (`Time::elapsed_secs`), pushed on while the world is stale or
     /// still loading.
     pub(crate) settle_deadline: f32,
@@ -350,7 +350,7 @@ pub(crate) struct Player {
     /// The colliders under us may still be the map we left: the snap runs a whole `WorldStage`
     /// before the streamer swaps maps. Set at every snap, cleared once the destination is resident;
     /// while set, the streamer judges no release and pushes [`Player::settle_deadline`] on.
-    pub(crate) world_stale: bool,
+    pub world_stale: bool,
     /// The camera pitch the login seize seats: the saved pose's `cameraPitch` when
     /// [`super::camera_saved`] restored one, else the stock opening pitch.
     pub(super) login_pitch: Option<f32>,

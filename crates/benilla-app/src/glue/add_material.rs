@@ -11,7 +11,7 @@ use bevy::ui_render::ui_material::{UiMaterial, UiMaterialKey};
 /// An additive UI overlay: `texture`'s uv sub-region `rect` `(u0, v0, u1, v1)`, drawn
 /// `dst + src·srcAlpha`.
 #[derive(Asset, TypePath, AsBindGroup, Clone)]
-pub(crate) struct AddUiMaterial {
+pub struct AddUiMaterial {
     #[texture(0)]
     #[sampler(1)]
     pub(crate) texture: Handle<Image>,

@@ -12,9 +12,9 @@ use super::backdrop::BackdropEdges;
 // ── The authored glue palette ────────────────────────────────────────────────────────────────────
 
 /// `GlueFontNormal*`'s gold (GlueFonts.xml: 1.0, 0.78, 0).
-pub(crate) const GOLD: Color = Color::srgb(1.0, 0.78, 0.0);
+pub const GOLD: Color = Color::srgb(1.0, 0.78, 0.0);
 /// `GlueFontDisable*`'s gray.
-pub(crate) const DIM: Color = Color::srgb(0.5, 0.5, 0.5);
+pub const DIM: Color = Color::srgb(0.5, 0.5, 0.5);
 /// The info bodies' `GlueFontCharacterCreate`: white, from `GlueFontHighlightSmall`.
 pub(crate) const INFO_TEXT: Color = Color::WHITE;
 /// The glue screens' root fill, ours (Alliance cool, Horde warm on the create screen), seen only
@@ -36,7 +36,7 @@ pub(crate) const FALLBACK_ALPHA: f32 = 0.8;
 /// The info panels' backdrop: `TextPanel-Border`, edge/tile 32 (CharacterCreate.xml).
 pub(crate) const PANEL_EDGE: f32 = 32.0;
 /// The name box's backdrop: `Glue-Tooltip-Border`, edge/tile 16.
-pub(crate) const NAME_EDGE: f32 = 16.0;
+pub const NAME_EDGE: f32 = 16.0;
 
 // ── The art set ──────────────────────────────────────────────────────────────────────────────────
 
@@ -77,15 +77,15 @@ pub(crate) struct ScrollArt {
 
 /// The create screen's reference art, loaded from the player's client data on first entry.
 #[derive(Resource, Default)]
-pub(crate) struct GlueArt {
+pub struct GlueArt {
     tried: bool,
-    pub(crate) races: Option<(Handle<Image>, Vec2)>,
-    pub(crate) classes: Option<(Handle<Image>, Vec2)>,
-    pub(crate) gender: Option<(Handle<Image>, Vec2)>,
+    pub races: Option<(Handle<Image>, Vec2)>,
+    pub classes: Option<(Handle<Image>, Vec2)>,
+    pub gender: Option<(Handle<Image>, Vec2)>,
     pub(crate) factions: Option<(Handle<Image>, Vec2)>,
-    pub(crate) banners: Option<Handle<Image>>,
+    pub banners: Option<Handle<Image>>,
     pub(crate) hilight: Option<Handle<AddUiMaterial>>,
-    pub(crate) logo: Option<Handle<Image>>,
+    pub logo: Option<Handle<Image>>,
     pub(crate) arrow_left: Option<ArrowArt>,
     pub(crate) arrow_right: Option<ArrowArt>,
     pub(crate) button_up: Option<(Handle<Image>, Vec2)>,
@@ -94,8 +94,8 @@ pub(crate) struct GlueArt {
     pub(crate) button_hi: Option<Handle<AddUiMaterial>>,
     /// The tower frame: `UI-CharacterCreate-Background` (stretched) under three stacked
     /// `UI-CharacterCreate-OuterBorder` pieces.
-    pub(crate) tower_bg: Option<Handle<Image>>,
-    pub(crate) tower_border: Option<(Handle<Image>, Vec2)>,
+    pub tower_bg: Option<Handle<Image>>,
+    pub tower_border: Option<(Handle<Image>, Vec2)>,
     /// The 64² shadow behind every race/class/gender icon.
     pub(crate) icon_shadow: Option<Handle<Image>>,
     /// The dial rows' `CharacterCreate-LabelFrame`: 128×64, a 25|stretch|25 horizontal 3-slice.
@@ -107,12 +107,12 @@ pub(crate) struct GlueArt {
     pub(crate) mouse_hilight: Option<Handle<AddUiMaterial>>,
     /// The two edge files split into their eight pieces, and the tiled `UI-Tooltip-Background`.
     pub(crate) panel_border: Option<BackdropEdges>,
-    pub(crate) name_border: Option<BackdropEdges>,
-    pub(crate) tooltip_bg: Option<Handle<Image>>,
+    pub name_border: Option<BackdropEdges>,
+    pub tooltip_bg: Option<Handle<Image>>,
     /// All or nothing: without the full set the info panels scroll by wheel only.
     pub(crate) scroll: Option<ScrollArt>,
     /// `Glue-CharacterSelect-Highlight` (ADD), on hover and on the locked selected row.
-    pub(crate) select_highlight: Option<Handle<AddUiMaterial>>,
+    pub select_highlight: Option<Handle<AddUiMaterial>>,
     /// The delete/rename dialog: `UI-DialogBox-Border` (edge 32) over `-Background`.
     pub(crate) dialog_border: Option<BackdropEdges>,
     pub(crate) dialog_bg: Option<Handle<Image>>,
@@ -189,7 +189,7 @@ pub(crate) struct CloseBtnArt {
 
 impl GlueArt {
     /// Load the art set once; a piece that fails stays `None`.
-    pub(crate) fn ensure_loaded(
+    pub fn ensure_loaded(
         &mut self,
         assets: &mut WorldAssets,
         images: &mut Assets<Image>,
@@ -547,14 +547,14 @@ fn race_cell(race: u8) -> Option<(f32, f32)> {
     })
 }
 
-pub(crate) fn race_tc(race: u8, sex: u8) -> Option<[f32; 4]> {
+pub fn race_tc(race: u8, sex: u8) -> Option<[f32; 4]> {
     let (c, r) = race_cell(race)?;
     let r = r + if sex == 1 { 2.0 } else { 0.0 };
     Some([c * 0.25, (c + 1.0) * 0.25, r * 0.25, (r + 1.0) * 0.25])
 }
 
 /// A class icon's texcoords in `UI-CharacterCreate-Classes`, `CLASS_ICON_TCOORDS` verbatim.
-pub(crate) fn class_tc(class: u8) -> Option<[f32; 4]> {
+pub fn class_tc(class: u8) -> Option<[f32; 4]> {
     Some(match class {
         1 => [0.0, 0.25, 0.0, 0.25],              // Warrior
         8 => [0.25, 0.49609375, 0.0, 0.25],       // Mage
@@ -576,7 +576,7 @@ pub(crate) const BUTTON_HI_TC: [f32; 4] = [0.0, 0.625, 0.0, 0.6875];
 pub(crate) const SCROLL_BTN_TC: [f32; 4] = [0.25, 0.75, 0.25, 0.75];
 
 /// Texcoords to an `ImageNode` pixel rect on a texture of `size`.
-pub(crate) fn tc_rect(size: Vec2, tc: [f32; 4]) -> Rect {
+pub fn tc_rect(size: Vec2, tc: [f32; 4]) -> Rect {
     Rect::new(
         tc[0] * size.x,
         tc[2] * size.y,

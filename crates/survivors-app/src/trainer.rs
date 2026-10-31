@@ -17,12 +17,12 @@ use super::hud::{self, HudFont, MenuRoot};
 use super::menu::{self, MenuAction, MenuBuilt};
 use super::profile::{MetaBonus, Profile};
 use super::{data, Phase, Selection};
-use crate::glue::art::{GlueArt, DIM, GOLD, NAME_EDGE};
-use crate::glue::backdrop::{backdrop_border, tiled_bg_node};
-use crate::glue::widgets::{
+use benilla_app::survivors_host::glue::art::{GlueArt, DIM, GOLD, NAME_EDGE};
+use benilla_app::survivors_host::glue::backdrop::{backdrop_border, tiled_bg_node};
+use benilla_app::survivors_host::glue::widgets::{
     abs, glue_button, outlined_text, GlueBtnKind, GlueCaption, GlueDisabled, GlueText,
 };
-use crate::glue::GlueClicks;
+use benilla_app::survivors_host::glue::GlueClicks;
 
 /// Classes every profile starts with ([`Profile`]'s starters); the shop prices the ones beyond.
 const STARTERS: usize = 3;
@@ -233,7 +233,7 @@ pub(super) fn plugin(app: &mut App) {
                 .chain()
                 // After the menu has set the Enter World button, so a locked class can disable it.
                 .after(menu::refresh_menu_ui)
-                .before(crate::glue::GlueVisuals),
+                .before(benilla_app::survivors_host::glue::GlueVisuals),
         );
 }
 
@@ -415,7 +415,7 @@ fn panel(ui: &mut ChildSpawnerCommands, glue: &GlueArt, art: &TrainerArt, f: &Ha
                 ));
                 backdrop_border(frame, border, NAME_EDGE, FRAME_BORDER);
             } else {
-                frame.spawn((BackgroundColor(FRAME_FILL), crate::glue::widgets::overlay()));
+                frame.spawn((BackgroundColor(FRAME_FILL), benilla_app::survivors_host::glue::widgets::overlay()));
             }
             outlined_text(
                 frame,

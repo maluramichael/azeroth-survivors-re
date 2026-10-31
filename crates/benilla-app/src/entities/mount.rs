@@ -26,7 +26,7 @@ pub(crate) struct MountBody {
 
 /// On the unit: its live mount child (the client's `[unit+0xdc]` handle).
 #[derive(Component)]
-pub(crate) struct MountChild(pub(crate) Entity);
+pub struct MountChild(pub(crate) Entity);
 
 /// On the unit: the mount display its rig is seated on (`0` standing), [`reseat_mounts`]' diff
 /// key; it lags the field while a mount model loads.

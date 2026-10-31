@@ -11,14 +11,14 @@ use bevy::ui_render::ui_material::MaterialNode;
 use super::hud::{looks_for, rgb, start_run, HudFont, MenuRoot};
 use super::profile::{xp_to_next, zone_min_level, Profile, MAX_LEVEL};
 use super::{data, Phase, Rng, Run, Selection};
-use crate::char_select::race_name;
-use crate::glue::art::{class_tc, race_tc, tc_rect, GlueArt, DIM, GOLD, NAME_EDGE};
-use crate::glue::backdrop::{backdrop_border, tiled_bg_node};
-use crate::glue::widgets::{
+use benilla_app::survivors_host::char_select::race_name;
+use benilla_app::survivors_host::glue::art::{class_tc, race_tc, tc_rect, GlueArt, DIM, GOLD, NAME_EDGE};
+use benilla_app::survivors_host::glue::backdrop::{backdrop_border, tiled_bg_node};
+use benilla_app::survivors_host::glue::widgets::{
     abs, glue_button, icon_button, outlined_text, GlueBtnKind, GlueDisabled, GlueText, Hilight,
     HoverLabel, LockHighlight,
 };
-use crate::glue::GlueClicks;
+use benilla_app::survivors_host::glue::GlueClicks;
 
 /// The create screen's two race columns.
 const ALLIANCE: [u8; 4] = [1, 3, 4, 7];
@@ -62,7 +62,7 @@ pub(super) struct PickName;
 /// The saved pick, `benilla-config/survivors-pick.txt` (`localStorage` on the page):
 /// `class race sex map`, restored at the menu so a reload keeps the last hero and zone.
 fn pick_path() -> Option<std::path::PathBuf> {
-    crate::local_state::home().map(|h| h.join("survivors-pick.txt"))
+    benilla_app::survivors_host::local_state::home().map(|h| h.join("survivors-pick.txt"))
 }
 
 fn save_pick(sel: &Selection) {
@@ -72,14 +72,14 @@ fn save_pick(sel: &Selection) {
     };
     if let Some(path) = pick_path() {
         let _ =
-            crate::local_state::write_atomic(&path, &format!("{class} {race} {sex} {}", sel.map));
+            benilla_app::survivors_host::local_state::write_atomic(&path, &format!("{class} {race} {sex} {}", sel.map));
     }
 }
 
 /// Restore the saved pick once the creature data can resolve its looks; a stale or missing file
 /// leaves the default.
 pub(super) fn restore_pick(
-    creatures: Option<Res<crate::entities::Creatures>>,
+    creatures: Option<Res<benilla_app::survivors_host::entities::Creatures>>,
     mut selection: ResMut<Selection>,
     mut done: Local<bool>,
 ) {
@@ -90,7 +90,7 @@ pub(super) fn restore_pick(
         return;
     };
     *done = true;
-    let Some(text) = pick_path().and_then(|p| crate::local_state::read_to_string(&p).ok()) else {
+    let Some(text) = pick_path().and_then(|p| benilla_app::survivors_host::local_state::read_to_string(&p).ok()) else {
         return;
     };
     let v: Vec<usize> = text
@@ -114,7 +114,7 @@ pub(super) fn restore_pick(
 }
 
 /// Every class's looks, `(display, race, sex)`, indexed like [`data::CLASSES`].
-fn all_looks(creatures: &crate::entities::Creatures) -> Vec<Vec<(u32, u8, u8)>> {
+fn all_looks(creatures: &benilla_app::survivors_host::entities::Creatures) -> Vec<Vec<(u32, u8, u8)>> {
     data::CLASSES
         .iter()
         .map(|c| looks_for(c, creatures))
@@ -141,7 +141,7 @@ pub(super) fn build_menu(
     assets: Option<ResMut<benilla_assets::WorldAssets>>,
     mut art: ResMut<GlueArt>,
     mut images: ResMut<Assets<Image>>,
-    mut add_mats: ResMut<Assets<crate::glue::add_material::AddUiMaterial>>,
+    mut add_mats: ResMut<Assets<benilla_app::survivors_host::glue::add_material::AddUiMaterial>>,
     font: Res<HudFont>,
 ) {
     let Ok(root) = roots.single() else { return };
@@ -434,7 +434,7 @@ fn zone_frame(ui: &mut ChildSpawnerCommands, art: &GlueArt, f: &Handle<Font>) {
             ));
             backdrop_border(frame, border, NAME_EDGE, FRAME_BORDER);
         } else {
-            frame.spawn((BackgroundColor(FRAME_FILL), crate::glue::widgets::overlay()));
+            frame.spawn((BackgroundColor(FRAME_FILL), benilla_app::survivors_host::glue::widgets::overlay()));
         }
         outlined_text(
             frame,
@@ -532,7 +532,7 @@ pub(super) fn menu_clicks(
     clicks: Res<GlueClicks>,
     actions: Query<(Entity, &MenuAction)>,
     phase: Res<State<Phase>>,
-    creatures: Option<Res<crate::entities::Creatures>>,
+    creatures: Option<Res<benilla_app::survivors_host::entities::Creatures>>,
     mut selection: ResMut<Selection>,
     mut run: ResMut<Run>,
     profile: Res<super::profile::Profile>,
@@ -619,7 +619,7 @@ pub(super) fn menu_clicks(
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub(super) fn refresh_menu_ui(
     selection: Res<Selection>,
-    creatures: Option<Res<crate::entities::Creatures>>,
+    creatures: Option<Res<benilla_app::survivors_host::entities::Creatures>>,
     art: Res<GlueArt>,
     mut buttons: Query<(
         &MenuAction,
@@ -726,7 +726,7 @@ pub(super) fn plugin(app: &mut App) {
             build_pick_extras.after(build_menu),
             (refresh_zone_rows, refresh_pick_line, lock_enter)
                 .after(refresh_menu_ui)
-                .before(crate::glue::GlueVisuals),
+                .before(benilla_app::survivors_host::glue::GlueVisuals),
         )
             .run_if(in_state(Phase::Menu)),
     );

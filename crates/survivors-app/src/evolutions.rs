@@ -81,19 +81,19 @@ pub(super) struct Spellbook {
 
 impl Spellbook {
     fn path() -> Option<std::path::PathBuf> {
-        crate::local_state::home().map(|h| h.join("survivors-spellbook.toml"))
+        benilla_app::survivors_host::local_state::home().map(|h| h.join("survivors-spellbook.toml"))
     }
 
     fn load() -> Self {
         Self::path()
             .and_then(|path| {
-                let text = crate::local_state::read_to_string(&path).ok()?;
+                let text = benilla_app::survivors_host::local_state::read_to_string(&path).ok()?;
                 match toml::from_str::<Self>(&text) {
                     Ok(book) => Some(book),
                     Err(e) => {
                         warn!("survivors: spellbook unreadable, starting fresh ({e})");
                         let _ =
-                            crate::local_state::write_atomic(&path.with_extension("bad"), &text);
+                            benilla_app::survivors_host::local_state::write_atomic(&path.with_extension("bad"), &text);
                         None
                     }
                 }
@@ -103,13 +103,13 @@ impl Spellbook {
 
     /// An automated run (`WOW_SURVIVORS_AUTO`) saves nothing, as the profile does.
     fn save(&self) {
-        if crate::webenv::var("WOW_SURVIVORS_AUTO").is_some() {
+        if benilla_app::survivors_host::webenv::var("WOW_SURVIVORS_AUTO").is_some() {
             return;
         }
         let Some(path) = Self::path() else { return };
         match toml::to_string(self) {
             Ok(text) => {
-                if let Err(e) = crate::local_state::write_atomic(&path, &text) {
+                if let Err(e) = benilla_app::survivors_host::local_state::write_atomic(&path, &text) {
                     warn!("survivors: spellbook not saved ({e})");
                 }
             }
@@ -231,7 +231,7 @@ fn build(commands: &mut Commands, ui: &mut BookUi, font: &Handle<Font>) {
 fn lines(
     run: &Run,
     book: &Spellbook,
-    spells: Option<&crate::ui_action::Spells>,
+    spells: Option<&benilla_app::survivors_host::ui_action::Spells>,
 ) -> Vec<(String, Color)> {
     recipes(run.class.pool)
         .into_iter()
@@ -271,7 +271,7 @@ fn show(
     run: Res<Run>,
     book: Res<Spellbook>,
     font: Option<Res<HudFont>>,
-    spells: Option<Res<crate::ui_action::Spells>>,
+    spells: Option<Res<benilla_app::survivors_host::ui_action::Spells>>,
     mut vis: Query<&mut Visibility>,
     mut rows: Query<(&mut Text, &mut TextColor, &mut Node)>,
 ) {

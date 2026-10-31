@@ -13,7 +13,7 @@ const TOOLTIP_BG_NATIVE: f32 = 64.0;
 
 /// One `Backdrop` `edgeFile`'s eight pieces, split out upright and ready to draw.
 #[derive(Clone)]
-pub(crate) struct BackdropEdges {
+pub struct BackdropEdges {
     pub(crate) left: Handle<Image>,
     pub(crate) right: Handle<Image>,
     pub(crate) top: Handle<Image>,
@@ -55,7 +55,7 @@ pub(crate) fn split_backdrop_edges(e: usize, strip: &[u8]) -> [Vec<u8>; 8] {
 }
 
 /// Load one edge file and split it; the cell size is the strip's height.
-pub(crate) fn backdrop_edges(
+pub fn backdrop_edges(
     assets: &mut WorldAssets,
     path: &str,
     images: &mut Assets<Image>,
@@ -90,7 +90,7 @@ pub(crate) fn backdrop_edges(
 ///
 /// Not Bevy's `TextureSlicer`: it shrinks the corners on a frame shorter than 3·`e`, pulling the
 /// border off the authored `BackgroundInsets`.
-pub(crate) fn backdrop_border(
+pub fn backdrop_border(
     b: &mut ChildSpawnerCommands,
     edges: &BackdropEdges,
     e: f32,
@@ -222,7 +222,7 @@ pub(crate) fn fit_backdrop_borders(
 }
 
 /// The tiled `UI-Tooltip-Background` behind a bordered box, at the authored `tileSize` period.
-pub(crate) fn tiled_bg_node(sheet: Handle<Image>, period: f32, s: f32, color: Color) -> ImageNode {
+pub fn tiled_bg_node(sheet: Handle<Image>, period: f32, s: f32, color: Color) -> ImageNode {
     ImageNode {
         image: sheet,
         color,

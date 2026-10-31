@@ -103,7 +103,7 @@ impl Row {
 
 /// What a write did.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum SetOutcome {
+pub enum SetOutcome {
     /// No such row (warned).
     Unknown,
     /// A numeric row and a value that does not parse: refused, the applied value stands (warned).
@@ -118,7 +118,7 @@ pub(crate) enum SetOutcome {
 
 /// The engine-side CVar table.
 #[derive(Resource)]
-pub(crate) struct Cvars {
+pub struct Cvars {
     rows: Vec<Row>,
     /// Lowercased name → row.
     index: HashMap<String, usize>,
@@ -189,16 +189,16 @@ impl Cvars {
         self.rows.iter()
     }
 
-    pub(crate) fn get(&self, name: &str) -> Option<&str> {
+    pub fn get(&self, name: &str) -> Option<&str> {
         self.row(name).map(|r| r.value.as_str())
     }
 
-    pub(crate) fn num(&self, name: &str) -> Option<f32> {
+    pub fn num(&self, name: &str) -> Option<f32> {
         self.get(name).and_then(|v| v.trim().parse().ok())
     }
 
     /// The applied value as the client's flag (int-parse, `!= 0`).
-    pub(crate) fn flag(&self, name: &str) -> Option<bool> {
+    pub fn flag(&self, name: &str) -> Option<bool> {
         self.num(name).map(|v| v != 0.0)
     }
 
@@ -288,7 +288,7 @@ impl Cvars {
 
     /// A host-side write (minimap zoom, camera views, the remembered character, the tip cursor):
     /// mirrored into the VM, persisted and observed.
-    pub(crate) fn set(&mut self, name: &str, value: &str) -> SetOutcome {
+    pub fn set(&mut self, name: &str, value: &str) -> SetOutcome {
         self.write(name, value, false)
     }
 
@@ -326,7 +326,7 @@ impl Cvars {
     /// nothing commits it and its stage is lost at exit, as in the reference. The reference runs a
     /// gx callback at `SetCVar` time (`0x63df50`); ours fire here, before the device rebuild reads
     /// them.
-    pub(crate) fn commit_latched(&mut self) -> usize {
+    pub fn commit_latched(&mut self) -> usize {
         let mut moved = 0;
         for row in &mut self.rows {
             if !row.name.starts_with("gx") {

@@ -59,7 +59,7 @@ impl Auto {
 }
 
 pub(super) fn from_env() -> Option<Auto> {
-    let want = crate::webenv::var("WOW_SURVIVORS_AUTO")?;
+    let want = benilla_app::survivors_host::webenv::var("WOW_SURVIVORS_AUTO")?;
     let (name, mode) = want.trim().split_once(':').unwrap_or((want.trim(), ""));
     let idle = mode.eq_ignore_ascii_case("idle");
     let late = mode.eq_ignore_ascii_case("late");
@@ -68,7 +68,7 @@ pub(super) fn from_env() -> Option<Auto> {
         .iter()
         .position(|c| c.name.eq_ignore_ascii_case(name))
         .unwrap_or(0);
-    let map = crate::webenv::var("WOW_SURVIVORS_MAP").map_or(0, |m| {
+    let map = benilla_app::survivors_host::webenv::var("WOW_SURVIVORS_MAP").map_or(0, |m| {
         let m = m.trim().to_ascii_lowercase();
         m.parse::<usize>()
             .ok()
@@ -163,7 +163,7 @@ pub(super) fn drive(
     profile: Res<super::profile::Profile>,
     mut offer: ResMut<Offer>,
     mut rng: ResMut<Rng>,
-    loading: Res<crate::loading_screen::LoadingScreen>,
+    loading: Res<benilla_app::survivors_host::loading_screen::LoadingScreen>,
     mut talents: ResMut<super::talents::TalentsUi>,
     heroes: Query<(), With<Hero>>,
     enemies: Query<&Enemy>,

@@ -131,7 +131,7 @@ impl Default for Profile {
 
 impl Profile {
     fn path() -> Option<std::path::PathBuf> {
-        crate::local_state::home().map(|h| h.join("survivors-profile.toml"))
+        benilla_app::survivors_host::local_state::home().map(|h| h.join("survivors-profile.toml"))
     }
 
     /// The saved profile, or a fresh one; a file that does not parse is kept aside as `.bad` so a
@@ -139,26 +139,26 @@ impl Profile {
     pub fn load() -> Self {
         let mut p = Self::path()
             .and_then(|path| {
-                let text = crate::local_state::read_to_string(&path).ok()?;
+                let text = benilla_app::survivors_host::local_state::read_to_string(&path).ok()?;
                 match toml::from_str::<Self>(&text) {
                     Ok(p) => Some(p),
                     Err(e) => {
                         warn!("survivors: profile unreadable, starting fresh ({e})");
                         let _ =
-                            crate::local_state::write_atomic(&path.with_extension("bad"), &text);
+                            benilla_app::survivors_host::local_state::write_atomic(&path.with_extension("bad"), &text);
                         None
                     }
                 }
             })
             .unwrap_or_default();
         p.normalize();
-        p.ephemeral = crate::webenv::var("WOW_SURVIVORS_AUTO").is_some();
+        p.ephemeral = benilla_app::survivors_host::webenv::var("WOW_SURVIVORS_AUTO").is_some();
         if p.ephemeral {
             p.apply_test_env();
         }
         // An automated run opens everything unless `WOW_SURVIVORS_UNLOCK_ALL=0` keeps the locks, to
         // photograph them.
-        p.unlock_all = match crate::webenv::var("WOW_SURVIVORS_UNLOCK_ALL") {
+        p.unlock_all = match benilla_app::survivors_host::webenv::var("WOW_SURVIVORS_UNLOCK_ALL") {
             Some(v) => v != "0",
             None => p.ephemeral,
         };
@@ -168,13 +168,13 @@ impl Profile {
     /// `WOW_SURVIVORS_LEVEL=<n>` sets every character's level and `WOW_SURVIVORS_DIFFICULTY=
     /// normal|heroic|hardcore` the pick, for an automated run; it saves nothing.
     fn apply_test_env(&mut self) {
-        if let Some(level) = crate::webenv::var("WOW_SURVIVORS_LEVEL").and_then(|v| v.parse().ok())
+        if let Some(level) = benilla_app::survivors_host::webenv::var("WOW_SURVIVORS_LEVEL").and_then(|v| v.parse().ok())
         {
             for c in &mut self.characters {
                 c.level = u32::clamp(level, 1, MAX_LEVEL);
             }
         }
-        if let Some(d) = crate::webenv::var("WOW_SURVIVORS_DIFFICULTY") {
+        if let Some(d) = benilla_app::survivors_host::webenv::var("WOW_SURVIVORS_DIFFICULTY") {
             let d = d.trim().to_ascii_lowercase();
             if let Some(d) = Difficulty::ALL
                 .into_iter()
@@ -192,7 +192,7 @@ impl Profile {
         let Some(path) = Self::path() else { return };
         match toml::to_string(self) {
             Ok(text) => {
-                if let Err(e) = crate::local_state::write_atomic(&path, &text) {
+                if let Err(e) = benilla_app::survivors_host::local_state::write_atomic(&path, &text) {
                     warn!("survivors: profile not saved ({e})");
                 }
             }

@@ -23,7 +23,7 @@ use super::enemies::Enemy;
 use super::hero::Hero;
 use super::hud::UiArt;
 use super::Run;
-use crate::area::AreaTableRes;
+use benilla_app::survivors_host::area::AreaTableRes;
 
 /// The composite's edge in texels; the 140-unit widget is ~200 px at 1080p.
 const SIDE: usize = 192;
@@ -401,7 +401,7 @@ pub(super) fn compose(
         map.art = Some(Art {
             translate,
             mask: Rgba::decode(&mut assets, "Textures\\MinimapMask"),
-            arrow: Rgba::decode(&mut assets, crate::minimap::blips::PLAYER_ARROW_TEXTURE),
+            arrow: Rgba::decode(&mut assets, benilla_app::survivors_host::minimap::blips::PLAYER_ARROW_TEXTURE),
             icons: Rgba::decode(&mut assets, "Interface\\Minimap\\ObjectIcons"),
         });
     }

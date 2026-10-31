@@ -612,7 +612,7 @@ fn solid_at(
 #[allow(clippy::too_many_arguments)]
 fn scan_world(
     selection: Res<Selection>,
-    loading: Res<crate::loading_screen::LoadingScreen>,
+    loading: Res<benilla_app::survivors_host::loading_screen::LoadingScreen>,
     progress: Res<WorldLoadProgress>,
     epoch: Res<ColliderEpoch>,
     world: WorldPoint,
@@ -719,7 +719,7 @@ pub(super) fn plugin(app: &mut App) {
                 .before(super::enemies::move_enemies)
                 .run_if(in_state(Phase::Playing))
                 // The same gates as the chase it feeds.
-                .run_if(|l: Res<crate::loading_screen::LoadingScreen>| !l.covering()),
+                .run_if(|l: Res<benilla_app::survivors_host::loading_screen::LoadingScreen>| !l.covering()),
         );
 }
 

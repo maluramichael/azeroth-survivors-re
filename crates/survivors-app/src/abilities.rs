@@ -11,7 +11,7 @@ use super::focus::{Focus, Target};
 use super::hero::{self, Hero};
 use super::units::{self, flat, Fx, Marks, UnitSpec, COLOR_HEAL, COLOR_MELEE, COLOR_SPELL};
 use super::{Rng, Run, RunEntity};
-use crate::net::{FieldChanged, Guid, ObjectStore};
+use benilla_app::survivors_host::net::{FieldChanged, Guid, ObjectStore};
 
 /// One blow landing on one enemy.
 #[derive(Message, Clone)]
@@ -229,7 +229,7 @@ pub(super) fn cast_abilities(
     mut rng: ResMut<Rng>,
     focus: Res<Focus>,
     target: Res<Target>,
-    spells: Option<Res<crate::ui_action::Spells>>,
+    spells: Option<Res<benilla_app::survivors_host::ui_action::Spells>>,
     hero: Query<(Entity, &Transform), With<Hero>>,
     enemies: Query<(Entity, &Transform, &Enemy)>,
     mut fx: Fx,
@@ -588,7 +588,7 @@ pub(super) fn tick_areas(
     run: Res<Run>,
     mut rng: ResMut<Rng>,
     focus: Res<Focus>,
-    spells: Option<Res<crate::ui_action::Spells>>,
+    spells: Option<Res<benilla_app::survivors_host::ui_action::Spells>>,
     mut areas: Query<(Entity, &Transform, &mut GroundArea)>,
     mut totems: Query<(Entity, &Transform, &mut Totem), Without<GroundArea>>,
     enemies: Query<(Entity, &Transform, &Enemy), (Without<GroundArea>, Without<Totem>)>,

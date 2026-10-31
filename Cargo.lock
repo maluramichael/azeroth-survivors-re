@@ -6541,6 +6541,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "survivors-app"
+version = "0.2.0"
+dependencies = [
+ "avian3d",
+ "benilla-app",
+ "benilla-assets",
+ "benilla-formats",
+ "benilla-protocol",
+ "benilla-ui",
+ "benilla-world",
+ "bevy",
+ "serde",
+ "toml",
+ "web-time",
+]
+
+[[package]]
 name = "svg_fmt"
 version = "0.4.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7439,6 +7456,7 @@ dependencies = [
  "benilla-buildstamp",
  "benilla-formats",
  "clap",
+ "survivors-app",
 ]
 
 [[package]]
@@ -7738,6 +7756,7 @@ dependencies = [
  "benilla-app",
  "benilla-buildstamp",
  "console_error_panic_hook",
+ "survivors-app",
  "wasm-bindgen",
 ]
 

@@ -17,7 +17,7 @@ mod emitter_pool;
 mod emote;
 pub(crate) mod footsteps;
 mod gameobject;
-mod glue;
+pub(crate) mod glue;
 mod greeting;
 pub(crate) mod interior;
 mod kit;

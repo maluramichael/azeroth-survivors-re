@@ -1,0 +1,47 @@
+[package]
+name = "survivors-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Warcraft Survivors: the top-down survival mode as a plugin on top of benilla-app"
+
+[lints]
+workspace = true
+
+[lib]
+# No doc examples here; a doctest binary would link the whole engine for nothing.
+doctest = false
+
+[features]
+# Same seam as benilla-app: `dev` on by default so `cargo check -p survivors-app` shares the
+# `benilla-app` artifact with the launcher; the entry crates take this crate without defaults and
+# forward `dev`.
+default = ["dev"]
+dev = [
+    "benilla-app/dev",
+    "benilla-assets/dev",
+    "benilla-formats/dev",
+    "benilla-world/dev",
+]
+# Browser render backend, forwarded from `wenilla`.
+webgl2 = ["benilla-app/webgl2"]
+webgpu = ["benilla-app/webgpu"]
+
+[dependencies]
+# `default-features = false` on the benilla crates: a path dependency resolves its own defaults,
+# and `dev` must arrive only through the feature above.
+benilla-app = { path = "../benilla-app", default-features = false }
+benilla-assets = { path = "../benilla-assets", default-features = false }
+benilla-formats = { path = "../benilla-formats", default-features = false }
+benilla-protocol = { path = "../benilla-protocol" }
+benilla-ui = { path = "../benilla-ui" }
+benilla-world = { path = "../benilla-world", default-features = false }
+# bevy's feature set is the workspace's; never name features here (the audio stack would return).
+bevy.workspace = true
+# Collision for the hero and the nav grid; the version and features benilla-app and benilla-world take.
+avian3d = "0.6"
+# The profile, items, difficulty and spellbook saves.
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+# The run seed's wall-clock read; std's `SystemTime` panics in a browser.
+web-time = "1"

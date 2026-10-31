@@ -196,7 +196,7 @@ fn blank_segment(i: usize, step: f32) -> Mesh {
 fn build_barrier(
     mut commands: Commands,
     selection: Res<Selection>,
-    loading: Res<crate::loading_screen::LoadingScreen>,
+    loading: Res<benilla_app::survivors_host::loading_screen::LoadingScreen>,
     hero: Query<&Transform, With<Hero>>,
     existing: Query<(Entity, &Barrier)>,
     world: WorldPoint,

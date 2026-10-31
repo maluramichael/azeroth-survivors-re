@@ -62,7 +62,7 @@ pub(crate) const LIFT_OFF: u16 = 192;
 pub(crate) const LAND: u16 = 200;
 
 /// The client's `MOVEMENTFLAGS` bits (cached at `unit+0x9e8`), tested as the binary tests them.
-pub(crate) mod move_flags {
+pub mod move_flags {
     pub const FORWARD: u32 = 0x1;
     pub const BACKWARD: u32 = 0x2;
     pub const STRAFE_LEFT: u32 = 0x4;
@@ -174,13 +174,13 @@ pub(crate) fn swim_body_rotation(yaw: f32, flags: u32, pitch: f32) -> Quat {
 
 /// The per-frame movement state the selector `0x5fd8b0` reads.
 #[derive(Component, Clone, Copy, Default)]
-pub(crate) struct MovementState {
+pub struct MovementState {
     /// Live directional speed (yd/s); for a swimmer the flag-scalar swim speed whatever its pitch.
-    pub(crate) speed: f32,
+    pub speed: f32,
     /// Vertical speed (yd/s, up); its sign on the first airborne frame tells a jump from a fall.
-    pub(crate) vertical_speed: f32,
+    pub vertical_speed: f32,
     /// `MOVEMENTFLAGS` ([`move_flags`]).
-    pub(crate) flags: u32,
+    pub flags: u32,
     /// `UNIT_FIELD_BYTES_1` byte 0: 0 Stand, 1 Sit, 3 Sleep, 4/5/6 chair low/medium/high, 8 Kneel.
     pub(crate) stand_state: u8,
     /// The CREEP bit, stamped from the unit's own descriptor every frame, self included.

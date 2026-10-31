@@ -12,9 +12,9 @@ use super::hud::{self, HudFont, MenuRoot, OverPayout};
 use super::menu::MenuBuilt;
 use super::profile::Profile;
 use super::{Phase, Run};
-use crate::glue::art::GlueArt;
-use crate::glue::widgets::{glue_button, outlined_text, GlueBtnKind, GlueDisabled, GlueText};
-use crate::glue::{GlueClicks, GlueVisuals};
+use benilla_app::survivors_host::glue::art::GlueArt;
+use benilla_app::survivors_host::glue::widgets::{glue_button, outlined_text, GlueBtnKind, GlueDisabled, GlueText};
+use benilla_app::survivors_host::glue::{GlueClicks, GlueVisuals};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]

@@ -168,7 +168,7 @@ pub(super) fn deal_cards(
     mut commands: Commands,
     offer: Res<Offer>,
     run: Res<Run>,
-    spells: Option<Res<crate::ui_action::Spells>>,
+    spells: Option<Res<benilla_app::survivors_host::ui_action::Spells>>,
     font: Res<HudFont>,
     rows: Query<Entity, With<hud::OfferRow>>,
     mut fills: ResMut<Assets<FillMaterial>>,

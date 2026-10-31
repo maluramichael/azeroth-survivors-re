@@ -302,7 +302,7 @@ fn coin_icon(size: f32) -> impl Bundle {
 }
 
 pub(super) fn spell_name(
-    spells: Option<&crate::ui_action::Spells>,
+    spells: Option<&benilla_app::survivors_host::ui_action::Spells>,
     spell: u32,
     fallback: &str,
 ) -> String {
@@ -323,7 +323,7 @@ pub(super) fn setup_hud(
     mut sweeps_init: ResMut<Assets<SweepUiMaterial>>,
     mut fills: ResMut<Assets<super::fill::FillMaterial>>,
 ) {
-    let font = crate::char_select::wow_font(&asset_server);
+    let font = benilla_app::survivors_host::char_select::wow_font(&asset_server);
     let number_font: Handle<Font> = asset_server.load("mpq://Fonts/ARIALN.ttf");
     commands.insert_resource(HudFont(font.clone()));
     let f = &font;
@@ -584,7 +584,7 @@ pub(super) fn setup_hud(
                 color: Color::NONE,
                 ..default()
             };
-            let [r, g, b, _] = crate::vplates::PLATE_FRIENDLY;
+            let [r, g, b, _] = benilla_app::survivors_host::vplates::PLATE_FRIENDLY;
             root.spawn((HpFrame, absolute(), Visibility::Hidden))
                 .with_children(|plate| {
                     plate.spawn((HpBar, absolute())).with_children(|bar| {
@@ -621,7 +621,7 @@ pub(super) fn setup_hud(
                         unpainted(),
                         UiArt::crop(nameplate::BORDER_TEXTURE, [0.0, 1.0, 0.0, 1.0]),
                     ));
-                    let [r, g, b, _] = crate::vplates::CON_YELLOW;
+                    let [r, g, b, _] = benilla_app::survivors_host::vplates::CON_YELLOW;
                     plate
                         .spawn((
                             HpLevelSeat,
@@ -1120,7 +1120,7 @@ pub(super) fn pick(
 
 pub(super) fn looks_for(
     class: &data::ClassDef,
-    creatures: &crate::entities::Creatures,
+    creatures: &benilla_app::survivors_host::entities::Creatures,
 ) -> Vec<(u32, u8, u8)> {
     let mut out: Vec<(u32, u8, u8)> = Vec::new();
     for &d in class.looks {
@@ -1210,7 +1210,7 @@ pub(super) fn keys(
 /// a class with no look; the menu itself always sets both.
 pub(super) fn refresh_menu(
     mut selection: ResMut<Selection>,
-    creatures: Option<Res<crate::entities::Creatures>>,
+    creatures: Option<Res<benilla_app::survivors_host::entities::Creatures>>,
 ) {
     if let (Some(class), Some(creatures)) = (selection.class_def(), creatures.as_deref()) {
         if selection.looks.is_empty() {
@@ -1238,7 +1238,7 @@ pub(super) struct CardText {
 pub(super) fn describe_card(
     choice: Choice,
     run: &Run,
-    spells: Option<&crate::ui_action::Spells>,
+    spells: Option<&benilla_app::survivors_host::ui_action::Spells>,
 ) -> CardText {
     let new = Color::srgb(0.3, 1.0, 0.3);
     match choice {
@@ -1463,7 +1463,7 @@ pub(super) fn refresh_hud(
     }
     let summary = format!(
         "{} {} in {}   —   press Enter to play again",
-        crate::char_select::race_name(run.race),
+        benilla_app::survivors_host::char_select::race_name(run.race),
         run.class.name,
         selection.map_def().name,
     );
@@ -1546,7 +1546,7 @@ pub(super) fn refresh_hud(
 pub(super) fn fill_icons(
     mut commands: Commands,
     mut slots: Query<(Entity, &mut ImageNode, &SpellIcon), Without<IconDone>>,
-    spells: Option<Res<crate::ui_action::Spells>>,
+    spells: Option<Res<benilla_app::survivors_host::ui_action::Spells>>,
     mut assets: Option<ResMut<benilla_assets::WorldAssets>>,
     mut images: ResMut<Assets<Image>>,
     mut cache: Local<HashMap<u32, Handle<Image>>>,
@@ -1696,7 +1696,7 @@ pub(super) fn hero_plate(
     )>,
     mut level: Query<(&mut Text, &mut TextFont), With<HpLevel>>,
 ) {
-    use crate::vplates::{
+    use benilla_app::survivors_host::vplates::{
         gx_px, plate_basis, text_px, BAR_H, BAR_OFF_X, BAR_OFF_Y, BAR_W, LEVEL_H, LEVEL_OFF_X,
         LEVEL_OFF_Y, PLATE_H, PLATE_W,
     };
@@ -2106,7 +2106,7 @@ fn next_rank(def: &AbilityDef, now: &Cast, next: &Cast) -> String {
 fn ability_tip(
     o: &Owned,
     stats: &Stats,
-    spells: Option<&crate::ui_action::Spells>,
+    spells: Option<&benilla_app::survivors_host::ui_action::Spells>,
 ) -> Vec<TipLine> {
     let def = o.def;
     let now = cast_at(def, o.level, stats);
@@ -2233,7 +2233,7 @@ fn spawn_tooltip(
     images: &mut Assets<Image>,
     ui_scale: f32,
 ) -> (Entity, Entity) {
-    use crate::glue::backdrop::{backdrop_border, backdrop_edges, tiled_bg_node};
+    use benilla_app::survivors_host::glue::backdrop::{backdrop_border, backdrop_edges, tiled_bg_node};
     let bg = assets.sprite_texture("Interface\\Tooltips\\UI-Tooltip-Background", images);
     let edges = backdrop_edges(assets, "Interface\\Tooltips\\UI-Tooltip-Border", images);
     let mut body = Entity::PLACEHOLDER;
@@ -2290,7 +2290,7 @@ pub(super) fn icon_tooltip(
     mut commands: Commands,
     phase: Res<State<Phase>>,
     run: Res<Run>,
-    spells: Option<Res<crate::ui_action::Spells>>,
+    spells: Option<Res<benilla_app::survivors_host::ui_action::Spells>>,
     font: Res<HudFont>,
     ui_scale: Res<UiScale>,
     mut assets: Option<ResMut<benilla_assets::WorldAssets>>,

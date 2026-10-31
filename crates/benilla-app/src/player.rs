@@ -59,7 +59,7 @@ mod scoped_view;
 mod ride;
 mod server_ride;
 mod setup;
-mod state;
+pub(crate) mod state;
 pub(crate) mod step_probe;
 mod swim;
 mod view_subject;

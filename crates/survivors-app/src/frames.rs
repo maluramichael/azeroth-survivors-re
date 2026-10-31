@@ -17,7 +17,7 @@ use super::hero::{AimPoint, UiCover};
 use super::hud::{self, HudFont, UiArt, GOLD_TONE};
 use super::profile::Profile;
 use super::{Phase, Run, Selection};
-use crate::vplates::con_color;
+use benilla_app::survivors_host::vplates::con_color;
 
 const FRAME_W: f32 = 190.0;
 const FRAME_H: f32 = 54.0;
@@ -285,7 +285,7 @@ fn build(commands: &mut Commands, ui: &mut FramesUi, font: &Handle<Font>, run: &
             // The hero: the class icon, name and level, health, and the run's experience.
             root.spawn(panel(LEFT, true)).with_children(|p| {
                 let coords =
-                    crate::glue::art::class_tc(run.class.id).unwrap_or([0.0, 1.0, 0.0, 1.0]);
+                    benilla_app::survivors_host::glue::art::class_tc(run.class.id).unwrap_or([0.0, 1.0, 0.0, 1.0]);
                 p.spawn((
                     Node {
                         width: Val::Px(PORTRAIT),
@@ -511,11 +511,11 @@ fn mark(
     enemies: Query<(&Transform, &Enemy)>,
     cams: Query<(&Camera, &Transform), With<WorldCamera>>,
     anchor_q: (
-        Query<&crate::entities::BoneAttach>,
+        Query<&benilla_app::survivors_host::entities::BoneAttach>,
         Query<&benilla_world::rig_anim::RigPose>,
-        Query<&crate::entities::OverheadFallback>,
+        Query<&benilla_app::survivors_host::entities::OverheadFallback>,
         Query<&GlobalTransform>,
-        Query<(), With<crate::entities::mount::MountChild>>,
+        Query<(), With<benilla_app::survivors_host::entities::mount::MountChild>>,
     ),
     mut marker: Query<(&mut Node, &mut Visibility)>,
 ) {
@@ -528,7 +528,7 @@ fn mark(
         let (tf, enemy) = enemies.get(e).ok()?;
         let (cam, cam_tf) = cams.single().ok()?;
         let viewport = cam.logical_viewport_size()?;
-        let anchor = crate::entities::overhead_anchor(
+        let anchor = benilla_app::survivors_host::entities::overhead_anchor(
             e,
             tf,
             &anchor_q.0,
@@ -539,7 +539,7 @@ fn mark(
         );
         // Over the nameplate (a bar 0.67 above the anchor), and over a boss's name.
         let lift = if enemy.boss { 2.0 } else { 1.3 };
-        crate::ui_pass::project_overlay(
+        benilla_app::survivors_host::ui_pass::project_overlay(
             cam,
             &GlobalTransform::from(*cam_tf),
             anchor + Vec3::Y * lift,

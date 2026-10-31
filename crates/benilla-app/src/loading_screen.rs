@@ -130,7 +130,7 @@ pub(crate) enum TipEdge {
 
 /// Loading-screen state machine (event-raised, readiness-cleared).
 #[derive(Resource, Default)]
-pub(crate) struct LoadingScreen {
+pub struct LoadingScreen {
     active: bool,
     /// A raise from an entry edge holds until the destination snap lands, so the old location's
     /// residency cannot clear a screen raised for the new one (at world entry the login vista is
@@ -168,7 +168,7 @@ pub(crate) struct LoadingScreen {
 
 impl LoadingScreen {
     /// Whether the opaque cover is up; the world camera renders under it, never behind the glue.
-    pub(crate) fn covering(&self) -> bool {
+    pub fn covering(&self) -> bool {
         self.active
     }
 

@@ -20,7 +20,7 @@ use widgets::{ArtSwap, GlueBtn, GlueCaption, GlueDisabled, OutlineCopy};
 /// A screen orders its own refresh `.before(GlueVisuals)` so the flags and captions it writes
 /// render the same frame.
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
-pub(crate) struct GlueVisuals;
+pub struct GlueVisuals;
 
 /// The shared glue infrastructure: the ADD material pipeline, [`GlueArt`], the GlueStrings table
 /// and the one [`dialog::GlueDialog`]. Registered before any screen plugin.
@@ -60,10 +60,10 @@ impl Plugin for GluePlugin {
 /// The glue widgets whose click landed this frame, the reference's `OnClick`. Ask this, never
 /// `Interaction::Pressed`: pressing is not clicking. Rebuilt every frame in `PreUpdate`.
 #[derive(Resource, Default)]
-pub(crate) struct GlueClicks(EntityHashSet);
+pub struct GlueClicks(EntityHashSet);
 
 impl GlueClicks {
-    pub(crate) fn hit(&self, widget: Entity) -> bool {
+    pub fn hit(&self, widget: Entity) -> bool {
         self.0.contains(&widget)
     }
 }

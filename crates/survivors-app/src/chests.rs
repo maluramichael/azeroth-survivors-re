@@ -40,7 +40,7 @@ pub(super) fn plugin(app: &mut App) {
             .chain()
             .after(WorldStage::Input)
             .run_if(in_state(Phase::Playing))
-            .run_if(|l: Res<crate::loading_screen::LoadingScreen>| !l.covering()),
+            .run_if(|l: Res<benilla_app::survivors_host::loading_screen::LoadingScreen>| !l.covering()),
     );
 }
 
@@ -135,7 +135,7 @@ fn open_chests(
     mut rng: ResMut<Rng>,
     hero: Query<(Entity, &Transform), With<Hero>>,
     mut chests: Query<(Entity, &Transform, &mut Chest)>,
-    spells: Option<Res<crate::ui_action::Spells>>,
+    spells: Option<Res<benilla_app::survivors_host::ui_action::Spells>>,
     mut fx: Fx,
     mut chat: MessageWriter<ChatLine>,
 ) {
