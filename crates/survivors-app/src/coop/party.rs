@@ -41,8 +41,102 @@ pub(super) fn plugin(app: &mut App) {
             Update,
             show.run_if(in_run).run_if(|role: Res<NetRole>| *role != NetRole::Solo),
         )
-        .add_systems(OnEnter(Phase::Menu), teardown)
-        .add_systems(OnEnter(Phase::GameOver), teardown);
+        .init_resource::<ResultsUi>()
+        .add_systems(OnEnter(Phase::Menu), (teardown, drop_results))
+        .add_systems(OnEnter(Phase::GameOver), teardown)
+        .add_systems(
+            Update,
+            results
+                .run_if(in_state(Phase::GameOver))
+                .run_if(|role: Res<NetRole>| *role != NetRole::Solo),
+        );
+}
+
+/// The party's lines on the results screen, once built.
+#[derive(Resource, Default)]
+struct ResultsUi(Option<Entity>);
+
+fn drop_results(mut commands: Commands, mut ui: ResMut<ResultsUi>) {
+    if let Some(root) = ui.0.take() {
+        commands.entity(root).try_despawn();
+    }
+}
+
+/// One hero's line on the results: name, class, damage dealt, and whether it lay at the end.
+fn result_line(hero: &NetHero, vitals: &NetVitals) -> String {
+    let class = data::CLASSES
+        .iter()
+        .find(|c| c.id == hero.class_id)
+        .map_or("", |c| c.name);
+    let fell = if vitals.dead { "   (fell)" } else { "" };
+    format!(
+        "{}   {}   {} damage{}",
+        hero.name,
+        class,
+        crate::hud::compact(vitals.damage),
+        fell
+    )
+}
+
+/// The results screen of a party run lists every hero, by player number, on the left.
+fn results(
+    mut commands: Commands,
+    mut ui: ResMut<ResultsUi>,
+    font: Option<Res<HudFont>>,
+    heroes: Query<(&NetHero, &NetVitals)>,
+) {
+    if ui.0.is_some() {
+        return;
+    }
+    let Some(font) = font else { return };
+    let mut all: Vec<(&NetHero, &NetVitals)> = heroes.iter().collect();
+    if all.len() < 2 {
+        return;
+    }
+    all.sort_by_key(|(h, _)| h.player);
+    let root = commands
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                left: Val::Px(40.0),
+                top: Val::Percent(38.0),
+                flex_direction: FlexDirection::Column,
+                row_gap: Val::Px(6.0),
+                padding: UiRect::all(Val::Px(12.0)),
+                border_radius: BorderRadius::all(Val::Px(6.0)),
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.6)),
+            GlobalZIndex(Z + 100),
+        ))
+        .with_children(|col| {
+            col.spawn((
+                Text::new("The party"),
+                TextFont {
+                    font: font.0.clone(),
+                    font_size: 18.0,
+                    ..default()
+                },
+                TextColor(GOLD_TONE),
+            ));
+            for (hero, vitals) in &all {
+                col.spawn((
+                    Text::new(result_line(hero, vitals)),
+                    TextFont {
+                        font: font.0.clone(),
+                        font_size: 14.0,
+                        ..default()
+                    },
+                    TextColor(if vitals.dead {
+                        Color::srgb(0.7, 0.7, 0.7)
+                    } else {
+                        Color::WHITE
+                    }),
+                ));
+            }
+        })
+        .id();
+    ui.0 = Some(root);
 }
 
 /// The phases that put the HUD on screen.

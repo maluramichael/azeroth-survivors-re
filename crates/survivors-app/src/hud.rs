@@ -1512,6 +1512,7 @@ pub(super) fn refresh_hud(
     mut xp_fill: Query<&mut Node, With<XpFill>>,
     rows: Query<(Entity, Has<AbilityRow>), Or<(With<AbilityRow>, With<PassiveRow>)>>,
     mut sweeps: ResMut<Assets<SweepUiMaterial>>,
+    role: Res<super::NetRole>,
     mut last_version: Local<Option<u32>>,
 ) {
     let need = data::xp_to_next(run.level);
@@ -1568,6 +1569,10 @@ pub(super) fn refresh_hud(
     }
     let title = if run.won {
         "Victory!"
+    } else if run.host_gone {
+        "The host is gone"
+    } else if *role != super::NetRole::Solo {
+        "Your party has fallen"
     } else {
         "You have fallen"
     }
@@ -1944,6 +1949,8 @@ pub(super) fn refresh_results(
     let secs = run.elapsed as u32;
     let stats_line = if run.won {
         selection.map_def().victory
+    } else if run.host_gone {
+        "The run ended when the host left. What you earned is yours."
     } else {
         "The horde was too much this time."
     };
@@ -2017,7 +2024,7 @@ pub(super) fn grouped(v: u64) -> String {
 }
 
 /// 12.3k, 4.5M.
-fn compact(v: f64) -> String {
+pub(super) fn compact(v: f64) -> String {
     if v >= 1e6 {
         format!("{:.1}M", v / 1e6)
     } else if v >= 1e4 {

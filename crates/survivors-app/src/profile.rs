@@ -320,6 +320,7 @@ pub(super) fn load_profile(mut commands: Commands) {
 /// bank) and save.
 pub(super) fn award_run(
     run: Res<Run>,
+    role: Res<super::NetRole>,
     selection: Res<Selection>,
     mut profile: ResMut<Profile>,
     mut chat: MessageWriter<ChatLine>,
@@ -338,6 +339,10 @@ pub(super) fn award_run(
     profile.save();
     if run.won {
         chat.write(ChatLine::system("Victory!"));
+    } else if run.host_gone {
+        chat.write(ChatLine::system("The host left; the run is over."));
+    } else if *role != super::NetRole::Solo {
+        chat.write(ChatLine::text(ChatKind::Combat, "Your party has fallen."));
     } else {
         chat.write(ChatLine::text(ChatKind::Combat, "You have died."));
     }

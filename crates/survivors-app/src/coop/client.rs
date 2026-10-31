@@ -121,6 +121,12 @@ fn step_aside(
 /// Leave the session: the link goes, every replicated entity goes, and this machine is a solo
 /// player at its menu again.
 pub(super) fn leave(world: &mut World) {
+    leave_to(world, false);
+}
+
+/// [`leave`]; with `results`, a run under way ends in its results first (the host is gone, the
+/// guest keeps what it earned), and the menu follows from there.
+fn leave_to(world: &mut World, results: bool) {
     use bevy_replicon_renet2::netcode::NetcodeClientTransport;
     use bevy_replicon_renet2::renet2::RenetClient;
     if let Some(mut client) = world.remove_resource::<RenetClient>() {
@@ -137,7 +143,11 @@ pub(super) fn leave(world: &mut World) {
     *world.resource_mut::<NetRole>() = NetRole::Solo;
     world.resource_mut::<Session>().player = None;
     world.resource_mut::<hud::Offer>().log = None;
-    if *world.resource::<State<Phase>>().get() != Phase::Menu {
+    let phase = *world.resource::<State<Phase>>().get();
+    if results && matches!(phase, Phase::Playing | Phase::LevelUp | Phase::Paused) {
+        world.resource_mut::<Run>().host_gone = true;
+        world.resource_mut::<NextState<Phase>>().set(Phase::GameOver);
+    } else if phase != Phase::Menu {
         world.resource_mut::<NextState<Phase>>().set(Phase::Menu);
     }
 }
@@ -145,12 +155,17 @@ pub(super) fn leave(world: &mut World) {
 /// The link ending: refused, never reached or lost. Said in the chat and on the co-op window's
 /// status line (the chat is not drawn at the menu), then [`leave`].
 fn say_and_leave(commands: &mut Commands, chat: &mut MessageWriter<ChatLine>, text: &str) {
+    say_and_go(commands, chat, text, false);
+}
+
+/// [`say_and_leave`]; with `results`, a run under way shows its results first ([`leave_to`]).
+fn say_and_go(commands: &mut Commands, chat: &mut MessageWriter<ChatLine>, text: &str, results: bool) {
     info!("survivors: co-op: {text}");
     chat.write(ChatLine::system(text));
     let status = text.to_string();
     commands.queue(move |world: &mut World| {
         world.resource_mut::<Session>().status = status;
-        leave(world);
+        leave_to(world, results);
     });
 }
 
@@ -173,8 +188,10 @@ fn watch_link(
             } else {
                 "Could not reach the host. Check the address, and that the host's firewall lets UDP port 37373 in."
             };
+            // A host lost mid-run: this guest still sees its results and keeps what it earned.
+            let results = seen.1;
             *seen = (false, false);
-            say_and_leave(&mut commands, &mut chat, text);
+            say_and_go(&mut commands, &mut chat, text, results);
         }
         ClientState::Disconnected => {}
     }

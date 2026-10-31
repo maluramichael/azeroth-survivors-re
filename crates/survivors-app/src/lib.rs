@@ -380,6 +380,8 @@ pub(crate) struct Run {
     /// Every hero of the run is down (alone: this one): the horde, the drops and the clock stop
     /// until the results. Kept by [`hero::hero_vitals`].
     pub party_down: bool,
+    /// A co-op guest's run ended because its host went away ([`coop`]), not by a fall.
+    pub host_gone: bool,
     /// This machine's hero.
     pub me: HeroState,
 }
@@ -455,6 +457,7 @@ impl Default for Run {
             difficulty: difficulty::Difficulty::default(),
             party: 1,
             party_down: false,
+            host_gone: false,
             me: HeroState::default(),
         }
     }
