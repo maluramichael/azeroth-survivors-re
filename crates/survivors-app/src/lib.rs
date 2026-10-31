@@ -12,6 +12,8 @@ mod cards;
 mod charpanel;
 mod chests;
 mod chatlog;
+#[cfg(all(feature = "coop", not(target_arch = "wasm32")))]
+mod coop;
 mod collection;
 mod data;
 mod difficulty;
@@ -63,6 +65,8 @@ pub(crate) struct SurvivorsPlugin;
 impl Plugin for SurvivorsPlugin {
     fn build(&self, app: &mut App) {
         // Present before `OnEnter(InWorld)`, where the UI lifecycle decides not to load FrameXML.
+        #[cfg(all(feature = "coop", not(target_arch = "wasm32")))]
+        coop::plugin(app);
         app.insert_resource(benilla_app::survivors_host::run_mode::CaptureMode)
             .add_plugins((grade::plugin, kit::plugin, dmgmeter::plugin))
             .add_plugins((collection::plugin, loottables::plugin, achievements::plugin))

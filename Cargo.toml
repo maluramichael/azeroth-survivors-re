@@ -17,6 +17,15 @@ too_many_arguments = "allow"
 
 [workspace.dependencies]
 anyhow = "1.0.102"
+# Survivors co-op (`survivors-app`'s `coop` feature): replicon 0.40 and its renet2 0.17 transport are
+# the newest pair on Bevy 0.18; both move to Bevy 0.19 in their next majors.
+bevy_replicon = { version = "=0.40.4", default-features = false, features = ["client", "server"] }
+bevy_replicon_renet2 = { version = "=0.17.0", default-features = false, features = [
+    "renet_serde",
+    "client",
+    "server",
+    "native_transport",
+] }
 # bevy's default features spelled out without `audio`: `2d`, `3d` and `ui` each pull `bevy_audio`
 # and `vorbis`, and the client mixes through kira. Add a feature by name, never `2d`/`3d`/`ui`; a
 # plugin that takes bevy with its default features brings the audio stack back too.

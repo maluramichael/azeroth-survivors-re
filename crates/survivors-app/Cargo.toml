@@ -15,8 +15,9 @@ doctest = false
 [features]
 # Same seam as benilla-app: `dev` on by default so `cargo check -p survivors-app` shares the
 # `benilla-app` artifact with the launcher; the entry crates take this crate without defaults and
-# forward `dev`.
-default = ["dev"]
+# forward `dev`. `coop` is on by default for the same reason; the launcher forwards it, the browser
+# entry does not (no UDP there).
+default = ["dev", "coop"]
 dev = [
     "benilla-app/dev",
     "benilla-assets/dev",
@@ -26,6 +27,8 @@ dev = [
 # Browser render backend, forwarded from `wenilla`.
 webgl2 = ["benilla-app/webgl2"]
 webgpu = ["benilla-app/webgpu"]
+# Direct-IP co-op over UDP ([`coop`]), native only.
+coop = ["dep:bevy_replicon", "dep:bevy_replicon_renet2"]
 
 [dependencies]
 # `default-features = false` on the benilla crates: a path dependency resolves its own defaults,
@@ -45,3 +48,5 @@ serde = { version = "1", features = ["derive"] }
 toml = "0.8"
 # The run seed's wall-clock read; std's `SystemTime` panics in a browser.
 web-time = "1"
+bevy_replicon = { workspace = true, optional = true }
+bevy_replicon_renet2 = { workspace = true, optional = true }
