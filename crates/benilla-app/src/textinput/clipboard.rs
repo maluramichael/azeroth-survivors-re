@@ -81,7 +81,7 @@ mod wl {
 /// the window handle, not `WAYLAND_DISPLAY`, because `smithay-clipboard` needs winit's own
 /// connection.
 #[cfg(all(unix, not(any(target_os = "macos", target_os = "android"))))]
-pub(crate) fn wayland_display(handle: Option<&RawHandleWrapper>) -> Option<*mut c_void> {
+pub fn wayland_display(handle: Option<&RawHandleWrapper>) -> Option<*mut c_void> {
     match handle?.get_display_handle() {
         raw_window_handle::RawDisplayHandle::Wayland(wl) => Some(wl.display.as_ptr()),
         _ => None,
@@ -90,7 +90,7 @@ pub(crate) fn wayland_display(handle: Option<&RawHandleWrapper>) -> Option<*mut 
 
 /// Off the Wayland-capable platforms the backend is always [`arboard`].
 #[cfg(not(all(unix, not(any(target_os = "macos", target_os = "android")))))]
-pub(crate) fn wayland_display(_handle: Option<&RawHandleWrapper>) -> Option<*mut c_void> {
+pub fn wayland_display(_handle: Option<&RawHandleWrapper>) -> Option<*mut c_void> {
     None
 }
 
@@ -127,7 +127,7 @@ fn session_note() -> String {
 
 /// The process-wide handle on the OS pasteboard, a `NonSend` resource held for the whole run.
 #[derive(Default)]
-pub(crate) struct HostClipboard {
+pub struct HostClipboard {
     backend: Option<Box<dyn Pasteboard>>,
     /// Opening is attempted once; a failure is not retried on every keystroke.
     opened: bool,
@@ -163,7 +163,7 @@ impl HostClipboard {
     }
 
     /// The pasteboard's text, or `None` if it is empty, non-text or unavailable.
-    pub(crate) fn read(&mut self, wl_display: Option<*mut c_void>) -> Option<String> {
+    pub fn read(&mut self, wl_display: Option<*mut c_void>) -> Option<String> {
         self.ensure(wl_display);
         let backend = self.backend.as_mut()?;
         match backend.read_text() {

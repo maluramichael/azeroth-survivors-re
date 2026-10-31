@@ -93,6 +93,10 @@ pub mod sound {
     pub use crate::sound::glue::GlueSound;
 }
 
+pub mod textinput {
+    pub use crate::textinput::clipboard::{wayland_display, HostClipboard};
+}
+
 pub mod ui_action {
     pub use crate::ui_action::Spells;
 }
