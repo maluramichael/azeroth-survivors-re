@@ -1,5 +1,5 @@
-//! The options window: sound volumes and the display mode (windowed or fullscreen), opened from
-//! the pick screen and the pause screen, and kept across restarts.
+//! The options window: sound volumes, the camera and the display mode (windowed or fullscreen),
+//! opened from the pick screen and the pause screen, and kept across restarts.
 //!
 //! Nothing here keeps its own settings. The sliders write the engine's CVars (`MasterVolume`,
 //! `MusicVolume`, `SoundVolume`, `AmbienceVolume`, `MasterSoundEffects`), whose observers move
@@ -11,6 +11,10 @@
 //! "Fullscreen" is the borderless window over the monitor, the only fullscreen benilla has
 //! ([`crate::video`]: macOS has no exclusive mode and `WindowMode::Fullscreen` panics on a live
 //! change). The browser build cannot change the window, so it has no display row.
+//!
+//! The camera part (mouse sensitivity, inverted pitch, shake) is not a CVar: it writes
+//! [`Prefs`], which [`super::hero`] reads, and saves `survivors-prefs.toml` when a value is
+//! final (a toggle pressed, a slider let go).
 
 use bevy::prelude::*;
 use bevy::ui::{FocusPolicy, RelativeCursorPosition};
@@ -18,6 +22,7 @@ use bevy::ui::{FocusPolicy, RelativeCursorPosition};
 use super::hud::{HudFont, MenuRoot, PauseRoot};
 use super::kit::{self, KitButton, KitCaption, KitStyle};
 use super::menu::MenuBuilt;
+use super::prefs::Prefs;
 use super::Phase;
 use benilla_app::survivors_host::cvars::Cvars;
 use benilla_app::survivors_host::glue::GlueVisuals;
@@ -26,6 +31,10 @@ const PANEL_W: f32 = 460.0;
 /// Over the pause screen (430) and the results (440).
 const Z: i32 = 450;
 const TRACK_H: f32 = 18.0;
+/// The mouse sensitivity slider's range and step.
+const SENS_MIN: f32 = 0.25;
+const SENS_MAX: f32 = 2.0;
+const SENS_STEP: f32 = 0.05;
 
 const GROOVE_EDGE: Color = Color::srgb(0.47, 0.37, 0.19);
 const FILL: Color = kit::TITLE;
@@ -92,6 +101,69 @@ impl Volume {
     }
 }
 
+/// One of the window's sliders: a volume (a CVar) or the mouse sensitivity ([`Prefs`]).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Slider {
+    Volume(Volume),
+    Sensitivity,
+}
+
+impl Slider {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Volume(v) => v.label(),
+            Self::Sensitivity => "Mouse sensitivity",
+        }
+    }
+
+    /// Width of the name column; the longer name needs more room than the volumes'.
+    fn label_width(self) -> f32 {
+        match self {
+            Self::Volume(_) => 76.0,
+            Self::Sensitivity => 128.0,
+        }
+    }
+
+    /// The value in its own unit: `[0, 1]` for a volume, a multiplier for the sensitivity.
+    fn current(self, cvars: &Cvars, prefs: &Prefs) -> f32 {
+        match self {
+            Self::Volume(v) => volume(cvars, v),
+            Self::Sensitivity => prefs.camera_sensitivity.clamp(SENS_MIN, SENS_MAX),
+        }
+    }
+
+    /// Where the thumb sits, `[0, 1]` along the track.
+    fn fraction(self, cvars: &Cvars, prefs: &Prefs) -> f32 {
+        let now = self.current(cvars, prefs);
+        match self {
+            Self::Volume(_) => now,
+            Self::Sensitivity => (now - SENS_MIN) / (SENS_MAX - SENS_MIN),
+        }
+    }
+
+    /// The value a cursor at `t` along the track asks for, in steps (a volume of one percent).
+    fn at(self, t: f32) -> f32 {
+        let t = t.clamp(0.0, 1.0);
+        match self {
+            Self::Volume(_) => (t * 100.0).round() / 100.0,
+            Self::Sensitivity => {
+                let raw = SENS_MIN + t * (SENS_MAX - SENS_MIN);
+                // Rounded to two places again, so the saved number has no float dust.
+                ((raw / SENS_STEP).round() * SENS_STEP * 100.0).round() / 100.0
+            }
+        }
+    }
+
+    /// The readout beside the track.
+    fn readout(self, cvars: &Cvars, prefs: &Prefs) -> String {
+        let now = self.current(cvars, prefs);
+        match self {
+            Self::Volume(_) => format!("{}%", (now * 100.0).round()),
+            Self::Sensitivity => format!("{now:.2}x"),
+        }
+    }
+}
+
 /// A button of the window, on the pick screen or inside it.
 #[derive(Component, Clone, Copy, PartialEq, Eq, Debug)]
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
@@ -99,6 +171,10 @@ enum OptionsAction {
     Close,
     /// The master enable, `MasterSoundEffects`.
     Mute,
+    /// [`Prefs::invert_pitch`].
+    InvertPitch,
+    /// [`Prefs::camera_shake`].
+    CameraShake,
     Windowed,
     Fullscreen,
 }
@@ -107,8 +183,8 @@ enum OptionsAction {
 #[derive(Component, Clone, Copy)]
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 enum Label {
-    /// A slider's percentage.
-    Value(Volume),
+    /// A slider's readout.
+    Value(Slider),
     /// The display mode line.
     Display,
 }
@@ -118,11 +194,11 @@ enum Label {
 struct OptionsPanel;
 /// A slider's hit area; the press and the drag read the cursor off it.
 #[derive(Component)]
-struct Track(Volume);
+struct Track(Slider);
 #[derive(Component)]
-struct Fill(Volume);
+struct Fill(Slider);
 #[derive(Component)]
-struct Thumb(Volume);
+struct Thumb(Slider);
 /// The Options button inside the pause screen.
 #[derive(Component)]
 struct PauseButton;
@@ -223,7 +299,8 @@ fn build(
     }
 }
 
-/// The window: title, the four sliders and the mute button, the display row, and Close.
+/// The window: title, the four sliders and the mute button, the camera part, the display row,
+/// and Close.
 fn panel(commands: &mut Commands, fonts: &kit::KitFonts) -> Entity {
     let px = Val::Px;
     commands
@@ -265,7 +342,7 @@ fn panel(commands: &mut Commands, fonts: &kit::KitFonts) -> Entity {
                     }))
                     .with_children(|rows| {
                         for v in Volume::ALL {
-                            slider_row(rows, fonts, v);
+                            slider_row(rows, fonts, Slider::Volume(v));
                         }
                     });
                 frame
@@ -276,6 +353,38 @@ fn panel(commands: &mut Commands, fonts: &kit::KitFonts) -> Entity {
                     })
                     .with_children(|b| {
                         action_button(b, fonts, OptionsAction::Mute, "Sound: On", 190.0);
+                    });
+
+                frame.spawn((
+                    kit::label(fonts, "Camera"),
+                    Node {
+                        margin: UiRect::top(px(6.0)),
+                        ..default()
+                    },
+                ));
+                frame
+                    .spawn(kit::inset(Node {
+                        width: Val::Percent(100.0),
+                        flex_direction: FlexDirection::Column,
+                        padding: UiRect::axes(px(14.0), px(12.0)),
+                        ..default()
+                    }))
+                    .with_children(|rows| {
+                        slider_row(rows, fonts, Slider::Sensitivity);
+                    });
+                frame
+                    .spawn(Node {
+                        width: Val::Percent(100.0),
+                        justify_content: JustifyContent::SpaceBetween,
+                        ..default()
+                    })
+                    .with_children(|row| {
+                        for (action, caption) in [
+                            (OptionsAction::InvertPitch, "Invert pitch: Off"),
+                            (OptionsAction::CameraShake, "Camera shake: On"),
+                        ] {
+                            action_button(row, fonts, action, caption, 190.0);
+                        }
                     });
 
                 #[cfg(not(target_arch = "wasm32"))]
@@ -351,7 +460,7 @@ fn action_button(
 }
 
 /// One slider's row: its name, a track with a fill and a thumb, and the percentage.
-fn slider_row(parent: &mut ChildSpawnerCommands, fonts: &kit::KitFonts, v: Volume) {
+fn slider_row(parent: &mut ChildSpawnerCommands, fonts: &kit::KitFonts, v: Slider) {
     let px = Val::Px;
     parent
         .spawn(Node {
@@ -364,7 +473,7 @@ fn slider_row(parent: &mut ChildSpawnerCommands, fonts: &kit::KitFonts, v: Volum
             row.spawn((
                 kit::body(fonts, v.label(), 14.0, kit::CREAM),
                 Node {
-                    width: px(76.0),
+                    width: px(v.label_width()),
                     flex_shrink: 0.0,
                     ..default()
                 },
@@ -466,6 +575,7 @@ fn option_clicks(
     actions: Query<(&Interaction, &OptionsAction, &KitButton), Changed<Interaction>>,
     phase: Res<State<Phase>>,
     mut cvars: ResMut<Cvars>,
+    mut prefs: ResMut<Prefs>,
     mut ui: ResMut<OptionsUi>,
 ) {
     let leaving = !matches!(phase.get(), Phase::Menu | Phase::Paused);
@@ -485,6 +595,14 @@ fn option_clicks(
             let on = sound_on(&cvars);
             cvars.set("MasterSoundEffects", if on { "0" } else { "1" });
         }
+        OptionsAction::InvertPitch => {
+            prefs.invert_pitch = !prefs.invert_pitch;
+            prefs.save();
+        }
+        OptionsAction::CameraShake => {
+            prefs.camera_shake = !prefs.camera_shake;
+            prefs.save();
+        }
         OptionsAction::Windowed | OptionsAction::Fullscreen if !off => {
             set_display(&mut cvars, action == OptionsAction::Fullscreen);
         }
@@ -492,33 +610,52 @@ fn option_clicks(
     }
 }
 
-/// A press or a drag on a track sets its volume to where the cursor is, in steps of one percent.
-/// A pressed node stays pressed until the release, so the drag follows outside the track too.
+/// A press or a drag on a track sets its value to where the cursor is, in steps (a volume of one
+/// percent). A pressed node stays pressed until the release, so the drag follows outside the
+/// track too. The sensitivity is saved once the drag has ended, not on every step of it.
 fn drag(
     tracks: Query<(&Track, &Interaction, &RelativeCursorPosition)>,
     mut cvars: ResMut<Cvars>,
+    mut prefs: ResMut<Prefs>,
     ui: Res<OptionsUi>,
+    mut unsaved: Local<bool>,
 ) {
-    if !ui.open {
-        return;
-    }
-    for (Track(v), interaction, cursor) in &tracks {
-        let (Interaction::Pressed, Some(at)) = (interaction, cursor.normalized) else {
-            continue;
-        };
-        let want = ((at.x + 0.5).clamp(0.0, 1.0) * 100.0).round() / 100.0;
-        if (want - volume(&cvars, *v)).abs() > 0.004 {
-            cvars.set(v.cvar(), &want.to_string());
+    let mut held = false;
+    if ui.open {
+        for (Track(slider), interaction, cursor) in &tracks {
+            let (Interaction::Pressed, Some(at)) = (interaction, cursor.normalized) else {
+                continue;
+            };
+            held |= *slider == Slider::Sensitivity;
+            let want = slider.at(at.x + 0.5);
+            if (want - slider.current(&cvars, &prefs)).abs() <= 0.004 {
+                continue;
+            }
+            match *slider {
+                Slider::Volume(v) => {
+                    cvars.set(v.cvar(), &want.to_string());
+                }
+                Slider::Sensitivity => {
+                    prefs.camera_sensitivity = want;
+                    *unsaved = true;
+                }
+            }
         }
+    }
+    // Let go (or the window closed under the cursor): write the file once.
+    if *unsaved && !held {
+        *unsaved = false;
+        prefs.save();
     }
 }
 
-/// Show or hide the window and bring sliders, readouts, the mute caption and the display row up
-/// to the CVars.
+/// Show or hide the window and bring sliders, readouts, the toggle captions and the display row up
+/// to the CVars and the prefs.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn refresh(
     ui: Res<OptionsUi>,
     cvars: Res<Cvars>,
+    prefs: Res<Prefs>,
     mut panel: Query<&mut Node, (With<OptionsPanel>, Without<Fill>, Without<Thumb>)>,
     mut fills: Query<(&Fill, &mut Node), Without<Thumb>>,
     mut thumbs: Query<(&Thumb, &mut Node), Without<Fill>>,
@@ -541,20 +678,20 @@ fn refresh(
         return;
     }
     for (Fill(v), mut node) in &mut fills {
-        let want = Val::Percent(volume(&cvars, *v) * 100.0);
+        let want = Val::Percent(v.fraction(&cvars, &prefs) * 100.0);
         if node.width != want {
             node.width = want;
         }
     }
     for (Thumb(v), mut node) in &mut thumbs {
-        let want = Val::Percent(volume(&cvars, *v) * 100.0);
+        let want = Val::Percent(v.fraction(&cvars, &prefs) * 100.0);
         if node.left != want {
             node.left = want;
         }
     }
     for (label, mut text) in &mut labels {
         let want = match *label {
-            Label::Value(v) => format!("{}%", (volume(&cvars, v) * 100.0).round()),
+            Label::Value(v) => v.readout(&cvars, &prefs),
             Label::Display => display_note(&cvars),
         };
         if text.0 != want {
@@ -573,6 +710,24 @@ fn refresh(
                     "Sound: On"
                 } else {
                     "Sound: Off"
+                }),
+            ),
+            OptionsAction::InvertPitch => (
+                false,
+                prefs.invert_pitch,
+                Some(if prefs.invert_pitch {
+                    "Invert pitch: On"
+                } else {
+                    "Invert pitch: Off"
+                }),
+            ),
+            OptionsAction::CameraShake => (
+                false,
+                prefs.camera_shake,
+                Some(if prefs.camera_shake {
+                    "Camera shake: On"
+                } else {
+                    "Camera shake: Off"
                 }),
             ),
             OptionsAction::Windowed => (launch_owned, !fullscreen, None),
