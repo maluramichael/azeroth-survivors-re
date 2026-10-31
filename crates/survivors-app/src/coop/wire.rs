@@ -100,6 +100,10 @@ pub(crate) struct NetAuras {
     pub spells: [u32; 8],
 }
 
+/// The party's quests as the tracker shows them, on the [`NetRun`] entity.
+#[derive(Component, Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+pub(crate) struct NetQuests(pub Vec<crate::quests::QuestLine>);
+
 /// What the party shares, on one entity of its own: the clock, the kills, the level and its
 /// experience, the banner.
 #[derive(Component, Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
@@ -260,6 +264,26 @@ pub(crate) struct StartRun {
 #[derive(Message, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct EndRun;
 
+/// A word for one guest about its own hero ([`crate::Mail`]).
+#[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub(crate) enum NetMail {
+    Banner(String),
+    Line(String),
+    Gold(u32),
+    Item(crate::items::Item),
+}
+
+impl NetMail {
+    pub fn from_mail(m: crate::Mail) -> Self {
+        match m {
+            crate::Mail::Banner(t) => Self::Banner(t),
+            crate::Mail::Line(t) => Self::Line(t),
+            crate::Mail::Gold(g) => Self::Gold(g),
+            crate::Mail::Item(i) => Self::Item(i),
+        }
+    }
+}
+
 /// The host's run is over: won, or its hero fell.
 #[derive(Message, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct RunOver {
@@ -389,6 +413,7 @@ pub(super) fn protocol(app: &mut App) {
         .replicate::<NetBuild>()
         .replicate::<NetAuras>()
         .replicate::<NetRun>()
+        .replicate::<NetQuests>()
         .add_client_message::<Hello>(Channel::Ordered)
         .add_client_message::<MoveInput>(Channel::Unreliable)
         .add_client_message::<CardAction>(Channel::Ordered)
@@ -399,6 +424,7 @@ pub(super) fn protocol(app: &mut App) {
         .add_server_message::<StartRun>(Channel::Ordered)
         .add_server_message::<EndRun>(Channel::Ordered)
         .add_server_message::<RunOver>(Channel::Ordered)
+        .add_server_message::<NetMail>(Channel::Ordered)
         .add_mapped_server_message::<FxBatch>(Channel::Ordered);
 }
 

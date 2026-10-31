@@ -10,10 +10,10 @@ use super::abilities::Hit;
 use super::chatlog::ChatLine;
 use super::enemies::{Dying, Elite, Enemy, Gem};
 use super::finale::Reaper;
-use super::hero::Hero;
+use super::hero::{Hero, Peer};
 use super::items::drop_boost;
 use super::units::{flat, Fx, Marks};
-use super::{Rng, Run, RunEntity};
+use super::{GuestMail, HeroState, Mail, Rng, Run, RunEntity};
 
 /// Shards lying on the ground at once; past it the dead drop none.
 const MAX_SHARDS: usize = 4;
@@ -244,20 +244,35 @@ fn collect_shards(
     time: Res<Time>,
     mut run: ResMut<Run>,
     hero: Query<(Entity, &Transform), With<Hero>>,
-    mut shards: Query<(Entity, &Transform, &mut Shard)>,
+    peers: Query<(Entity, &Transform, &HeroState), (With<Peer>, Without<Hero>)>,
+    mut shards: Query<(Entity, &Transform, &mut Shard), (Without<Hero>, Without<Peer>)>,
     mut gems: Query<&mut Gem>,
-    mut foes: Query<(Entity, &Transform, &mut Enemy, &mut Marks, Has<Reaper>)>,
+    mut foes: Query<
+        (Entity, &Transform, &mut Enemy, &mut Marks, Has<Reaper>),
+        (Without<Hero>, Without<Peer>, Without<Shard>),
+    >,
     mut hits: MessageWriter<Hit>,
     mut fx: Fx,
     mut chat: MessageWriter<ChatLine>,
+    mut mail: ResMut<GuestMail>,
 ) {
-    let Ok((hero_e, htf)) = hero.single() else {
+    let Ok((local_e, local_tf)) = hero.single() else {
         return;
     };
-    if run.dead_t.is_some() {
+    // Every standing hero may take a shard, a co-op guest's too; it works around that hero.
+    let mut takers: Vec<(Entity, Vec3, bool)> = Vec::new();
+    if run.dead_t.is_none() {
+        takers.push((local_e, local_tf.translation, true));
+    }
+    takers.extend(
+        peers
+            .iter()
+            .filter(|(_, _, s)| s.dead_t.is_none())
+            .map(|(p, tf, _)| (p, tf.translation, false)),
+    );
+    if takers.is_empty() {
         return;
     }
-    let hpos = htf.translation;
     let dt = time.delta_secs();
     for (e, tf, mut shard) in &mut shards {
         shard.life -= dt;
@@ -265,9 +280,13 @@ fn collect_shards(
             commands.entity(e).despawn();
             continue;
         }
-        if flat(tf.translation - hpos).length() > PICKUP_RADIUS {
+        let Some(&(hero_e, hpos, local)) = takers
+            .iter()
+            .find(|(_, at, _)| flat(tf.translation - *at).length() <= PICKUP_RADIUS)
+        else {
             continue;
-        }
+        };
+        let by = (!local).then_some(hero_e);
         commands.entity(e).despawn();
         let kind = shard.kind;
         let mut reached: Vec<Entity> = Vec::new();
@@ -290,7 +309,10 @@ fn collect_shards(
                     } else {
                         enemy.hp + 1.0
                     };
-                    hits.write(Hit::direct(foe, damage, false));
+                    hits.write(Hit {
+                        by,
+                        ..Hit::direct(foe, damage, false)
+                    });
                     reached.push(foe);
                 }
                 fx.cast(hero_e, SPELL_INTERVENTION, &reached, None);
@@ -313,12 +335,14 @@ fn collect_shards(
                 fx.cast(hero_e, SPELL_NOVA, &reached, None);
             }
         }
-        run.banner = Some((format!("{}!", kind.name()), 2.5));
-        chat.write(ChatLine::system(format!(
-            "You use {}. {}",
-            kind.name(),
-            kind.effect()
-        )));
+        let line = format!("You use {}. {}", kind.name(), kind.effect());
+        if local {
+            run.banner = Some((format!("{}!", kind.name()), 2.5));
+            chat.write(ChatLine::system(line));
+        } else {
+            mail.0.push((hero_e, Mail::Banner(format!("{}!", kind.name()))));
+            mail.0.push((hero_e, Mail::Line(line)));
+        }
     }
 }
 

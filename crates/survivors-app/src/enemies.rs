@@ -896,6 +896,7 @@ pub(super) fn collect_gems(
     mut gems: Query<(Entity, &mut Transform, &mut Gem)>,
     fallen: Query<&Enemy, Added<Dying>>,
     mut chat: MessageWriter<ChatLine>,
+    mut mail: ResMut<super::GuestMail>,
     mut sweep: Local<f32>,
 ) {
     let Ok(h) = hero.single() else { return };
@@ -939,7 +940,6 @@ pub(super) fn collect_gems(
                 None => Some(&mut run.me),
                 Some(p) => peers.get_mut(p).ok().map(|(_, _, s)| s.into_inner()),
             };
-            let local = who.is_none();
             match g.kind {
                 // Experience is the party's, whoever picks it up.
                 GemKind::Xp(xp) => {
@@ -959,8 +959,11 @@ pub(super) fn collect_gems(
                         let worth = gold as f32 * greed;
                         let looted = worth.floor() as u32 + u32::from(rng.f32() < worth.fract());
                         c.gold += looted;
-                        if local {
-                            chat.write(ChatLine::Gold(looted));
+                        match who {
+                            None => {
+                                chat.write(ChatLine::Gold(looted));
+                            }
+                            Some(p) => mail.0.push((p, super::Mail::Gold(looted))),
                         }
                     }
                 }

@@ -103,6 +103,7 @@ impl Plugin for SurvivorsPlugin {
             .init_resource::<hero::AimPoint>()
             .init_resource::<abilities::PendingHits>()
             .init_resource::<NetRole>()
+            .init_resource::<GuestMail>()
             .init_resource::<enemies::Spawner>()
             .init_resource::<hud::Offer>()
             .init_resource::<cards::PendingPick>()
@@ -315,6 +316,26 @@ pub(crate) enum NetRole {
 #[derive(Resource, Default)]
 pub(crate) struct CoopUi {
     pub open: bool,
+}
+
+/// Words for one co-op guest about its own hero, kept on the host until [`coop`] sends them: a
+/// chest it opened, an item or a shard it picked up, a quest's reward. Keyed by the guest's
+/// puppet. Nothing is kept alone, where there are no puppets.
+#[derive(Resource, Default)]
+pub(crate) struct GuestMail(pub Vec<(Entity, Mail)>);
+
+/// One word for a guest ([`GuestMail`]).
+#[cfg_attr(not(all(feature = "coop", not(target_arch = "wasm32"))), allow(dead_code))]
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum Mail {
+    /// A centre-screen banner.
+    Banner(String),
+    /// A system line in the chat.
+    Line(String),
+    /// Gold looted, for the chat's money line.
+    Gold(u32),
+    /// An item picked up: the guest wears it as it would alone.
+    Item(items::Item),
 }
 
 /// Run condition: the run's world moves. Alone only while playing; in a co-op party also behind

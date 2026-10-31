@@ -10,7 +10,7 @@ use bevy_replicon::prelude::{ClientState, ClientSystems, Remote};
 use super::{Session, ASIDE_YARDS};
 use super::smooth;
 use super::wire::{
-    CardAction, EndRun, FxBatch, Loadout, NetPicked, Hello, Look, MoveInput, NetAuras, NetBuild, NetEnemy, NetFx, NetHero, NetPos,
+    CardAction, EndRun, FxBatch, Loadout, NetMail, NetPicked, NetQuests, Hello, Look, MoveInput, NetAuras, NetBuild, NetEnemy, NetFx, NetHero, NetPos,
     NetRun, NetVitals, Refused, RunOver, StartRun, Welcome,
 };
 use crate::chatlog::ChatLine;
@@ -65,6 +65,7 @@ pub(super) fn plugin(app: &mut App) {
             sync_auras,
             sync_me,
             sync_run,
+            read_mail,
             play_fx,
         )
             .chain()
@@ -611,14 +612,18 @@ fn sync_run(
     mut run: ResMut<Run>,
     phase: Res<State<Phase>>,
     mut next: ResMut<NextState<Phase>>,
-    shared: Query<Ref<NetRun>>,
+    shared: Query<(Ref<NetRun>, Ref<NetQuests>)>,
+    mut quests: ResMut<crate::quests::QuestLog>,
     mut shown: Local<Option<u32>>,
 ) {
     if *phase.get() == Phase::Menu {
         *shown = None;
         return;
     }
-    let Ok(net) = shared.single() else { return };
+    let Ok((net, lines)) = shared.single() else { return };
+    if lines.is_changed() || quests.shown != lines.0 {
+        quests.shown = lines.0.clone();
+    }
     if !net.is_changed() {
         return;
     }
@@ -646,6 +651,30 @@ fn sync_run(
     if was < crate::mobility::LEARN_LEVEL && run.level >= crate::mobility::LEARN_LEVEL {
         if let Some(m) = crate::mobility::for_class(run.class.id) {
             run.banner = Some((format!("You have learned {}! Press F.", m.name), 4.0));
+        }
+    }
+}
+
+/// What the host says of this guest's own hero: a chest opened, an item or a shard picked up, a
+/// quest paid. An item is worn as if picked up here.
+fn read_mail(
+    mut mail: MessageReader<NetMail>,
+    mut run: ResMut<Run>,
+    mut chat: MessageWriter<ChatLine>,
+    mut items: MessageWriter<crate::items::GotItem>,
+) {
+    for m in mail.read() {
+        match m.clone() {
+            NetMail::Banner(text) => run.banner = Some((text, 3.0)),
+            NetMail::Line(text) => {
+                chat.write(ChatLine::system(text));
+            }
+            NetMail::Gold(gold) => {
+                chat.write(ChatLine::Gold(gold));
+            }
+            NetMail::Item(item) => {
+                items.write(crate::items::GotItem(item));
+            }
         }
     }
 }

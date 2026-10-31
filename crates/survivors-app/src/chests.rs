@@ -10,11 +10,11 @@ use super::chatlog::{ChatKind, ChatLine};
 use super::data;
 use super::enemies::{Dying, Elite, Enemy};
 use super::finale::Finale;
-use super::hero::Hero;
+use super::hero::{Hero, Peer};
 use super::items::drop_boost;
 use super::pickups::Beacons;
 use super::units::{self, flat, Fx};
-use super::{Rng, Run};
+use super::{GuestMail, HeroState, Mail, Rng, Run};
 
 /// `GameObjectDisplayInfo` 259, `TreasureChest01.mdx`.
 const CHEST_DISPLAY: u32 = 259;
@@ -145,23 +145,25 @@ fn drop_chests(
     }
 }
 
-/// Walking over a chest opens it.
-#[allow(clippy::too_many_arguments)]
+/// Walking over a chest opens it: for whichever standing hero reaches it, a co-op guest's too.
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn open_chests(
     mut commands: Commands,
     time: Res<Time>,
     mut run: ResMut<Run>,
     mut rng: ResMut<Rng>,
     hero: Query<(Entity, &Transform), With<Hero>>,
-    mut chests: Query<(Entity, &Transform, &mut Chest)>,
+    mut peers: Query<(Entity, &Transform, &mut HeroState), (With<Peer>, Without<Hero>)>,
+    mut chests: Query<(Entity, &Transform, &mut Chest), (Without<Hero>, Without<Peer>)>,
     spells: Option<Res<benilla_app::survivors_host::ui_action::Spells>>,
     mut fx: Fx,
     mut chat: MessageWriter<ChatLine>,
+    mut mail: ResMut<GuestMail>,
 ) {
     let Ok((hero_e, htf)) = hero.single() else {
         return;
     };
-    if run.dead_t.is_some() {
+    if run.dead_t.is_some() && peers.iter().all(|(_, _, s)| s.dead_t.is_some()) {
         return;
     }
     let dt = time.delta_secs();
@@ -171,53 +173,87 @@ fn open_chests(
             commands.entity(e).despawn();
             continue;
         }
-        if flat(tf.translation - htf.translation).length() > OPEN_RADIUS {
-            continue;
+        let near = |at: Vec3| flat(tf.translation - at).length() <= OPEN_RADIUS;
+        let opened = if run.dead_t.is_none() && near(htf.translation) {
+            let opened = open(&mut run.me, chest.ranks, &mut rng, spells.as_deref());
+            if let Some(gold) = opened.gold {
+                chat.write(ChatLine::Gold(gold));
+            }
+            let secs = if opened.gold.is_some() { 2.5 } else { 3.0 };
+            run.banner = Some((opened.banner.clone(), secs));
+            chat.write(ChatLine::text(ChatKind::System, opened.line.clone()));
+            Some(hero_e)
+        } else if let Some((p, _, mut state)) = peers
+            .iter_mut()
+            .find(|(_, ptf, s)| s.dead_t.is_none() && near(ptf.translation))
+        {
+            let opened = open(&mut state, chest.ranks, &mut rng, spells.as_deref());
+            if let Some(gold) = opened.gold {
+                mail.0.push((p, Mail::Gold(gold)));
+            }
+            mail.0.push((p, Mail::Banner(opened.banner)));
+            mail.0.push((p, Mail::Line(opened.line)));
+            Some(p)
+        } else {
+            None
+        };
+        if let Some(by) = opened {
+            commands.entity(e).despawn();
+            fx.impact(by, SPELL_OPEN);
         }
-        commands.entity(e).despawn();
-        fx.impact(hero_e, SPELL_OPEN);
+    }
+}
 
-        let abilities: Vec<u8> = run.abilities.iter().map(|o| o.level).collect();
-        let passives: Vec<u8> = run.passives.iter().map(|&(_, l)| l).collect();
-        let drawn = draw(candidates(&abilities, &passives), chest.ranks, |n| {
-            rng.index(n)
-        });
-        if drawn.is_empty() {
-            run.gold += CONSOLATION_GOLD;
-            run.hp = run.stats().max_hp;
-            chat.write(ChatLine::Gold(CONSOLATION_GOLD));
-            chat.write(ChatLine::system(
-                "You open the chest. Everything is at its best already; you are made whole.",
-            ));
-            run.banner = Some(("Chest opened".into(), 2.5));
-            continue;
-        }
-        let mut names = Vec::with_capacity(drawn.len());
-        for t in drawn {
-            match t {
-                Target::Ability(i) => {
-                    let o = &mut run.abilities[i];
-                    o.level += 1;
-                    names.push(super::hud::spell_name(
-                        spells.as_deref(),
-                        o.def.spell,
-                        o.def.key,
-                    ));
-                }
-                Target::Passive(i) => {
-                    let (p, level) = &mut run.passives[i];
-                    *level += 1;
-                    names.push(p.name.to_string());
-                }
+/// What a chest gave, in words.
+struct Opened {
+    banner: String,
+    line: String,
+    /// The consolation, when nothing was left to rank up.
+    gold: Option<u32>,
+}
+
+/// `hero` opens a chest of `ranks`: that many ranks drawn among its spells and passives, or gold
+/// and a full heal when everything is at its top.
+fn open(
+    hero: &mut HeroState,
+    ranks: usize,
+    rng: &mut Rng,
+    spells: Option<&benilla_app::survivors_host::ui_action::Spells>,
+) -> Opened {
+    let abilities: Vec<u8> = hero.abilities.iter().map(|o| o.level).collect();
+    let passives: Vec<u8> = hero.passives.iter().map(|&(_, l)| l).collect();
+    let drawn = draw(candidates(&abilities, &passives), ranks, |n| rng.index(n));
+    if drawn.is_empty() {
+        hero.gold += CONSOLATION_GOLD;
+        hero.hp = hero.stats().max_hp;
+        return Opened {
+            banner: "Chest opened".into(),
+            line: "You open the chest. Everything is at its best already; you are made whole."
+                .into(),
+            gold: Some(CONSOLATION_GOLD),
+        };
+    }
+    let mut names = Vec::with_capacity(drawn.len());
+    for t in drawn {
+        match t {
+            Target::Ability(i) => {
+                let o = &mut hero.abilities[i];
+                o.level += 1;
+                names.push(super::hud::spell_name(spells, o.def.spell, o.def.key));
+            }
+            Target::Passive(i) => {
+                let (p, level) = &mut hero.passives[i];
+                *level += 1;
+                names.push(p.name.to_string());
             }
         }
-        // The HUD's icon rows rebuild on a new version; the chat window prints each new rank.
-        run.version += 1;
-        run.banner = Some((banner(&names), 3.0));
-        chat.write(ChatLine::text(
-            ChatKind::System,
-            format!("You open the chest: {}.", names.join(", ")),
-        ));
+    }
+    // The HUD's icon rows rebuild on a new version; the chat window prints each new rank.
+    hero.version += 1;
+    Opened {
+        banner: banner(&names),
+        line: format!("You open the chest: {}.", names.join(", ")),
+        gold: None,
     }
 }
 

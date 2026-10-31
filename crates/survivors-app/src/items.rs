@@ -16,12 +16,12 @@ use serde::{Deserialize, Serialize};
 use super::chatlog::{ChatKind, ChatLine};
 use super::enemies::{Dying, Elite, Enemy};
 use super::finale::Finale;
-use super::hero::Hero;
+use super::hero::{Hero, Peer};
 use super::hud::UiArt;
 use super::mods::StatMods;
 use super::pickups::Beacons;
 use super::units::flat;
-use super::{data, Phase, Rng, Run, RunEntity};
+use super::{data, GuestMail, HeroState, Mail, Phase, Rng, Run, RunEntity};
 
 /// Chance a normal kill drops an item, an elite's, and how many items lie on the ground at once.
 pub(super) const GRUNT_CHANCE: f32 = 0.012;
@@ -59,6 +59,8 @@ pub(super) fn plugin(app: &mut App) {
                 .run_if(super::run_on)
                 .run_if(|l: Res<benilla_app::survivors_host::loading_screen::LoadingScreen>| !l.covering()),
         )
+        .add_message::<GotItem>()
+        .add_systems(Update, wear_mailed.run_if(in_run))
         .add_systems(Update, show_strip.run_if(in_run))
         .add_systems(OnEnter(Phase::GameOver), (bank_best, teardown))
         .add_systems(OnEnter(Phase::Menu), (reset, teardown));
@@ -785,20 +787,20 @@ fn drop_items(
 }
 
 /// Walking over an item picks it up, and wears it if it is the best for its slot.
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn collect_items(
     mut commands: Commands,
     time: Res<Time>,
     mut run: ResMut<Run>,
     mut gear: ResMut<Gear>,
     hero: Query<&Transform, With<Hero>>,
-    mut drops: Query<(Entity, &Transform, &mut ItemDrop)>,
+    peers: Query<(Entity, &Transform, &HeroState), (With<Peer>, Without<Hero>)>,
+    mut drops: Query<(Entity, &Transform, &mut ItemDrop), (Without<Hero>, Without<Peer>)>,
     mut profile: Option<ResMut<super::profile::Profile>>,
     mut chat: MessageWriter<ChatLine>,
+    mut mail: ResMut<GuestMail>,
 ) {
     let Ok(h) = hero.single() else { return };
-    if run.dead_t.is_some() {
-        return;
-    }
     let dt = time.delta_secs();
     for (e, tf, mut lying) in &mut drops {
         lying.life -= dt;
@@ -806,17 +808,53 @@ fn collect_items(
             commands.entity(e).despawn();
             continue;
         }
-        if flat(tf.translation - h.translation).length() > PICKUP_RADIUS {
-            continue;
+        let near = |at: Vec3| flat(tf.translation - at).length() <= PICKUP_RADIUS;
+        if run.dead_t.is_none() && near(h.translation) {
+            commands.entity(e).despawn();
+            take(&lying.item, &mut run, &mut gear, profile.as_deref_mut(), &mut chat);
+        } else if let Some((p, ..)) = peers
+            .iter()
+            .find(|(_, ptf, s)| s.dead_t.is_none() && near(ptf.translation))
+        {
+            // A co-op guest's: it wears it on its own machine, which tells the host its gear.
+            commands.entity(e).despawn();
+            mail.0.push((p, Mail::Item(lying.item.clone())));
         }
-        commands.entity(e).despawn();
-        loot_line(&mut chat, &lying.item);
-        if let Some(profile) = profile.as_mut() {
-            profile.collection.insert(lying.item.name.clone());
-        }
-        if gear.wear(lying.item.clone()) {
-            sync(&mut run, &gear);
-        }
+    }
+}
+
+/// An item for this machine's hero: the loot line, the collection book, and worn if it is the
+/// slot's best.
+fn take(
+    item: &Item,
+    run: &mut Run,
+    gear: &mut Gear,
+    profile: Option<&mut super::profile::Profile>,
+    chat: &mut MessageWriter<ChatLine>,
+) {
+    loot_line(chat, item);
+    if let Some(profile) = profile {
+        profile.collection.insert(item.name.clone());
+    }
+    if gear.wear(item.clone()) {
+        sync(run, gear);
+    }
+}
+
+/// An item this machine's hero picked up in another's world: a co-op guest's, sent by its host.
+#[derive(Message, Clone, Debug)]
+pub(crate) struct GotItem(pub Item);
+
+/// Items the host sent are taken as if picked up here.
+fn wear_mailed(
+    mut got: MessageReader<GotItem>,
+    mut run: ResMut<Run>,
+    mut gear: ResMut<Gear>,
+    mut profile: Option<ResMut<super::profile::Profile>>,
+    mut chat: MessageWriter<ChatLine>,
+) {
+    for GotItem(item) in got.read() {
+        take(item, &mut run, &mut gear, profile.as_deref_mut(), &mut chat);
     }
 }
 

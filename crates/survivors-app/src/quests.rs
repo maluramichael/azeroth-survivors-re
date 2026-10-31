@@ -13,10 +13,10 @@ use bevy::prelude::*;
 use super::chatlog::{ChatKind, ChatLine};
 use super::data::{self, EnemyDef};
 use super::enemies::Loot;
-use super::hero::Hero;
+use super::hero::{Hero, Peer};
 use super::hud::{HudFont, GOLD_TONE};
 use super::units::{self, flat};
-use super::{Phase, Rng, Run, Selection};
+use super::{GuestMail, HeroState, Mail, Phase, Rng, Run, Selection};
 
 const QUESTS: usize = 3;
 /// Chance a kill of the quest's creature drops one quest item.
@@ -130,10 +130,37 @@ fn plural(name: &str) -> String {
 }
 
 #[derive(Resource, Default)]
-struct QuestLog {
+pub(crate) struct QuestLog {
     quests: Vec<Quest>,
     /// This run's quests are rolled.
     rolled: bool,
+    /// A co-op guest's view of its host's quests ([`QuestLine`]); the party shares them.
+    pub(crate) shown: Vec<QuestLine>,
+}
+
+/// One quest as the tracker shows it.
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct QuestLine {
+    pub title: String,
+    pub objective: String,
+    pub done: bool,
+}
+
+impl QuestLog {
+    /// The tracker's lines: this machine's quests, or the host's as a guest sees them.
+    pub(crate) fn lines(&self) -> Vec<QuestLine> {
+        if self.quests.is_empty() {
+            return self.shown.clone();
+        }
+        self.quests
+            .iter()
+            .map(|q| QuestLine {
+                title: q.title.clone(),
+                objective: q.objective(),
+                done: q.done,
+            })
+            .collect()
+    }
 }
 
 /// A quest item lying on the ground.
@@ -260,15 +287,21 @@ fn count_kills(
 }
 
 /// Walking over an item picks it up; one whose quest is done, or that has lain too long, goes.
+#[allow(clippy::type_complexity)]
 fn pick_up(
     mut commands: Commands,
     time: Res<Time>,
     mut log: ResMut<QuestLog>,
     hero: Query<&Transform, (With<Hero>, Without<QuestItem>)>,
+    peers: Query<&Transform, (With<Peer>, Without<Hero>, Without<QuestItem>)>,
     mut items: Query<(Entity, &Transform, &mut QuestItem)>,
     mut chat: MessageWriter<ChatLine>,
 ) {
     let Ok(h) = hero.single() else { return };
+    // The party's quests: any hero's walk picks an item up.
+    let walkers: Vec<Vec3> = std::iter::once(h.translation)
+        .chain(peers.iter().map(|t| t.translation))
+        .collect();
     let dt = time.delta_secs();
     for (e, tf, mut item) in &mut items {
         item.age += dt;
@@ -280,7 +313,10 @@ fn pick_up(
             commands.entity(e).despawn();
             continue;
         }
-        if flat(tf.translation - h.translation).length() > PICKUP {
+        if walkers
+            .iter()
+            .all(|w| flat(tf.translation - *w).length() > PICKUP)
+        {
             continue;
         }
         q.add(1);
@@ -293,8 +329,10 @@ fn pick_up(
 fn settle(
     mut log: ResMut<QuestLog>,
     mut run: ResMut<Run>,
+    mut peers: Query<(Entity, &mut HeroState), With<Peer>>,
     mut chat: MessageWriter<ChatLine>,
     mut sound: MessageWriter<benilla_app::survivors_host::sound::GlueSound>,
+    mut mail: ResMut<GuestMail>,
 ) {
     if run.dead_t.is_some() {
         return;
@@ -312,6 +350,12 @@ fn settle(
         let xp = data::xp_to_next(run.level) * q.xp * run.stats().growth;
         run.xp += xp;
         run.gold += q.gold;
+        // Every hero of the party is paid in full.
+        for (p, mut hero) in &mut peers {
+            hero.gold += q.gold;
+            mail.0.push((p, Mail::Line(format!("Quest completed: {}.", q.title))));
+            mail.0.push((p, Mail::Gold(q.gold)));
+        }
         chat.write(ChatLine::system(format!("Quest completed: {}.", q.title)));
         chat.write(ChatLine::Xp(xp));
         chat.write(ChatLine::Gold(q.gold));
@@ -422,15 +466,16 @@ fn show(
     let ui = &mut *ui;
     if ui.root.is_none() {
         if let Some(font) = font {
-            if !log.quests.is_empty() {
+            if !log.lines().is_empty() {
                 // Seated from the next frame on, once its nodes exist.
                 build(&mut commands, ui, &font.0);
             }
         }
         return;
     }
+    let lines = log.lines();
     for (i, &(block, title, goal)) in ui.slots.iter().enumerate() {
-        let quest = log.quests.get(i);
+        let quest = lines.get(i);
         if let Ok(mut node) = nodes.get_mut(block) {
             set(
                 &mut node.display,
@@ -448,7 +493,7 @@ fn show(
             q.title.clone()
         };
         let goal_color = if q.done { DONE } else { WHITE };
-        for (entity, value, color) in [(title, name, GOLD_TONE), (goal, q.objective(), goal_color)]
+        for (entity, value, color) in [(title, name, GOLD_TONE), (goal, q.objective.clone(), goal_color)]
         {
             if let Ok((mut text, mut tc)) = texts.get_mut(entity) {
                 set(&mut text.0, value);

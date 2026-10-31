@@ -11,7 +11,7 @@ use bevy_replicon::prelude::*;
 use bevy_replicon::server::server_tick::ServerTick;
 
 use super::wire::{
-    CardAction, EndRun, FxBatch, Loadout, Hello, Look, MoveInput, NetAuras, NetBuild, NetEnemy, NetFx, NetHero,
+    CardAction, EndRun, FxBatch, Loadout, NetMail, NetQuests, Hello, Look, MoveInput, NetAuras, NetBuild, NetEnemy, NetFx, NetHero,
     NetPos, NetRun, NetVitals, Refused, RunOver, StartRun, Welcome,
 };
 use crate::enemies::{self, Elite, Enemy};
@@ -57,6 +57,7 @@ pub(super) fn plugin(app: &mut App) {
                 mirror.run_if(due),
                 mirror_state.run_if(due),
                 send_fx,
+                send_mail,
                 tick.run_if(due),
             )
                 .chain()
@@ -434,7 +435,7 @@ fn keep_run_entity(
     present: Query<(), With<NetRun>>,
 ) {
     if in_run(phase.get()) && present.is_empty() {
-        commands.spawn((NetRun::default(), Replicated, RunEntity));
+        commands.spawn((NetRun::default(), NetQuests::default(), Replicated, RunEntity));
     }
 }
 
@@ -486,7 +487,8 @@ fn mirror_state(
     mut auras: Query<(&Marks, &mut NetAuras)>,
     mut mine: Query<(&mut NetVitals, &mut NetBuild), (With<Hero>, Without<Peer>)>,
     mut puppets: Query<(&HeroState, &mut NetVitals, &mut NetBuild), (With<Peer>, Without<Hero>)>,
-    mut shared: Query<&mut NetRun>,
+    mut shared: Query<(&mut NetRun, &mut NetQuests)>,
+    quests: Res<crate::quests::QuestLog>,
 ) {
     for (en, mut net) in &mut enemies {
         let now = net_enemy(net.def, en, net.elite);
@@ -506,7 +508,8 @@ fn mirror_state(
         vitals.set_if_neq(vitals_of(hero));
         build.set_if_neq(build_of(hero));
     }
-    for mut net in &mut shared {
+    for (mut net, mut lines) in &mut shared {
+        lines.set_if_neq(NetQuests(quests.lines()));
         net.set_if_neq(NetRun {
             elapsed: run.elapsed,
             kills: run.kills,
@@ -566,6 +569,27 @@ fn log_traffic(
                 replicated.iter().count(),
             );
         }
+    }
+}
+
+/// Words for one guest about its own hero, to that guest alone; those for a guest who left go.
+fn send_mail(
+    mut mail: ResMut<crate::GuestMail>,
+    session: Res<Session>,
+    puppets: Query<&Peer>,
+    mut out: MessageWriter<ToClients<NetMail>>,
+) {
+    for (puppet, m) in mail.0.drain(..) {
+        let Ok(peer) = puppets.get(puppet) else {
+            continue;
+        };
+        let Some(guest) = session.guests.iter().find(|g| g.player == peer.player) else {
+            continue;
+        };
+        out.write(ToClients {
+            targets: SendTargets::Single(ClientId::Client(guest.client)),
+            message: NetMail::from_mail(m),
+        });
     }
 }
 
