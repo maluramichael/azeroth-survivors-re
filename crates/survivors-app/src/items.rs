@@ -222,6 +222,21 @@ pub(super) enum Stat {
 }
 
 impl Stat {
+    #[cfg(test)]
+    pub(super) const ALL: [Stat; 11] = [
+        Stat::Might,
+        Stat::Health,
+        Stat::Speed,
+        Stat::Regen,
+        Stat::Haste,
+        Stat::Area,
+        Stat::Magnet,
+        Stat::Growth,
+        Stat::Armor,
+        Stat::Crit,
+        Stat::Greed,
+    ];
+
     /// The stat's name as the collection book prints it.
     pub(super) fn label(self) -> &'static str {
         match self {
@@ -271,6 +286,102 @@ impl Stat {
             Stat::Greed => m.greed += v,
         }
     }
+}
+
+/// What the match in [`suffix`] returns for a pair it has no arm for; the tests keep it unused.
+const NO_SUFFIX: &str = "of the Wanderer";
+
+/// The Classic style suffix for the two stats of an item, in either order: "of the Bear" for
+/// Strength and Stamina in 1.12, here Damage and Health. A pair of one stat gets the plain
+/// single-stat name ("of Strength").
+pub(super) fn suffix(a: Stat, b: Stat) -> &'static str {
+    use Stat::*;
+    let (lo, hi) = if (a as u8) <= (b as u8) { (a, b) } else { (b, a) };
+    match (lo, hi) {
+        (Might, Might) => "of Strength",
+        (Health, Health) => "of Stamina",
+        (Speed, Speed) => "of Swiftness",
+        (Regen, Regen) => "of Spirit",
+        (Haste, Haste) => "of Agility",
+        (Area, Area) => "of Intellect",
+        (Magnet, Magnet) => "of the Magpie",
+        (Growth, Growth) => "of Wisdom",
+        (Armor, Armor) => "of Defense",
+        (Crit, Crit) => "of Precision",
+        (Greed, Greed) => "of Fortune",
+        (Might, Health) => "of the Bear",
+        (Might, Speed) => "of the Charger",
+        (Might, Regen) => "of the Boar",
+        (Might, Haste) => "of the Tiger",
+        (Might, Area) => "of the Gorilla",
+        (Might, Magnet) => "of the Raider",
+        (Might, Growth) => "of the Veteran",
+        (Might, Armor) => "of the Champion",
+        (Might, Crit) => "of Slaying",
+        (Might, Greed) => "of the Mercenary",
+        (Health, Speed) => "of the Stag",
+        (Health, Regen) => "of the Whale",
+        (Health, Haste) => "of the Monkey",
+        (Health, Area) => "of the Eagle",
+        (Health, Magnet) => "of the Badger",
+        (Health, Growth) => "of the Elder",
+        (Health, Armor) => "of the Sentinel",
+        (Health, Crit) => "of the Wolverine",
+        (Health, Greed) => "of the Dwarf",
+        (Speed, Regen) => "of the Gazelle",
+        (Speed, Haste) => "of Speed",
+        (Speed, Area) => "of the Gale",
+        (Speed, Magnet) => "of the Hound",
+        (Speed, Growth) => "of the Pathfinder",
+        (Speed, Armor) => "of the Vanguard",
+        (Speed, Crit) => "of the Cat",
+        (Speed, Greed) => "of the Smuggler",
+        (Regen, Haste) => "of the Wolf",
+        (Regen, Area) => "of the Owl",
+        (Regen, Magnet) => "of the Dove",
+        (Regen, Growth) => "of the Sage",
+        (Regen, Armor) => "of the Warden",
+        (Regen, Crit) => "of the Mongoose",
+        (Regen, Greed) => "of the Hermit",
+        (Haste, Area) => "of the Falcon",
+        (Haste, Magnet) => "of the Raven",
+        (Haste, Growth) => "of the Apprentice",
+        (Haste, Armor) => "of the Fencer",
+        (Haste, Crit) => "of the Hawk",
+        (Haste, Greed) => "of the Rogue",
+        (Area, Magnet) => "of the Web",
+        (Area, Growth) => "of the Scholar",
+        (Area, Armor) => "of the Ward",
+        (Area, Crit) => "of Fiery Wrath",
+        (Area, Greed) => "of the Alchemist",
+        (Magnet, Growth) => "of the Scavenger",
+        (Magnet, Armor) => "of the Tortoise",
+        (Magnet, Crit) => "of the Hunter",
+        (Magnet, Greed) => "of the Pickpocket",
+        (Growth, Armor) => "of the Templar",
+        (Growth, Crit) => "of Frozen Wrath",
+        (Growth, Greed) => "of the Banker",
+        (Armor, Crit) => "of the Duelist",
+        (Armor, Greed) => "of the Miser",
+        (Crit, Greed) => "of the Gambler",
+        _ => NO_SUFFIX,
+    }
+}
+
+/// The name an item is shown under: from Uncommon up the template name gets the suffix of its two
+/// stats ("Rugged Leather Belt of the Bear"). Poor and Common keep the plain name, as in Classic,
+/// and so do named pieces that already carry an "of" or a comma ("Helm of Valor"). The collection
+/// keeps the template name; this is for what the player reads.
+pub(super) fn display_name(item: &Item) -> String {
+    let named = item.name.contains(" of ") || item.name.contains(',');
+    if item.quality < Quality::Uncommon || named {
+        return item.name.clone();
+    }
+    let Some(first) = item.stats.first() else {
+        return item.name.clone();
+    };
+    let second = item.stats.get(1).unwrap_or(first);
+    format!("{} {}", item.name, suffix(first.stat, second.stat))
 }
 
 #[derive(Clone, Copy, PartialEq, Debug, Serialize, Deserialize)]
@@ -558,7 +669,7 @@ fn sync(run: &mut Run, gear: &Gear) {
             .iter()
             .filter_map(|s| {
                 let item = gear.worn[*s as usize].as_ref()?;
-                Some((s.label(), item.name.clone(), item.quality.color()))
+                Some((s.label(), display_name(item), item.quality.color()))
             })
             .collect();
     }
@@ -573,7 +684,7 @@ fn chat_kind(_quality: Quality) -> ChatKind {
 fn loot_line(chat: &mut MessageWriter<ChatLine>, item: &Item) {
     chat.write(ChatLine::text(
         chat_kind(item.quality),
-        format!("You receive loot: [{}].", item.name),
+        format!("You receive loot: [{}].", display_name(item)),
     ));
 }
 
@@ -592,7 +703,7 @@ fn arm(
     if let Some(item) = bank.item.clone() {
         chat.write(ChatLine::text(
             chat_kind(item.quality),
-            format!("You equip your banked [{}].", item.name),
+            format!("You equip your banked [{}].", display_name(&item)),
         ));
         // The banked piece is a find too; the bank is read at Startup, before the profile may
         // exist, so it is recorded here, when the run puts it on.
@@ -720,7 +831,7 @@ fn bank_best(gear: Res<Gear>, mut bank: ResMut<Bank>, mut chat: MessageWriter<Ch
     }
     chat.write(ChatLine::text(
         chat_kind(best.quality),
-        format!("[{}] is kept in your bank.", best.name),
+        format!("[{}] is kept in your bank.", display_name(best)),
     ));
     bank.item = Some(best.clone());
     save_bank(&bank);
@@ -927,5 +1038,70 @@ mod tests {
         assert_eq!(back.item, bank.item);
         let empty: Bank = toml::from_str("").unwrap();
         assert!(empty.item.is_none());
+    }
+
+    #[test]
+    fn the_suffix_ignores_the_order_of_the_pair() {
+        for a in Stat::ALL {
+            for b in Stat::ALL {
+                assert_eq!(suffix(a, b), suffix(b, a), "{a:?} {b:?}");
+            }
+        }
+        assert_eq!(suffix(Stat::Might, Stat::Health), "of the Bear");
+        assert_eq!(suffix(Stat::Health, Stat::Might), "of the Bear");
+    }
+
+    #[test]
+    fn every_pair_has_its_own_suffix() {
+        let mut seen = std::collections::HashSet::new();
+        for a in Stat::ALL {
+            for b in Stat::ALL {
+                let s = suffix(a, b);
+                assert!(s.starts_with("of "), "{a:?} {b:?}: {s}");
+                assert_ne!(s, NO_SUFFIX, "{a:?} {b:?} has no arm");
+                seen.insert(s);
+            }
+        }
+        // Eleven stats make 66 unordered pairs, the eleven doubles among them.
+        assert_eq!(seen.len(), 66);
+    }
+
+    #[test]
+    fn only_uncommon_and_up_carry_the_suffix() {
+        let rolled = |quality| Item {
+            name: "Rugged Leather Belt".into(),
+            slot: Slot::Waist,
+            quality,
+            stats: vec![
+                Roll {
+                    stat: Stat::Might,
+                    value: 0.1,
+                },
+                Roll {
+                    stat: Stat::Health,
+                    value: 0.1,
+                },
+            ],
+        };
+        assert_eq!(display_name(&rolled(Quality::Poor)), "Rugged Leather Belt");
+        assert_eq!(display_name(&rolled(Quality::Common)), "Rugged Leather Belt");
+        for q in [Quality::Uncommon, Quality::Rare, Quality::Epic] {
+            assert_eq!(display_name(&rolled(q)), "Rugged Leather Belt of the Bear");
+        }
+        // The template name stays what the collection keys on.
+        assert_eq!(rolled(Quality::Rare).name, "Rugged Leather Belt");
+    }
+
+    #[test]
+    fn named_pieces_and_single_stat_items_read_sensibly() {
+        let mut helm = item(Slot::Head, Quality::Rare, 4.0, Stat::Crit);
+        helm.name = "Helm of Valor".into();
+        assert_eq!(display_name(&helm), "Helm of Valor");
+        let mut blade = item(Slot::Weapon, Quality::Epic, 6.0, Stat::Might);
+        blade.name = "Thunderfury, Blessed Blade".into();
+        assert_eq!(display_name(&blade), "Thunderfury, Blessed Blade");
+        let mut cloak = item(Slot::Back, Quality::Uncommon, 2.0, Stat::Might);
+        cloak.name = "Hillman's Cloak".into();
+        assert_eq!(display_name(&cloak), "Hillman's Cloak of Strength");
     }
 }
