@@ -159,6 +159,9 @@ impl Run {
             .flatten()
     }
 
+}
+
+impl super::HeroState {
     /// The run speed's multiplier from a haste still running.
     pub(super) fn haste_mult(&self) -> f32 {
         if self.mobile.haste_t > 0.0 {

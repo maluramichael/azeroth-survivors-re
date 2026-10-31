@@ -1025,21 +1025,11 @@ pub(super) fn start_run(run: &mut Run, selection: &mut Selection, profile: &Prof
     selection.stage = selection.map;
     let next_guid = run.next_guid;
     *run = Run {
-        class,
-        race,
         next_guid,
-        meta: profile.bonus(index),
-        talents: profile.talent_bonus(index),
         difficulty: profile.difficulty,
+        me: super::HeroState::new(class, race, profile.bonus(index), profile.talent_bonus(index)),
         ..Run::default()
     };
-    run.abilities.push(Owned {
-        def: data::ability(class.start),
-        level: 1,
-        cd: 0.5,
-    });
-    run.hp = run.stats().max_hp;
-    run.version += 1;
     true
 }
 

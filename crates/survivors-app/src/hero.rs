@@ -688,7 +688,7 @@ pub(super) fn hero_vitals(
         return;
     }
     run.elapsed += dt;
-    let r = &mut *run;
+    let r = &mut run.me;
     for t in [&mut r.shield_t, &mut r.immune_t, &mut r.thorns_t] {
         *t = (*t - dt).max(0.0);
     }

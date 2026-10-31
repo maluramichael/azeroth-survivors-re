@@ -321,15 +321,35 @@ pub(crate) fn simulates(role: Res<NetRole>) -> bool {
     *role != NetRole::Client
 }
 
-/// One run's state.
+/// One run's state: what the party shares, and the local hero's own ([`Run::me`]). The run
+/// derefs to the local hero, so `run.hp` is this machine's hero's health.
 #[derive(Resource)]
 pub(crate) struct Run {
-    pub class: &'static ClassDef,
-    pub race: u8,
     pub elapsed: f32,
     pub kills: u32,
     pub level: u32,
     pub xp: f32,
+    pub pending_levels: u32,
+    pub bosses: u32,
+    pub rings: u32,
+    pub won: bool,
+    pub next_guid: u64,
+    /// A centre-screen announcement and its seconds left.
+    pub banner: Option<(String, f32)>,
+    /// Picked at the pick screen ([`difficulty`]).
+    pub difficulty: difficulty::Difficulty,
+    /// Heroes in the run, this one included: 1 alone, up to 4 in a co-op party. Sizes the horde.
+    pub party: u32,
+    /// This machine's hero.
+    pub me: HeroState,
+}
+
+/// One hero's part of a run. The local hero's is [`Run::me`]; on a co-op host each guest's
+/// puppet carries its own.
+#[derive(Component)]
+pub(crate) struct HeroState {
+    pub class: &'static ClassDef,
+    pub race: u8,
     pub hp: f32,
     pub abilities: Vec<Owned>,
     pub passives: Vec<(&'static PassiveDef, u8)>,
@@ -347,37 +367,57 @@ pub(crate) struct Run {
     pub meta: profile::MetaBonus,
     /// The class mobility's cooldown and running effect.
     mobile: mobility::MobilityState,
-    pub pending_levels: u32,
-    pub bosses: u32,
-    pub rings: u32,
-    pub won: bool,
     /// Seconds since the hero fell, while the death plays out.
     pub dead_t: Option<f32>,
-    pub next_guid: u64,
     pub damage_done: f64,
     /// Bumped whenever abilities or passives change, so the HUD rebuilds the icon rows once.
     pub version: u32,
-    /// A centre-screen announcement and its seconds left.
-    pub banner: Option<(String, f32)>,
     /// The gear worn this run ([`items`]).
     pub gear: mods::StatMods,
     /// The world buffs taken this run ([`worldbuffs`]).
     pub buffs: mods::StatMods,
     /// The character's talents, fixed when the run starts ([`talents`]).
     pub talents: mods::StatMods,
-    /// Picked at the pick screen ([`difficulty`]).
-    pub difficulty: difficulty::Difficulty,
+}
+
+impl std::ops::Deref for Run {
+    type Target = HeroState;
+    fn deref(&self) -> &HeroState {
+        &self.me
+    }
+}
+
+impl std::ops::DerefMut for Run {
+    fn deref_mut(&mut self) -> &mut HeroState {
+        &mut self.me
+    }
 }
 
 impl Default for Run {
     fn default() -> Self {
         Self {
-            class: &data::CLASSES[0],
-            race: 0,
             elapsed: 0.0,
             kills: 0,
             level: 1,
             xp: 0.0,
+            pending_levels: 0,
+            bosses: 0,
+            rings: 0,
+            won: false,
+            next_guid: 1,
+            banner: None,
+            difficulty: difficulty::Difficulty::default(),
+            party: 1,
+            me: HeroState::default(),
+        }
+    }
+}
+
+impl Default for HeroState {
+    fn default() -> Self {
+        Self {
+            class: &data::CLASSES[0],
+            race: 0,
             hp: BASE_HP,
             abilities: Vec::new(),
             passives: Vec::new(),
@@ -392,24 +432,41 @@ impl Default for Run {
             gold: 0,
             meta: profile::MetaBonus::default(),
             mobile: mobility::MobilityState::default(),
-            pending_levels: 0,
-            bosses: 0,
-            rings: 0,
-            won: false,
             dead_t: None,
-            next_guid: 1,
             damage_done: 0.0,
             version: 0,
-            banner: None,
             gear: mods::StatMods::default(),
             buffs: mods::StatMods::default(),
             talents: mods::StatMods::default(),
-            difficulty: difficulty::Difficulty::default(),
         }
     }
 }
 
-impl Run {
+impl HeroState {
+    /// A hero setting out: the class's first ability and full health.
+    pub fn new(
+        class: &'static ClassDef,
+        race: u8,
+        meta: profile::MetaBonus,
+        talents: mods::StatMods,
+    ) -> Self {
+        let mut hero = Self {
+            class,
+            race,
+            meta,
+            talents,
+            ..Self::default()
+        };
+        hero.abilities.push(Owned {
+            def: data::ability(class.start),
+            level: 1,
+            cd: 0.5,
+        });
+        hero.hp = hero.stats().max_hp;
+        hero.version += 1;
+        hero
+    }
+
     pub fn stats(&self) -> Stats {
         let mut s = Stats {
             might: 1.0,
@@ -458,7 +515,9 @@ impl Run {
         }
         s
     }
+}
 
+impl Run {
     pub fn guid(&mut self) -> u64 {
         self.next_guid += 1;
         self.next_guid

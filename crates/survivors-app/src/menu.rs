@@ -1040,8 +1040,11 @@ fn refresh_stats(
         let want = match value {
             StatValue::Health => {
                 let mut run = Run {
-                    class: def,
-                    race,
+                    me: crate::HeroState {
+                        class: def,
+                        race,
+                        ..Default::default()
+                    },
                     ..Run::default()
                 };
                 if let Some(p) = profile {

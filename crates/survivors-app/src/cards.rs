@@ -1004,8 +1004,11 @@ mod tests {
     /// Every spell slot and every passive slot full, everything at its top rank.
     fn capped_run() -> Run {
         let run = Run {
-            abilities: plain_spells(data::MAX_ABILITIES, data::MAX_ABILITY_LEVEL),
-            passives: passives_at(data::MAX_PASSIVES, data::MAX_PASSIVE_LEVEL),
+            me: crate::HeroState {
+                abilities: plain_spells(data::MAX_ABILITIES, data::MAX_ABILITY_LEVEL),
+                passives: passives_at(data::MAX_PASSIVES, data::MAX_PASSIVE_LEVEL),
+                ..Default::default()
+            },
             ..Run::default()
         };
         assert_eq!(run.abilities.len(), data::MAX_ABILITIES);
@@ -1017,7 +1020,10 @@ mod tests {
     fn a_hand_is_never_longer_than_asked_and_never_repeats_a_card() {
         for class in data::CLASSES {
             let mut run = Run {
-                class,
+                me: crate::HeroState {
+                    class,
+                    ..Default::default()
+                },
                 ..Run::default()
             };
             run.abilities.push(Owned {
@@ -1069,8 +1075,11 @@ mod tests {
         passives[1].1 = 2;
         let run = Run {
             level: 5,
-            abilities: spells,
-            passives,
+            me: crate::HeroState {
+                abilities: spells,
+                passives,
+                ..Default::default()
+            },
             ..Run::default()
         };
         let mut rng = Rng(7);
@@ -1090,7 +1099,10 @@ mod tests {
     fn six_spells_stop_the_new_spell_cards() {
         let run = Run {
             level: 5,
-            abilities: plain_spells(data::MAX_ABILITIES, 1),
+            me: crate::HeroState {
+                abilities: plain_spells(data::MAX_ABILITIES, 1),
+                ..Default::default()
+            },
             ..Run::default()
         };
         assert_eq!(run.abilities.len(), data::MAX_ABILITIES);
@@ -1106,8 +1118,11 @@ mod tests {
     fn six_passives_stop_the_new_passive_cards() {
         let run = Run {
             level: 5,
-            abilities: plain_spells(1, 1),
-            passives: passives_at(data::MAX_PASSIVES, 1),
+            me: crate::HeroState {
+                abilities: plain_spells(1, 1),
+                passives: passives_at(data::MAX_PASSIVES, 1),
+                ..Default::default()
+            },
             ..Run::default()
         };
         assert_eq!(run.passives.len(), data::MAX_PASSIVES);
