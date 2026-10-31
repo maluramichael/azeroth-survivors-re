@@ -225,6 +225,21 @@ impl Loadout {
     }
 }
 
+/// The guest's focus ([`crate::focus::Focus::to_byte`]) and the enemy it clicked, if any.
+#[derive(Message, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Aim {
+    pub focus: u8,
+    pub target: Option<Entity>,
+}
+
+impl MapEntities for Aim {
+    fn map_entities<E: EntityMapper>(&mut self, mapper: &mut E) {
+        if let Some(t) = &mut self.target {
+            *t = mapper.get_mapped(*t);
+        }
+    }
+}
+
 /// The guest took a level-up card or skipped a hand.
 #[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub(crate) struct CardAction(pub NetPicked);
@@ -418,6 +433,7 @@ pub(super) fn protocol(app: &mut App) {
         .add_client_message::<MoveInput>(Channel::Unreliable)
         .add_client_message::<CardAction>(Channel::Ordered)
         .add_client_message::<Loadout>(Channel::Ordered)
+        .add_mapped_client_message::<Aim>(Channel::Ordered)
         .add_server_message::<Welcome>(Channel::Ordered)
         .add_server_message::<Refused>(Channel::Ordered)
         .make_message_independent::<Refused>()

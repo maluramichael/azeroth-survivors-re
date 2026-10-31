@@ -73,6 +73,37 @@ impl Focus {
 #[derive(Resource, Default, Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) struct Target(pub(super) Option<Entity>);
 
+/// A co-op guest's focus and clicked target, on its puppet on the host: its spells pick by them
+/// as this machine's hero's pick by [`Focus`] and [`Target`].
+#[cfg_attr(not(all(feature = "coop", not(target_arch = "wasm32"))), allow(dead_code))]
+#[derive(Component, Default, Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) struct PeerAim {
+    pub focus: Focus,
+    pub target: Option<Entity>,
+}
+
+impl Focus {
+    /// As one byte, for the wire.
+    #[cfg_attr(not(all(feature = "coop", not(target_arch = "wasm32"))), allow(dead_code))]
+    pub(crate) fn to_byte(self) -> u8 {
+        match self {
+            Focus::Nearest => 0,
+            Focus::Lowest => 1,
+            Focus::Strongest => 2,
+        }
+    }
+
+    /// From [`Self::to_byte`]; anything else is the nearest.
+    #[cfg_attr(not(all(feature = "coop", not(target_arch = "wasm32"))), allow(dead_code))]
+    pub(crate) fn from_byte(b: u8) -> Self {
+        match b {
+            1 => Focus::Lowest,
+            2 => Focus::Strongest,
+            _ => Focus::Nearest,
+        }
+    }
+}
+
 pub(super) fn plugin(app: &mut App) {
     app.init_resource::<Focus>()
         .init_resource::<Target>()

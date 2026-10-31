@@ -11,7 +11,7 @@ use bevy_replicon::prelude::*;
 use bevy_replicon::server::server_tick::ServerTick;
 
 use super::wire::{
-    CardAction, EndRun, FxBatch, Loadout, NetMail, NetQuests, Hello, Look, MoveInput, NetAuras, NetBuild, NetEnemy, NetFx, NetHero,
+    Aim, CardAction, EndRun, FxBatch, Loadout, NetMail, NetQuests, Hello, Look, MoveInput, NetAuras, NetBuild, NetEnemy, NetFx, NetHero,
     NetPos, NetRun, NetVitals, Refused, RunOver, StartRun, Welcome,
 };
 use crate::enemies::{self, Elite, Enemy};
@@ -40,7 +40,7 @@ pub(super) fn plugin(app: &mut App) {
     app.init_resource::<Pulse>()
         .add_systems(
             PreUpdate,
-            (greet, apply_moves, apply_cards, apply_loadouts)
+            (greet, apply_moves, apply_cards, apply_loadouts, apply_aims)
                 .chain()
                 .after(ServerSystems::Receive)
                 .run_if(hosting),
@@ -666,6 +666,34 @@ fn apply_loadouts(
         for (peer, mut hero) in &mut puppets {
             if peer.player == guest.player {
                 m.message.apply(&mut hero);
+            }
+        }
+    }
+}
+
+/// A guest's focus and clicked target steer its hero's spells here; a target that is no enemy
+/// (or gone) is no target.
+fn apply_aims(
+    mut commands: Commands,
+    mut aims: MessageReader<FromClient<Aim>>,
+    session: Res<Session>,
+    puppets: Query<(Entity, &Peer)>,
+    enemies: Query<(), With<Enemy>>,
+) {
+    for m in aims.read() {
+        let ClientId::Client(client) = m.client_id else {
+            continue;
+        };
+        let Some(guest) = session.guests.iter().find(|g| g.client == client) else {
+            continue;
+        };
+        let target = m.message.target.filter(|t| enemies.contains(*t));
+        for (e, peer) in &puppets {
+            if peer.player == guest.player {
+                commands.entity(e).try_insert(crate::focus::PeerAim {
+                    focus: crate::focus::Focus::from_byte(m.message.focus),
+                    target,
+                });
             }
         }
     }

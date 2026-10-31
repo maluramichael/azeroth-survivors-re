@@ -269,7 +269,10 @@ pub(super) fn cast_abilities(
     target: Res<Target>,
     spells: Option<Res<benilla_app::survivors_host::ui_action::Spells>>,
     hero: Query<(Entity, &Transform), With<Hero>>,
-    mut peers: Query<(Entity, &Transform, &mut HeroState), (With<Peer>, Without<Hero>)>,
+    mut peers: Query<
+        (Entity, &Transform, &mut HeroState, Option<&super::focus::PeerAim>),
+        (With<Peer>, Without<Hero>),
+    >,
     enemies: Query<(Entity, &Transform, &Enemy), (Without<Hero>, Without<Peer>)>,
     mut fx: Fx,
     mut pending: ResMut<PendingHits>,
@@ -304,13 +307,14 @@ pub(super) fn cast_abilities(
         let foes = foes_from(&enemies, htf.translation, target.0);
         cast.cast(me, htf.translation, &mut run.me, &foes, *focus);
     }
-    // A co-op guest's spells are cast here too, at the nearest.
-    for (e, tf, mut state) in &mut peers {
+    // A co-op guest's spells are cast here too, by the focus and target its player chose.
+    for (e, tf, mut state, aim) in &mut peers {
         if state.dead_t.is_some() {
             continue;
         }
-        let foes = foes_from(&enemies, tf.translation, None);
-        cast.cast(e, tf.translation, &mut state, &foes, Focus::Nearest);
+        let aim = aim.copied().unwrap_or_default();
+        let foes = foes_from(&enemies, tf.translation, aim.target);
+        cast.cast(e, tf.translation, &mut state, &foes, aim.focus);
     }
 }
 

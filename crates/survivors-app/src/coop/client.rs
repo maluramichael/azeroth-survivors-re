@@ -10,7 +10,7 @@ use bevy_replicon::prelude::{ClientState, ClientSystems, Remote};
 use super::{Session, ASIDE_YARDS};
 use super::smooth;
 use super::wire::{
-    CardAction, EndRun, FxBatch, Loadout, NetMail, NetPicked, NetQuests, Hello, Look, MoveInput, NetAuras, NetBuild, NetEnemy, NetFx, NetHero, NetPos,
+    Aim, CardAction, EndRun, FxBatch, Loadout, NetMail, NetPicked, NetQuests, Hello, Look, MoveInput, NetAuras, NetBuild, NetEnemy, NetFx, NetHero, NetPos,
     NetRun, NetVitals, Refused, RunOver, StartRun, Welcome,
 };
 use crate::chatlog::ChatLine;
@@ -78,7 +78,7 @@ pub(super) fn plugin(app: &mut App) {
     )
     .add_systems(
         PostUpdate,
-        (send_moves, send_picks, send_loadout)
+        (send_moves, send_picks, send_loadout, send_aim)
             .before(ClientSystems::Send)
             .run_if(resource_equals(NetRole::Client)),
     );
@@ -376,6 +376,33 @@ fn send_loadout(
     if *sent != Some(now) {
         out.write(now);
         *sent = Some(now);
+    }
+}
+
+/// This guest's focus and clicked target, to the host, when they change (and once a second, so a
+/// hero built again on the host learns them too).
+fn send_aim(
+    time: Res<Time<Real>>,
+    phase: Res<State<Phase>>,
+    focus: Res<crate::focus::Focus>,
+    target: Res<crate::focus::Target>,
+    remote: Query<(), With<Remote>>,
+    mut last: Local<(Option<Aim>, f32)>,
+    mut out: MessageWriter<Aim>,
+) {
+    if *phase.get() == Phase::Menu {
+        *last = (None, 0.0);
+        return;
+    }
+    // Only an enemy the host sent can be named to it.
+    let now = Aim {
+        focus: focus.to_byte(),
+        target: target.0.filter(|t| remote.contains(*t)),
+    };
+    last.1 += time.delta_secs();
+    if last.0 != Some(now) || last.1 >= 1.0 {
+        out.write(now);
+        *last = (Some(now), 0.0);
     }
 }
 

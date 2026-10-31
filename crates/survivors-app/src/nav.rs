@@ -103,6 +103,9 @@ pub(super) struct NavGrid {
     /// Bumped whenever a cell flips, so the field notices the mask moved.
     version: u32,
     field: Field,
+    /// A field toward each co-op guest's hero on the host, by its puppet: the horde that goes
+    /// for a guest walks round walls toward it, not toward this machine's hero.
+    others: Vec<(Entity, Field)>,
 }
 
 /// Distance to the hero (tenths of a cell) over a window of the grid.
@@ -376,16 +379,22 @@ impl NavGrid {
     /// farthest of the next few cells downhill that `from` can see. `None` when the field has no
     /// value there (off its window, unreachable, or the hero's own cell), where the caller heads
     /// straight for the hero.
+    #[cfg(test)]
     pub fn flow(&self, from: Vec3) -> Option<Vec3> {
-        self.field.source?;
+        self.flow_in(&self.field, from)
+    }
+
+    /// [`Self::flow`] along `field`.
+    fn flow_in(&self, field: &Field, from: Vec3) -> Option<Vec3> {
+        field.source?;
         let mut at = self.cell(from);
-        if self.is_solid(at) || self.field.dist(at)? == 0 {
+        if self.is_solid(at) || field.dist(at)? == 0 {
             return None;
         }
         let mut path = [IVec2::ZERO; LOOKAHEAD];
         let mut n = 0;
         while n < LOOKAHEAD {
-            let Some(next) = self.downhill(at) else { break };
+            let Some(next) = self.downhill(field, at) else { break };
             path[n] = next;
             n += 1;
             at = next;
@@ -400,16 +409,16 @@ impl NavGrid {
         None
     }
 
-    /// The neighbour of `c` the field falls fastest toward.
-    fn downhill(&self, c: IVec2) -> Option<IVec2> {
-        let mut best_d = self.field.dist(c)?;
+    /// The neighbour of `c` `field` falls fastest toward.
+    fn downhill(&self, field: &Field, c: IVec2) -> Option<IVec2> {
+        let mut best_d = field.dist(c)?;
         let mut best = None;
         for (dx, dz, _) in NEIGHBOURS {
             let n = c + IVec2::new(dx, dz);
             if !self.passable(c, n) {
                 continue;
             }
-            if let Some(d) = self.field.dist(n) {
+            if let Some(d) = field.dist(n) {
                 if d < best_d {
                     best_d = d;
                     best = Some(n);
@@ -422,7 +431,17 @@ impl NavGrid {
     /// The unit direction (ground plane) a walker at `from` should take to reach `to`: out of the
     /// wall when it stands in one, straight when it sees the target, else along the flow field,
     /// and straight again when the field has no value.
+    #[cfg(test)]
     pub fn chase(&self, from: Vec3, to: Vec3) -> Vec3 {
+        self.chase_hero(from, to, None)
+    }
+
+    /// [`Self::chase`] toward a hero: this machine's (`None`) or a co-op guest's by its puppet,
+    /// along that hero's own field when there is one.
+    pub fn chase_hero(&self, from: Vec3, to: Vec3, who: Option<Entity>) -> Vec3 {
+        let field = who
+            .and_then(|w| self.others.iter().find(|(e, _)| *e == w))
+            .map_or(&self.field, |(_, f)| f);
         let straight = flat(to - from).normalize_or_zero();
         if self.solid.is_empty() {
             return straight;
@@ -437,7 +456,34 @@ impl NavGrid {
         if self.line_clear(from, to) {
             return straight;
         }
-        self.flow(from).unwrap_or(straight)
+        self.flow_in(field, from).unwrap_or(straight)
+    }
+
+    /// The guests' fields follow their heroes as the main one follows this machine's; a hero gone
+    /// takes its field with it.
+    fn track_others(&mut self, heroes: &[(Entity, Vec3)], dt: f32) {
+        self.others.retain(|(e, _)| heroes.iter().any(|(h, _)| h == e));
+        for &(e, at) in heroes {
+            let i = match self.others.iter().position(|(o, _)| *o == e) {
+                Some(i) => i,
+                None => {
+                    self.others.push((e, Field::default()));
+                    self.others.len() - 1
+                }
+            };
+            self.others[i].1.age += dt;
+            if self.solid.is_empty() {
+                continue;
+            }
+            let c = self.cell(at);
+            let f = &self.others[i].1;
+            let stale = f.source.is_none() || c != f.hero || self.version != f.version;
+            if stale && f.age >= FLOW_EVERY {
+                let mut f = std::mem::take(&mut self.others[i].1);
+                self.fill(&mut f, c);
+                self.others[i].1 = f;
+            }
+        }
     }
 
     /// Rebuilds the field when the hero changed cell or the mask moved, at most every
@@ -460,6 +506,12 @@ impl NavGrid {
     /// bucket queue over eight neighbours with no corner cutting.
     fn rebuild_field(&mut self, hero: IVec2) {
         let mut f = std::mem::take(&mut self.field);
+        self.fill(&mut f, hero);
+        self.field = f;
+    }
+
+    /// `f` made the distance field from `hero` (a grid cell).
+    fn fill(&self, f: &mut Field, hero: IVec2) {
         f.source = None;
         f.hero = hero;
         f.version = self.version;
@@ -517,7 +569,6 @@ impl NavGrid {
             }
             f.source = Some(src);
         }
-        self.field = f;
     }
 }
 
@@ -703,10 +754,20 @@ fn scan_world(
     }
 }
 
-/// Keeps the flow field on the hero.
-fn track_hero(time: Res<Time>, hero: Query<&Transform, With<Hero>>, mut grid: ResMut<NavGrid>) {
+/// Keeps the flow field on the hero, and one on each co-op guest's hero on the host.
+fn track_hero(
+    time: Res<Time>,
+    hero: Query<&Transform, With<Hero>>,
+    peers: Query<(Entity, &Transform), (With<super::hero::Peer>, Without<Hero>)>,
+    mut grid: ResMut<NavGrid>,
+) {
     let Ok(h) = hero.single() else { return };
-    grid.track(h.translation, time.delta_secs());
+    let dt = time.delta_secs();
+    grid.track(h.translation, dt);
+    let others: Vec<(Entity, Vec3)> = peers.iter().map(|(e, t)| (e, t.translation)).collect();
+    if !others.is_empty() || !grid.others.is_empty() {
+        grid.track_others(&others, dt);
+    }
 }
 
 pub(super) fn plugin(app: &mut App) {
@@ -900,6 +961,27 @@ mod tests {
             steps += 1;
         }
         assert!(steps < 1000, "never arrived, stuck at {p:?}");
+    }
+
+    #[test]
+    fn a_guest_far_side_of_a_wall_is_chased_along_its_own_field() {
+        let mut g = grid(60, 60);
+        // A wall with its only gap at the top; this machine's hero on the near side, by the
+        // walker, the guest on the far side.
+        wall(&mut g, 30, 0, 50);
+        let mine = at(15.5, 5.5);
+        let guest = at(45.5, 10.5);
+        let p = at(20.5, 10.5);
+        g.track(mine, 1.0);
+        let puppet = Entity::from_raw_u32(7).unwrap();
+        g.track_others(&[(puppet, guest)], 1.0);
+        assert!(g.others[0].1.source.is_some());
+        // Toward the guest the walker heads up the wall to the gap, not into it.
+        let d = g.chase_hero(p, guest, Some(puppet));
+        assert!(d.z > 0.1, "{d:?}");
+        // The guest leaves: its field goes.
+        g.track_others(&[], 1.0);
+        assert!(g.others.is_empty());
     }
 
     #[test]

@@ -232,6 +232,7 @@ pub(crate) fn picked(choice: Choice, hero: &HeroState) -> Option<Picked> {
 /// The choice `picked` names for `hero`, if the hero may take it now: a spell of its class it has
 /// no slot or rank left for, a passive it has maxed, an evolution whose recipe does not hold, are
 /// all refused. A skip is no choice.
+#[cfg_attr(not(all(feature = "coop", not(target_arch = "wasm32"))), allow(dead_code))]
 pub(crate) fn resolve(hero: &HeroState, picked: Picked) -> Option<Choice> {
     match picked {
         Picked::NewAbility(key) => {

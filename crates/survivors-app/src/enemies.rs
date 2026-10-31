@@ -672,7 +672,7 @@ pub(super) fn move_enemies(
             let dir = if e.fear_t > 0.0 {
                 -to_hero.normalize_or_zero()
             } else {
-                nav.chase(pos, hpos)
+                nav.chase_hero(pos, hpos, (!quarry.local).then_some(quarry.e))
             };
             if !contact || e.fear_t > 0.0 {
                 speed = e.speed * e.slow;
