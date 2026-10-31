@@ -723,8 +723,48 @@ pub(super) fn tick_areas(
     }
 }
 
+/// Camera trauma a crit on an elite or a boss adds, and the level above which a further one adds
+/// none, so a hail of them does not pin the shake at its limit.
+const CRIT_TRAUMA: f32 = 0.08;
+const CRIT_TRAUMA_CAP: f32 = 0.3;
+/// Camera trauma the death of a boss and of an elite add.
+const BOSS_DEATH_TRAUMA: f32 = 0.5;
+const ELITE_DEATH_TRAUMA: f32 = 0.15;
+
+/// Whether a hit of this kind of ability shoves its target. Ground areas, totems, auras, orbits
+/// and damage over time land every second or so on a whole crowd, which would only make it
+/// vibrate.
+fn knocks(kind: Kind) -> bool {
+    matches!(
+        kind,
+        Kind::Bolt | Kind::Strike | Kind::Melee | Kind::Nova | Kind::Cone | Kind::Chain
+    )
+}
+
+/// Camera trauma a landed hit adds: a crit on an elite or a boss, while the shake is still below
+/// [`CRIT_TRAUMA_CAP`].
+fn crit_trauma(crit: bool, heavy: bool, current: f32) -> f32 {
+    if crit && heavy && current < CRIT_TRAUMA_CAP {
+        CRIT_TRAUMA
+    } else {
+        0.0
+    }
+}
+
+/// Camera trauma a kill adds: the fall of a boss or an elite is felt.
+fn death_trauma(boss: bool, elite: bool) -> f32 {
+    if boss {
+        BOSS_DEATH_TRAUMA
+    } else if elite {
+        ELITE_DEATH_TRAUMA
+    } else {
+        0.0
+    }
+}
+
 /// Land every hit due: damage and its number, the over-time part, crowd control, the marks, and
-/// death with its loot.
+/// death with its loot. A direct blow also knocks its target back from the hero, and the heavy
+/// moments shake the camera.
 pub(super) fn apply_hits(
     mut commands: Commands,
     time: Res<Time>,
@@ -744,9 +784,13 @@ pub(super) fn apply_hits(
     mut fields: MessageWriter<FieldChanged>,
     mut chat: MessageWriter<super::chatlog::ChatLine>,
     mut meter: ResMut<DamageDone>,
+    mut shake: ResMut<super::prefs::Shake>,
+    hero: Query<&Transform, (With<Hero>, Without<Enemy>)>,
+    elites: Query<(), With<enemies::Elite>>,
 ) {
     let dt = time.delta_secs();
     let now = run.elapsed;
+    let hero_at = hero.single().ok().map(|t| t.translation);
     let mut due: Vec<Hit> = incoming.read().cloned().collect();
     pending.0.retain(|(t, h)| {
         if *t <= now {
@@ -820,6 +864,15 @@ pub(super) fn apply_hits(
             run.damage_done += f64::from(dmg);
             meter.add(h.source, dmg);
             fx.number(e, dmg, h.crit, h.color);
+            let elite = elites.contains(e);
+            let jolt = crit_trauma(h.crit, en.boss || elite, shake.trauma);
+            shake.add(jolt);
+            if h.source.is_some_and(|d| knocks(d.kind)) {
+                let away = hero_at.map_or(Vec3::ZERO, |p| flat(tf.translation - p));
+                let push = enemies::knock_impulse(h.crit, elite, en.boss);
+                en.knock = (en.knock + away.normalize_or_zero() * push)
+                    .clamp_length_max(enemies::KNOCK_MAX);
+            }
             if let Effect::Drain(frac) = h.effect {
                 let max = run.stats().max_hp;
                 run.hp = (run.hp + dmg * frac).min(max);
@@ -857,6 +910,7 @@ pub(super) fn apply_hits(
         }
         if en.hp <= 0.0 {
             kill(&mut commands, &mut run, e, tf.translation, &mut en);
+            shake.add(death_trauma(en.boss, elites.contains(e)));
             units::kill_unit(&mut store);
             marks.clear();
         }
@@ -885,6 +939,7 @@ pub(super) fn apply_hits(
             fx.number(e, dealt, false, COLOR_SPELL);
             if en.hp <= 0.0 {
                 kill(&mut commands, &mut run, e, tf.translation, &mut en);
+                shake.add(death_trauma(en.boss, elites.contains(e)));
                 units::kill_unit(&mut store);
                 marks.clear();
                 marks.flush(e, guid.0, &mut store, &mut fields);
@@ -972,5 +1027,44 @@ mod tests {
         let mut far = foe(11.0, 1.0, 1.0, false);
         far.radius = 1.5;
         assert_eq!(pick(&[far], 10.0, 1, Focus::Lowest).len(), 1);
+    }
+
+    #[test]
+    fn only_direct_blows_knock() {
+        for kind in [
+            Kind::Bolt,
+            Kind::Strike,
+            Kind::Melee,
+            Kind::Nova,
+            Kind::Cone,
+            Kind::Chain,
+        ] {
+            assert!(knocks(kind), "{kind:?}");
+        }
+        for kind in [
+            Kind::Ground,
+            Kind::GroundSelf,
+            Kind::Totem,
+            Kind::Aura,
+            Kind::Orbit,
+            Kind::Dot,
+        ] {
+            assert!(!knocks(kind), "{kind:?}");
+        }
+    }
+
+    #[test]
+    fn heavy_crits_shake_until_the_cap() {
+        assert_eq!(crit_trauma(true, true, 0.0), CRIT_TRAUMA);
+        assert_eq!(crit_trauma(true, true, CRIT_TRAUMA_CAP), 0.0);
+        assert_eq!(crit_trauma(true, false, 0.0), 0.0);
+        assert_eq!(crit_trauma(false, true, 0.0), 0.0);
+    }
+
+    #[test]
+    fn bosses_shake_harder_in_death_than_elites() {
+        assert!(death_trauma(true, false) > death_trauma(false, true));
+        assert!(death_trauma(false, true) > 0.0);
+        assert_eq!(death_trauma(false, false), 0.0);
     }
 }

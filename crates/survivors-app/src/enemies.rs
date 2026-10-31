@@ -36,6 +36,9 @@ pub(super) struct Enemy {
     pub weaken: f32,
     pub weaken_t: f32,
     pub dots: Vec<Dot>,
+    /// Horizontal knock-back velocity in yards per second, set by a hit and decayed by
+    /// [`move_enemies`].
+    pub knock: Vec3,
     pub dead: bool,
 }
 
@@ -193,6 +196,7 @@ pub(super) fn spawn_enemy(
             weaken: 1.0,
             weaken_t: 0.0,
             dots: Vec::new(),
+            knock: Vec3::ZERO,
             dead: false,
         },
         marks,
@@ -322,6 +326,50 @@ pub(super) fn spawn_enemies(
     }
 }
 
+/// Knock-back speed in yards per second a hit gives its target: a plain hit, a crit, and the
+/// shares an elite and a boss keep of it.
+const KNOCK_HIT: f32 = 3.0;
+const KNOCK_CRIT: f32 = 5.0;
+const KNOCK_ELITE: f32 = 0.3;
+/// Knock-back dies off by this rate per second, exponentially: a hit moves its target about half
+/// a yard in all.
+const KNOCK_DECAY: f32 = 10.0;
+/// The most knock speed hits may pile up on one enemy.
+pub(super) const KNOCK_MAX: f32 = 8.0;
+/// Trauma the camera takes per share of max health a swing takes off the hero, and the least
+/// and most one swing gives, so a nibble barely moves it and no blow shakes it to the limit.
+const HURT_TRAUMA_PER_HP: f32 = 3.0;
+const HURT_TRAUMA_MIN: f32 = 0.05;
+const HURT_TRAUMA_MAX: f32 = 0.4;
+
+/// The knock-back speed a landed hit gives, in yards per second; a boss takes none.
+pub(super) fn knock_impulse(crit: bool, elite: bool, boss: bool) -> f32 {
+    if boss {
+        return 0.0;
+    }
+    let base = if crit { KNOCK_CRIT } else { KNOCK_HIT };
+    if elite {
+        base * KNOCK_ELITE
+    } else {
+        base
+    }
+}
+
+/// `knock` after `dt` seconds of decay.
+fn decay_knock(knock: Vec3, dt: f32) -> Vec3 {
+    let k = knock * (-KNOCK_DECAY * dt).exp();
+    if k.length_squared() < 0.01 {
+        Vec3::ZERO
+    } else {
+        k
+    }
+}
+
+/// Camera trauma for a swing that took `taken` health off a hero of `max_hp`.
+fn hurt_trauma(taken: f32, max_hp: f32) -> f32 {
+    (taken / max_hp.max(1.0) * HURT_TRAUMA_PER_HP).clamp(HURT_TRAUMA_MIN, HURT_TRAUMA_MAX)
+}
+
 /// The chase: at the hero, straight in the open and round trees and buildings by the nav grid's
 /// flow field, never into a blocked cell, pushed apart from each other, stopped by crowd control,
 /// and swinging when in reach.
@@ -329,6 +377,7 @@ pub(super) fn spawn_enemies(
 pub(super) fn move_enemies(
     time: Res<Time>,
     mut run: ResMut<Run>,
+    mut shake: ResMut<super::prefs::Shake>,
     nav: Res<NavGrid>,
     probe: SpawnProbe,
     world: WorldPoint,
@@ -454,7 +503,12 @@ pub(super) fn move_enemies(
         }
         let shove = push.get(&ent).copied().unwrap_or_default();
         // The walk and the shove both stop at a blocked cell, sliding along it.
-        let mut next = nav.step(pos, pos + step * dt + shove * (dt * 8.0).min(0.5));
+        // A hit's knock-back rides on top of the walk and runs down within a moment.
+        e.knock = decay_knock(e.knock, dt);
+        let mut next = nav.step(
+            pos,
+            pos + step * dt + shove * (dt * 8.0).min(0.5) + e.knock * dt,
+        );
         next = ground(&world, next, pos.y);
         tf.translation = next;
         if speed > 0.0 {
@@ -478,6 +532,7 @@ pub(super) fn move_enemies(
             fx.swing(ent, hero_e, taken);
             if taken > 0.0 {
                 fx.number(hero_e, taken, false, COLOR_HURT);
+                shake.add(hurt_trauma(taken, run.stats().max_hp));
             }
             if run.thorns_t > 0.0 {
                 hits.write(Hit::direct(ent, run.thorns * run.stats().might, false));
@@ -705,5 +760,58 @@ pub(super) fn still_gems(
     }
     for mut drive in &mut drives {
         drive.set_paused(true);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn crits_knock_harder_than_plain_hits() {
+        assert!(knock_impulse(true, false, false) > knock_impulse(false, false, false));
+        assert!((3.0..=5.0).contains(&knock_impulse(false, false, false)));
+        assert!((3.0..=5.0).contains(&knock_impulse(true, false, false)));
+    }
+
+    #[test]
+    fn elites_barely_move_and_bosses_not_at_all() {
+        let plain = knock_impulse(false, false, false);
+        assert!(knock_impulse(false, true, false) < plain * 0.5);
+        assert!(knock_impulse(false, true, false) > 0.0);
+        assert_eq!(knock_impulse(true, true, true), 0.0);
+        assert_eq!(knock_impulse(false, false, true), 0.0);
+    }
+
+    #[test]
+    fn knock_decays_to_rest() {
+        let k = Vec3::new(4.0, 0.0, 0.0);
+        let one = decay_knock(k, 0.1);
+        assert!(one.x > 0.0 && one.x < k.x * 0.5);
+        let mut k = k;
+        for _ in 0..60 {
+            k = decay_knock(k, 1.0 / 60.0);
+        }
+        assert_eq!(k, Vec3::ZERO);
+    }
+
+    #[test]
+    fn the_knock_covers_about_half_a_yard() {
+        let mut k = Vec3::new(5.0, 0.0, 0.0);
+        let mut moved = 0.0;
+        for _ in 0..600 {
+            moved += k.x / 600.0;
+            k = decay_knock(k, 1.0 / 600.0);
+        }
+        // The integral of v0 * e^(-10 t) is v0 / 10.
+        assert!((moved - 0.5).abs() < 0.1, "{moved}");
+    }
+
+    #[test]
+    fn hurt_trauma_scales_with_the_share_of_health_and_stays_in_bounds() {
+        assert_eq!(hurt_trauma(1.0, 1000.0), HURT_TRAUMA_MIN);
+        assert!((hurt_trauma(50.0, 1000.0) - 0.15).abs() < 1e-5);
+        assert_eq!(hurt_trauma(900.0, 1000.0), HURT_TRAUMA_MAX);
+        assert_eq!(hurt_trauma(10.0, 0.0), HURT_TRAUMA_MAX);
     }
 }
