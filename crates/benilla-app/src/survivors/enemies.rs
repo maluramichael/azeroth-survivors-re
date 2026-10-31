@@ -11,7 +11,7 @@ use super::abilities::Hit;
 use super::chatlog::ChatLine;
 use super::data::{self, EnemyDef};
 use super::hero::{self, Hero, HERO_RADIUS};
-use super::nav::NavGrid;
+use super::nav::{NavGrid, SpawnProbe};
 use super::units::{self, flat, yaw_toward, Fx, Marks, UnitSpec, COLOR_HURT};
 use super::{Phase, Rng, Run, Selection};
 use crate::creature_anim::{move_flags, MovementState};
@@ -39,6 +39,25 @@ pub(super) struct Enemy {
     pub dead: bool,
 }
 
+/// Marks an elite: the plate and the loot know it by this.
+#[derive(Component)]
+pub(super) struct Elite;
+
+/// An elite is this much larger, tougher and worth more than the grunt it was rolled from.
+const ELITE_SCALE: f32 = 1.35;
+const ELITE_HP: f32 = 5.0;
+const ELITE_DAMAGE: f32 = 1.4;
+const ELITE_XP: u32 = 6;
+/// The aura an elite wears: Divine Shield's golden bubble.
+const ELITE_AURA: u32 = 642;
+/// Elites alive at once.
+const MAX_ELITES: usize = 8;
+
+/// Chance a spawn is an elite, growing with the run.
+fn elite_chance(elapsed: f32) -> f32 {
+    0.008 + data::progress(elapsed).min(1.0) * 0.02
+}
+
 pub(super) struct Dot {
     pub dps: f32,
     pub left: f32,
@@ -62,6 +81,8 @@ pub(super) struct Loot {
     pub boss: bool,
     /// The creature's level, which sizes its gold.
     pub level: u32,
+    /// What died, for quests and drops keyed by creature.
+    pub def: &'static data::EnemyDef,
 }
 
 #[derive(Clone, Copy)]
@@ -75,7 +96,8 @@ pub(super) enum GemKind {
 #[derive(Component)]
 pub(super) struct Gem {
     kind: GemKind,
-    pulled: bool,
+    /// Flying to the hero; the Hearthstone shard sets it on every gem.
+    pub pulled: bool,
     speed: f32,
 }
 
@@ -104,22 +126,24 @@ fn radius_for(def: &EnemyDef) -> f32 {
     (if def.big { 1.3 } else { 0.6 }) * def.scale
 }
 
-fn spawn_enemy(
+pub(super) fn spawn_enemy(
     commands: &mut Commands,
     run: &mut Run,
     def: &'static EnemyDef,
     pos: Vec3,
     hero: Vec3,
     boss: bool,
-) {
+    elite: bool,
+) -> Entity {
     let scale = data::hp_scale(run.elapsed);
     let serial = run.guid();
+    let size = if elite { ELITE_SCALE } else { 1.0 };
     let e = units::spawn_unit(
         commands,
         &UnitSpec {
             serial,
             display: def.display,
-            scale: def.scale,
+            scale: def.scale * size,
             level: def.level,
             faction: units::FACTION_MONSTER,
             bytes0: 1 << 8,
@@ -129,16 +153,24 @@ fn spawn_enemy(
         pos,
         yaw_toward(hero - pos),
     );
-    let hp = def.hp * scale;
+    let hp = def.hp * scale * run.difficulty.enemy_hp_mult() * if elite { ELITE_HP } else { 1.0 };
+    let mut marks = Marks::debuffs();
+    if elite {
+        marks.set(&[ELITE_AURA]);
+        commands.entity(e).insert(Elite);
+    }
     commands.entity(e).insert((
         Enemy {
             def,
             hp,
             max_hp: hp,
-            speed: def.speed,
-            damage: def.damage * data::damage_scale(run.elapsed),
-            radius: radius_for(def),
-            xp: def.xp,
+            speed: def.speed * run.difficulty.enemy_speed_mult(),
+            damage: def.damage
+                * data::damage_scale(run.elapsed)
+                * run.difficulty.enemy_damage_mult()
+                * if elite { ELITE_DAMAGE } else { 1.0 },
+            radius: radius_for(def) * size,
+            xp: if elite { def.xp * ELITE_XP } else { def.xp },
             boss,
             attack_cd: 0.5,
             slow: 1.0,
@@ -151,8 +183,9 @@ fn spawn_enemy(
             dots: Vec::new(),
             dead: false,
         },
-        Marks::debuffs(),
+        marks,
     ));
+    e
 }
 
 fn ground(world: &WorldPoint, mut p: Vec3, fallback: f32) -> Vec3 {
@@ -160,9 +193,28 @@ fn ground(world: &WorldPoint, mut p: Vec3, fallback: f32) -> Vec3 {
     p
 }
 
-/// [`ground`] at the nearest free spot to `p`: a spawn never lands inside a tree or a wall.
-fn spawn_spot(nav: &NavGrid, world: &WorldPoint, p: Vec3, fallback: f32) -> Vec3 {
-    ground(world, nav.free_near(p), fallback)
+/// Angles a spawn tries around the hero before it gives up for this tick, and the step between
+/// them in radians.
+const SPAWN_TRIES: u32 = 12;
+const SPAWN_FAN: f32 = 0.35;
+
+/// [`ground`] on the ring `r` yards from `hero` at angle `a`, fanning out to the angles either
+/// side until a spot is free by the mask, free by the world right there and joined to the hero;
+/// `None` when none is. A spawn never lands inside a tree, a wall or a sealed room.
+pub(super) fn spawn_spot(
+    nav: &NavGrid,
+    probe: &SpawnProbe,
+    world: &WorldPoint,
+    hero: Vec3,
+    a: f32,
+    r: f32,
+) -> Option<Vec3> {
+    (0..SPAWN_TRIES).find_map(|i| {
+        let off = ((i + 1) / 2) as f32 * SPAWN_FAN * if i % 2 == 1 { 1.0 } else { -1.0 };
+        let (s, c) = (a + off).sin_cos();
+        let p = ground(world, hero + Vec3::new(c, 0.0, s) * r, hero.y);
+        (nav.fits(p) && probe.clear(p)).then_some(p)
+    })
 }
 
 /// Keep the horde topped up on a ring outside the view, with the bosses and the encircling waves
@@ -175,8 +227,9 @@ pub(super) fn spawn_enemies(
     mut spawner: ResMut<Spawner>,
     selection: Res<Selection>,
     nav: Res<NavGrid>,
+    probe: SpawnProbe,
     hero: Query<&Transform, With<Hero>>,
-    enemies: Query<&Enemy>,
+    enemies: Query<(&Enemy, Has<Elite>)>,
     world: WorldPoint,
     mut chat: MessageWriter<ChatLine>,
 ) {
@@ -189,17 +242,17 @@ pub(super) fn spawn_enemies(
     let roster = data::roster(selection.map);
     let pool = data::wave_pool(elapsed, roster.enemies.len());
 
-    let due_bosses = ((elapsed / data::BOSS_EVERY_SECS) as u32).min(roster.bosses.len() as u32);
+    // The zone's last boss is the finale's ([`super::finale`]); the clock spawns the rest.
+    let timed = &super::finale::plan(selection.map).timed;
+    let due_bosses = ((elapsed / data::BOSS_EVERY_SECS) as u32).min(timed.len() as u32);
     while run.bosses < due_bosses {
-        let def = &roster.bosses[run.bosses as usize];
+        let def = &timed[run.bosses as usize];
         let a = rng.range(0.0, std::f32::consts::TAU);
-        let pos = spawn_spot(
-            &nav,
-            &world,
-            hpos + Vec3::new(a.cos(), 0.0, a.sin()) * 30.0,
-            hpos.y,
-        );
-        spawn_enemy(&mut commands, &mut run, def, pos, hpos, true);
+        // No free spot yet (the world is still coming in): the boss waits for the next frame.
+        let Some(pos) = spawn_spot(&nav, &probe, &world, hpos, a, 30.0) else {
+            break;
+        };
+        spawn_enemy(&mut commands, &mut run, def, pos, hpos, true, false);
         run.bosses += 1;
         run.banner = Some((format!("{} approaches!", def.name), 4.0));
         chat.write(ChatLine::text(
@@ -216,13 +269,10 @@ pub(super) fn spawn_enemies(
         let n = 28 + (data::progress(elapsed) * 60.0) as usize;
         for i in 0..n {
             let a = i as f32 / n as f32 * std::f32::consts::TAU;
-            let pos = spawn_spot(
-                &nav,
-                &world,
-                hpos + Vec3::new(a.cos(), 0.0, a.sin()) * 26.0,
-                hpos.y,
-            );
-            spawn_enemy(&mut commands, &mut run, def, pos, hpos, false);
+            let Some(pos) = spawn_spot(&nav, &probe, &world, hpos, a, 26.0) else {
+                continue;
+            };
+            spawn_enemy(&mut commands, &mut run, def, pos, hpos, false, false);
         }
         run.banner = Some(("They're surrounding you!".into(), 3.0));
     }
@@ -232,7 +282,8 @@ pub(super) fn spawn_enemies(
         return;
     }
     spawner.timer = 0.12;
-    let alive = enemies.iter().filter(|e| !e.dead).count();
+    let alive = enemies.iter().filter(|(e, _)| !e.dead).count();
+    let mut elites = enemies.iter().filter(|(e, el)| *el && !e.dead).count();
     let target = data::target_alive(elapsed);
     if alive >= target {
         return;
@@ -242,13 +293,13 @@ pub(super) fn spawn_enemies(
         let def = &roster.enemies[pool[rng.index(pool.len())]];
         let a = rng.range(0.0, std::f32::consts::TAU);
         let r = rng.range(34.0, 42.0);
-        let pos = spawn_spot(
-            &nav,
-            &world,
-            hpos + Vec3::new(a.cos(), 0.0, a.sin()) * r,
-            hpos.y,
-        );
-        spawn_enemy(&mut commands, &mut run, def, pos, hpos, false);
+        let Some(pos) = spawn_spot(&nav, &probe, &world, hpos, a, r) else {
+            continue;
+        };
+        let elite =
+            elites < MAX_ELITES && rng.f32() < elite_chance(elapsed) * super::items::drop_boost();
+        elites += usize::from(elite);
+        spawn_enemy(&mut commands, &mut run, def, pos, hpos, false, elite);
     }
 }
 
@@ -260,6 +311,7 @@ pub(super) fn move_enemies(
     time: Res<Time>,
     mut run: ResMut<Run>,
     nav: Res<NavGrid>,
+    probe: SpawnProbe,
     world: WorldPoint,
     hero: Query<(Entity, &Transform), (With<Hero>, Without<Enemy>)>,
     mut enemies: Query<(Entity, &mut Transform, &mut Enemy, &mut MovementState), Without<Hero>>,
@@ -345,11 +397,19 @@ pub(super) fn move_enemies(
         let to_hero = flat(hpos - pos);
         let dist = to_hero.length();
 
-        // Strays far behind are brought back in front, as the reference genre does.
-        if dist > 75.0 {
-            let back = hpos + to_hero.normalize_or_zero() * 38.0;
-            tf.translation = spawn_spot(&nav, &world, back, hpos.y);
-            continue;
+        // Strays far behind are brought back in front, as the reference genre does. One stuck in
+        // solid space or sealed off from the hero is set down again on its own side of the ring.
+        let stray = dist > 75.0;
+        if stray || nav.stuck(pos) {
+            let (a, r) = if stray {
+                (to_hero.z.atan2(to_hero.x), 38.0)
+            } else {
+                ((-to_hero.z).atan2(-to_hero.x), 36.0)
+            };
+            if let Some(p) = spawn_spot(&nav, &probe, &world, hpos, a, r) {
+                tf.translation = p;
+                continue;
+            }
         }
 
         // Under Fade the horde has lost the hero: it mills where it stands.
@@ -475,6 +535,7 @@ pub(super) fn drop_loot(
         .filter(|g| matches!(g.kind, GemKind::Gold(_)))
         .count();
     let mut count = gems.iter().count() - coins;
+    let health_gems = run.difficulty.health_gems();
     for d in drops.read() {
         if d.boss || rng.f32() < GOLD_CHANCE {
             let gold = gold_for(d.level, d.boss, &mut rng);
@@ -496,7 +557,8 @@ pub(super) fn drop_loot(
                 coins += 1;
             }
         }
-        if d.boss || rng.f32() < 0.015 {
+        // Hardcore has no health to pick up.
+        if health_gems && (d.boss || rng.f32() < 0.015) {
             let heal = GemKind::Heal(if d.boss { 1000.0 } else { 30.0 });
             spawn_gem(&mut commands, run.guid(), d.pos + Vec3::X * 0.8, heal);
         }
@@ -566,7 +628,9 @@ pub(super) fn collect_gems(
                 GemKind::Heal(hp) => run.hp = (run.hp + hp).min(stats.max_hp),
                 GemKind::Gold(gold) => {
                     // Greed rounds at random, so a small pile still feels a +10 %.
-                    let worth = gold as f32 * run.meta.greed;
+                    let greed =
+                        run.meta.greed + run.gear.greed + run.buffs.greed + run.talents.greed;
+                    let worth = gold as f32 * greed;
                     let looted = worth.floor() as u32 + u32::from(rng.f32() < worth.fract());
                     run.gold += looted;
                     chat.write(ChatLine::Gold(looted));

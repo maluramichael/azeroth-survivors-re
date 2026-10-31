@@ -7,7 +7,7 @@ use bevy::prelude::*;
 
 use super::data::{AbilityDef, Effect, Kind};
 use super::enemies::{self, Enemy, Loot};
-use super::focus::Focus;
+use super::focus::{Focus, Target};
 use super::hero::{self, Hero};
 use super::units::{self, flat, Fx, Marks, UnitSpec, COLOR_HEAL, COLOR_MELEE, COLOR_SPELL};
 use super::{Rng, Run, RunEntity};
@@ -86,6 +86,8 @@ struct Foe {
     boss: bool,
     dist: f32,
     radius: f32,
+    /// The enemy the hero clicked ([`Target`]); the picks take it before the focus's own order.
+    targeted: bool,
 }
 
 /// The numbers one cast uses, from the ability's level and the hero's stats.
@@ -155,18 +157,25 @@ fn roll(rng: &mut Rng, crit: f32, dmg: f32) -> (f32, bool) {
 /// How the focus ranks two foes, the better first; ties go to the nearer. Strongest goes by max
 /// health, not current, so a volley keeps its target while the blows land.
 fn by_focus(focus: Focus, a: &Foe, b: &Foe) -> Ordering {
-    match focus {
-        Focus::Nearest => Ordering::Equal,
-        Focus::Lowest => a.hp.total_cmp(&b.hp),
-        Focus::Strongest => b.boss.cmp(&a.boss).then(b.max_hp.total_cmp(&a.max_hp)),
-    }
-    .then(a.dist.total_cmp(&b.dist))
+    b.targeted
+        .cmp(&a.targeted)
+        .then(match focus {
+            Focus::Nearest => Ordering::Equal,
+            Focus::Lowest => a.hp.total_cmp(&b.hp),
+            Focus::Strongest => b.boss.cmp(&a.boss).then(b.max_hp.total_cmp(&a.max_hp)),
+        })
+        .then(a.dist.total_cmp(&b.dist))
+}
+
+/// Whether the clicked enemy is one of `foes` within `range`.
+fn target_in_range(foes: &[Foe], range: f32) -> bool {
+    foes.iter().any(|f| f.targeted && f.dist <= range + f.radius)
 }
 
 /// Up to `n` foes within `range`, the focus's first. `foes` is sorted by distance.
 fn pick(foes: &[Foe], range: f32, n: usize, focus: Focus) -> Vec<Foe> {
     let in_range = foes.iter().filter(|f| f.dist <= range + f.radius).copied();
-    if focus == Focus::Nearest {
+    if focus == Focus::Nearest && !foes.iter().any(|f| f.targeted) {
         return in_range.take(n).collect();
     }
     let mut v: Vec<Foe> = in_range.collect();
@@ -219,6 +228,7 @@ pub(super) fn cast_abilities(
     mut run: ResMut<Run>,
     mut rng: ResMut<Rng>,
     focus: Res<Focus>,
+    target: Res<Target>,
     spells: Option<Res<crate::ui_action::Spells>>,
     hero: Query<(Entity, &Transform), With<Hero>>,
     enemies: Query<(Entity, &Transform, &Enemy)>,
@@ -246,6 +256,7 @@ pub(super) fn cast_abilities(
             boss: en.boss,
             dist: hero::reach(hpos, tf.translation),
             radius: en.radius,
+            targeted: target.0 == Some(e),
         })
         .collect();
     foes.sort_by(|a, b| a.dist.total_cmp(&b.dist));
@@ -283,6 +294,7 @@ pub(super) fn cast_abilities(
                 // The heavy hitters go for the toughest on their own; a focus the player chose
                 // outranks that.
                 let targets = if focus == Focus::Nearest
+                    && !target_in_range(&foes, reach)
                     && matches!(
                         def.key,
                         "pyroblast" | "aimed_shot" | "exorcism" | "starfire"
@@ -428,7 +440,7 @@ pub(super) fn cast_abilities(
             Kind::Dot => {
                 // Nearest spreads the curses over a few of the closest at random; a chosen
                 // focus puts them on its first picks.
-                let targets = if focus == Focus::Nearest {
+                let targets = if focus == Focus::Nearest && !target_in_range(&foes, def.range) {
                     let mut pool: Vec<Foe> = foes
                         .iter()
                         .filter(|f| f.dist <= def.range)
@@ -601,6 +613,7 @@ pub(super) fn tick_areas(
             boss: en.boss,
             dist: 0.0,
             radius: en.radius,
+            targeted: false,
         })
         .collect();
 
@@ -764,6 +777,7 @@ pub(super) fn apply_hits(
                 xp: en.xp,
                 boss: en.boss,
                 level: en.def.level,
+                def: en.def,
             });
             run.kills += 1;
             if en.boss {
@@ -876,6 +890,7 @@ mod tests {
             boss,
             dist,
             radius: 0.0,
+            targeted: false,
         }
     }
 
@@ -920,6 +935,20 @@ mod tests {
             let got = pick(&foes, 10.0, 2, focus);
             assert_eq!(got[0].dist, 1.0);
         }
+    }
+
+    #[test]
+    fn the_target_goes_first_when_in_range_whatever_the_focus() {
+        let mut foes = horde();
+        foes[3].targeted = true;
+        for focus in [Focus::Nearest, Focus::Lowest, Focus::Strongest] {
+            let got = pick(&foes, 10.0, 2, focus);
+            assert_eq!(got[0].hp, 900.0, "{focus:?}");
+            assert_eq!(got.len(), 2);
+        }
+        // Out of range, the target waits and the focus picks as before.
+        let got = pick(&foes, 5.0, 2, Focus::Nearest);
+        assert_eq!(hps(&got), [90.0, 10.0]);
     }
 
     #[test]

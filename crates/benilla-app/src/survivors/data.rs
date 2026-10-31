@@ -876,7 +876,166 @@ pub(crate) static ABILITIES: &[AbilityDef] = &[
             duration: 10.0
         }
     ),
+    // --- Evolutions: in no class pool, only reached through [`EVOLUTIONS`]. Each starts at
+    // [`EVOLVED_LEVEL`], so its numbers are set to beat the spell it came from at the top rank. ---
+    ability!(
+        "glacial_volley",
+        25304,
+        Bolt {
+            damage: 26.0,
+            cooldown: 1.4,
+            range: 26.0,
+            count: 4,
+            radius: 2.0,
+            effect: Effect::Slow(0.6, 3.0),
+            mark: 116
+        }
+    ),
+    ability!(
+        "meteor_storm",
+        25306,
+        Bolt {
+            damage: 40.0,
+            dot: 10.0,
+            duration: 4.0,
+            cooldown: 2.2,
+            range: 28.0,
+            count: 3,
+            radius: 5.0
+        }
+    ),
+    ability!(
+        "arrow_barrage",
+        25294,
+        Bolt {
+            damage: 22.0,
+            cooldown: 0.9,
+            range: 30.0,
+            count: 4
+        }
+    ),
+    ability!(
+        "great_cleave",
+        20569,
+        Melee {
+            damage: 32.0,
+            cooldown: 1.0,
+            range: 7.0,
+            count: 5
+        }
+    ),
+    ability!(
+        "hammer_of_dawn",
+        24239,
+        Bolt {
+            damage: 36.0,
+            cooldown: 1.5,
+            range: 26.0,
+            count: 3,
+            radius: 3.0
+        }
+    ),
+    ability!(
+        "killing_flurry",
+        11294,
+        Melee {
+            damage: 27.0,
+            cooldown: 0.75,
+            range: 6.0,
+            count: 4
+        }
+    ),
+    ability!(
+        "heavens_judgement",
+        25363,
+        Strike {
+            damage: 34.0,
+            cooldown: 1.3,
+            range: 22.0,
+            count: 3,
+            radius: 3.0
+        }
+    ),
+    ability!(
+        "thunder_barrage",
+        15208,
+        Bolt {
+            damage: 36.0,
+            cooldown: 1.3,
+            range: 26.0,
+            count: 3
+        }
+    ),
+    ability!(
+        "abyssal_barrage",
+        25307,
+        Bolt {
+            damage: 36.0,
+            cooldown: 1.4,
+            range: 26.0,
+            count: 3,
+            radius: 3.0
+        }
+    ),
+    ability!(
+        "starfall",
+        9912,
+        Bolt {
+            damage: 32.0,
+            cooldown: 1.2,
+            range: 26.0,
+            count: 3,
+            radius: 3.5
+        }
+    ),
 ];
+
+/// A recipe: the ability `from` at its top rank, with the passive `passive` at `rank` or more,
+/// turns into `into` (an entry of [`ABILITIES`] in no class pool).
+pub(crate) struct Evolution {
+    pub from: &'static str,
+    pub passive: &'static str,
+    pub rank: u8,
+    pub into: &'static str,
+    /// What the evolved spell is called; its spell id only lends the icon and the visual.
+    pub name: &'static str,
+}
+
+/// The rank an evolved ability starts at, so it begins well above the spell it replaces.
+pub(crate) const EVOLVED_LEVEL: u8 = 5;
+
+const fn evo(
+    from: &'static str,
+    passive: &'static str,
+    into: &'static str,
+    name: &'static str,
+) -> Evolution {
+    Evolution {
+        from,
+        passive,
+        rank: 3,
+        into,
+        name,
+    }
+}
+
+pub(crate) static EVOLUTIONS: &[Evolution] = &[
+    evo("frostbolt", "intellect", "glacial_volley", "Glacial Volley"),
+    evo("fireball", "amplify", "meteor_storm", "Meteor Storm"),
+    evo("arcane_shot", "pack", "arrow_barrage", "Arrow Barrage"),
+    evo("cleave", "might", "great_cleave", "Great Cleave"),
+    evo("hammer_of_wrath", "wisdom", "hammer_of_dawn", "Hammer of Dawn"),
+    evo("sinister_strike", "kings", "killing_flurry", "Killing Flurry"),
+    evo("smite", "fortitude", "heavens_judgement", "Heaven's Judgement"),
+    evo("lightning_bolt", "intellect", "thunder_barrage", "Thunder Barrage"),
+    evo("shadow_bolt", "amplify", "abyssal_barrage", "Abyssal Barrage"),
+    evo("wrath", "wild", "starfall", "Starfall"),
+];
+
+/// The name of an evolved spell, `None` for any other ability key.
+pub(crate) fn evolved_name(key: &str) -> Option<&'static str> {
+    EVOLUTIONS.iter().find(|e| e.into == key).map(|e| e.name)
+}
 
 pub(crate) fn ability(key: &str) -> &'static AbilityDef {
     ABILITIES

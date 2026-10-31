@@ -164,6 +164,7 @@ pub(super) fn drive(
     mut offer: ResMut<Offer>,
     mut rng: ResMut<Rng>,
     loading: Res<crate::loading_screen::LoadingScreen>,
+    mut talents: ResMut<super::talents::TalentsUi>,
     heroes: Query<(), With<Hero>>,
     enemies: Query<&Enemy>,
 ) {
@@ -184,6 +185,15 @@ pub(super) fn drive(
                 auto.wait = 0.0;
             } else if heroes.is_empty() || loading.covering() {
                 auto.wait = 0.0;
+            } else if talents.open {
+                // `WOW_SURVIVORS_TALENTS` opened the talent window: photograph it, then close it.
+                if auto.wait > 2.0 {
+                    auto.capture_once(&mut commands, "talents".into());
+                }
+                if auto.wait > 3.0 {
+                    talents.open = false;
+                    auto.wait = 0.0;
+                }
             } else if auto.wait > 2.0 && auto.wait < 3.0 {
                 auto.capture_once(&mut commands, "menu".into());
             } else if auto.wait > 3.0 && hud::start_run(&mut run, &mut selection, &profile) {

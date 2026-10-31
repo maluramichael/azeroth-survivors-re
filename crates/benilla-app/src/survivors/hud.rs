@@ -183,6 +183,8 @@ pub(super) enum Choice {
     Upgrade(usize),
     NewPassive(&'static PassiveDef),
     UpPassive(usize),
+    /// An ability at its top rank turning into a stronger spell ([`super::evolutions`]).
+    Evolve(&'static data::Evolution),
     Heal,
 }
 
@@ -304,6 +306,10 @@ pub(super) fn spell_name(
     spell: u32,
     fallback: &str,
 ) -> String {
+    // An evolved spell borrows a higher rank's id for its icon but has its own name.
+    if let Some(name) = data::evolved_name(fallback) {
+        return name.to_string();
+    }
     spells
         .and_then(|s| s.catalog.get(spell))
         .map(|d| d.name.clone())
@@ -508,10 +514,12 @@ pub(super) fn setup_hud(
                     ..default()
                 })
                 .with_children(|col| {
+                    // Under the unit frames ([`super::frames`]).
                     col.spawn((
                         AbilityRow,
                         Node {
                             column_gap: Val::Px(4.0),
+                            margin: UiRect::top(Val::Px(62.0)),
                             ..default()
                         },
                     ));
@@ -997,6 +1005,8 @@ pub(super) fn start_run(run: &mut Run, selection: &mut Selection, profile: &Prof
         race,
         next_guid,
         meta: profile.bonus(index),
+        talents: profile.talent_bonus(index),
+        difficulty: profile.difficulty,
         ..Run::default()
     };
     run.abilities.push(Owned {
@@ -1018,7 +1028,10 @@ fn choices_for(run: &Run, rng: &mut Rng) -> Vec<Choice> {
     }
     if run.abilities.len() < data::MAX_ABILITIES {
         for key in run.class.pool {
-            if !run.abilities.iter().any(|o| o.def.key == *key) {
+            // A spell that has evolved does not come back as a new one.
+            if !run.abilities.iter().any(|o| o.def.key == *key)
+                && !super::evolutions::evolved_from(run, key)
+            {
                 pool.push((Choice::NewAbility(data::ability(key)), 1.0));
             }
         }
@@ -1035,7 +1048,12 @@ fn choices_for(run: &Run, rng: &mut Rng) -> Vec<Choice> {
             }
         }
     }
-    let mut out = Vec::with_capacity(3);
+    // A recipe that holds is offered first, on the next level-up.
+    let mut out: Vec<Choice> = super::evolutions::ready(run)
+        .into_iter()
+        .take(2)
+        .map(Choice::Evolve)
+        .collect();
     while out.len() < 3 && !pool.is_empty() {
         let total: f32 = pool.iter().map(|(_, w)| w).sum();
         let mut pick = rng.f32() * total;
@@ -1078,6 +1096,16 @@ pub(super) fn pick(
         Choice::Upgrade(k) => run.abilities[k].level += 1,
         Choice::NewPassive(p) => run.passives.push((p, 1)),
         Choice::UpPassive(k) => run.passives[k].1 += 1,
+        Choice::Evolve(evo) => {
+            if let Some(o) = run.abilities.iter_mut().find(|o| o.def.key == evo.from) {
+                *o = Owned {
+                    def: data::ability(evo.into),
+                    level: data::EVOLVED_LEVEL,
+                    cd: 0.3,
+                };
+                run.banner = Some((format!("It evolves into {}!", evo.name), 4.0));
+            }
+        }
         Choice::Heal => run.hp = run.stats().max_hp,
     }
     run.version += 1;
@@ -1143,14 +1171,16 @@ pub(super) fn keys(
     profile: Res<Profile>,
     trainer: Res<super::trainer::TrainerUi>,
     options: Res<super::options::OptionsUi>,
+    talents: Res<super::talents::TalentsUi>,
     mut next: ResMut<NextState<Phase>>,
 ) {
     match phase.get() {
         Phase::Menu => {
-            // Enter World by key, but not from behind the open trainer or options.
+            // Enter World by key, but not from behind the open trainer, options or talents.
             if keys.just_pressed(KeyCode::Enter)
                 && !trainer.open
                 && !options.open
+                && !talents.open
                 && start_run(&mut run, &mut selection, &profile)
             {
                 next.set(Phase::Playing);
@@ -1293,6 +1323,47 @@ pub(super) fn describe_card(
                     fmt(p.per_level * f32::from(level + 1)),
                 ),
                 ranks: Some((level, data::MAX_PASSIVE_LEVEL)),
+            }
+        }
+        Choice::Evolve(evo) => {
+            let (old, new) = (data::ability(evo.from), data::ability(evo.into));
+            let stats = run.stats();
+            let a = cast_at(old, data::MAX_ABILITY_LEVEL, &stats);
+            let b = cast_at(new, data::EVOLVED_LEVEL, &stats);
+            let passive = data::PASSIVES
+                .iter()
+                .find(|p| p.key == evo.passive)
+                .map_or(evo.passive, |p| p.name);
+            let (da, db) = if a.dmg > 0.0 {
+                (a.dmg, b.dmg)
+            } else {
+                (a.dot, b.dot)
+            };
+            let mut lines = vec![
+                format!(
+                    "{} + {}",
+                    spell_name(spells, old.spell, old.key),
+                    passive
+                ),
+                format!("Damage {} » {}", num(da), num(db)),
+            ];
+            if b.count > a.count {
+                lines.push(format!("Targets {} » {}", a.count, b.count));
+            }
+            if (b.cooldown - a.cooldown).abs() > 0.01 {
+                lines.push(format!(
+                    "Cooldown {}s » {}s",
+                    num(a.cooldown),
+                    num(b.cooldown)
+                ));
+            }
+            CardText {
+                spell: new.spell,
+                name: evo.name.into(),
+                tag: "Evolution".into(),
+                tag_color: super::cards::LEGENDARY,
+                desc: lines.join("\n"),
+                ranks: Some((data::EVOLVED_LEVEL, data::MAX_ABILITY_LEVEL)),
             }
         }
         Choice::Heal => CardText {

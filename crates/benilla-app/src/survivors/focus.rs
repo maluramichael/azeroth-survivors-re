@@ -68,8 +68,14 @@ impl Focus {
     }
 }
 
+/// The enemy the hero has clicked ([`super::frames`]). The abilities pick it first while it is in
+/// range, then the focus's order.
+#[derive(Resource, Default, Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) struct Target(pub(super) Option<Entity>);
+
 pub(super) fn plugin(app: &mut App) {
     app.init_resource::<Focus>()
+        .init_resource::<Target>()
         .init_resource::<FocusUi>()
         .add_systems(Update, (cycle, show).chain().run_if(in_run))
         .add_systems(OnEnter(Phase::Menu), teardown)

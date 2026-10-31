@@ -114,7 +114,8 @@ fn build(commands: &mut Commands, panel: &mut CharPanel, font: &Handle<Font>) {
             Node {
                 position_type: PositionType::Absolute,
                 left: Val::Px(16.0),
-                top: Val::Px(120.0),
+                // Under the unit frames and the ability icons ([`super::frames`], [`super::hud`]).
+                top: Val::Px(160.0),
                 width: Val::Px(WIDTH),
                 flex_direction: FlexDirection::Column,
                 padding: UiRect::axes(Val::Px(12.0), Val::Px(10.0)),
@@ -221,11 +222,29 @@ fn lines(run: &Run, char_level: u32, spells: Option<&crate::ui_action::Spells>) 
         format!("{} yd", hud::num(s.magnet)),
     ));
     out.push(Line::stat("Experience gained", hud::pct(s.growth)));
-    out.push(Line::stat("Gold found", hud::pct(run.meta.greed)));
+    out.push(Line::stat(
+        "Gold found",
+        hud::pct(run.meta.greed + run.gear.greed + run.buffs.greed + run.talents.greed),
+    ));
     out.push(Line::stat(
         "Gold this run",
         hud::grouped(u64::from(run.gold)),
     ));
+
+    // The pieces worn, each in its quality colour.
+    let gear = super::items::gear_lines();
+    if !gear.is_empty() {
+        out.push(Line::gap());
+        out.push(Line::head("Gear"));
+        for (slot, name, color) in gear {
+            out.push(Line {
+                left: format!("[{name}]"),
+                right: slot.to_string(),
+                left_color: color,
+                right_color: RANK,
+            });
+        }
+    }
 
     if !run.abilities.is_empty() {
         out.push(Line::gap());

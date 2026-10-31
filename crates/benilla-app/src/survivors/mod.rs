@@ -9,23 +9,34 @@ mod auto;
 mod barrier;
 mod cards;
 mod charpanel;
+mod chests;
 mod chatlog;
 mod data;
+mod difficulty;
 mod enemies;
+mod evolutions;
 mod fill;
+mod finale;
 mod focus;
+mod frames;
 mod grade;
 mod hero;
 mod hud;
+mod items;
 mod menu;
 mod minimap;
 mod mobility;
+mod mods;
 mod nav;
 mod options;
+mod pickups;
 mod plates;
+mod talents;
 mod profile;
+mod quests;
 mod trainer;
 mod units;
+mod worldbuffs;
 
 use benilla_world::schedule::WorldStage;
 use bevy::prelude::*;
@@ -59,6 +70,18 @@ impl Plugin for SurvivorsPlugin {
                 focus::plugin,
                 chatlog::plugin,
                 options::plugin,
+            ))
+            .add_plugins((
+                talents::plugin,
+                worldbuffs::plugin,
+                difficulty::plugin,
+                items::plugin,
+                chests::plugin,
+                pickups::plugin,
+                finale::plugin,
+                evolutions::plugin,
+                quests::plugin,
+                frames::plugin,
             ))
             .init_state::<Phase>()
             .init_resource::<Rng>()
@@ -297,6 +320,14 @@ pub(super) struct Run {
     pub version: u32,
     /// A centre-screen announcement and its seconds left.
     pub banner: Option<(String, f32)>,
+    /// The gear worn this run ([`items`]).
+    pub gear: mods::StatMods,
+    /// The world buffs taken this run ([`worldbuffs`]).
+    pub buffs: mods::StatMods,
+    /// The character's talents, fixed when the run starts ([`talents`]).
+    pub talents: mods::StatMods,
+    /// Picked at the pick screen ([`difficulty`]).
+    pub difficulty: difficulty::Difficulty,
 }
 
 impl Default for Run {
@@ -331,6 +362,10 @@ impl Default for Run {
             damage_done: 0.0,
             version: 0,
             banner: None,
+            gear: mods::StatMods::default(),
+            buffs: mods::StatMods::default(),
+            talents: mods::StatMods::default(),
+            difficulty: difficulty::Difficulty::default(),
         }
     }
 }
@@ -378,6 +413,9 @@ impl Run {
         s.magnet *= m.magnet;
         s.armor += m.armor;
         s.regen += m.regen;
+        for mods in [&self.gear, &self.buffs, &self.talents] {
+            mods.apply(&mut s);
+        }
         s
     }
 

@@ -132,6 +132,7 @@ pub(super) fn rarity(choice: Choice, run: &Run) -> Rarity {
             2 => Rarity::Common,
             _ => Rarity::Uncommon,
         },
+        Choice::Evolve(_) => Rarity::Legendary,
         Choice::Heal => Rarity::Common,
     }
 }
@@ -183,6 +184,12 @@ pub(super) fn deal_cards(
             let card = hud::describe_card(choice, &run, spells.as_deref());
             let rarity = rarity(choice, &run);
             let rc = rarity.color();
+            // An evolution wears the Legendary orange under its own name.
+            let label = if matches!(choice, Choice::Evolve(_)) {
+                "Evolution"
+            } else {
+                rarity.label()
+            };
             row.spawn((
                 Card {
                     index: i,
@@ -269,7 +276,7 @@ pub(super) fn deal_cards(
                         15.0,
                         hud::DIM_GREY,
                     ));
-                    top.spawn(hud::text_bundle(f, rarity.label(), 13.0, rc));
+                    top.spawn(hud::text_bundle(f, label, 13.0, rc));
                 });
                 // The icon in a gold-rimmed socket.
                 c.spawn((

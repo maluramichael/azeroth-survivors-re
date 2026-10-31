@@ -8,6 +8,11 @@
 //! only a slope steeper than about 55 degrees, a building, a tree or a rock reaches it. The flow
 //! field is a distance field over a window around the hero, rebuilt a few times a second; an
 //! enemy reads it by walking a few cells downhill and heading for the farthest one it can see.
+//!
+//! A spawn does not trust the mask alone, which reads free where the scan has not been yet or
+//! where colliders streamed in after it: [`SpawnProbe`] asks the world right at the spot, and the
+//! field says whether the spot is joined to the hero, so nothing is set down inside a trunk, a
+//! wall, or a sealed room. One that ends up there anyway is [`stuck`](NavGrid::stuck).
 
 use std::time::Duration;
 
@@ -16,6 +21,7 @@ use benilla_world::collision::{ColliderEpoch, WorldCollision};
 use benilla_world::schedule::WorldStage;
 use benilla_world::terrain_stream::WorldLoadProgress;
 use benilla_world::world_point::WorldPoint;
+use bevy::ecs::system::SystemParam;
 use bevy::platform::time::Instant;
 use bevy::prelude::*;
 
@@ -33,6 +39,8 @@ const MARGIN: f32 = 24.0;
 const BODY_RADIUS: f32 = 0.6;
 const BODY_BOTTOM: f32 = 0.4;
 const BODY_TOP: f32 = 1.8;
+/// The height of the probe's centre above the feet.
+const BODY_MID: f32 = (BODY_BOTTOM + BODY_TOP) * 0.5;
 
 /// Most the scan spends in a frame.
 const SCAN_BUDGET: Duration = Duration::from_micros(2000);
@@ -52,6 +60,9 @@ const LOOKAHEAD: usize = 6;
 const FLOW_EVERY: f32 = 0.15;
 /// Rings searched for the nearest free cell around a blocked one.
 const FREE_SEARCH: i32 = 8;
+/// Fewest cells a field must reach before "the field did not reach this cell" means walled off,
+/// not a hero shut in a closet whose horde has nothing to compare with.
+const MIN_REACH: usize = 400;
 
 /// Path costs in tenths of a cell: a step along an axis and across a diagonal.
 const STRAIGHT: u32 = 10;
@@ -109,6 +120,8 @@ struct Field {
     hero: IVec2,
     version: u32,
     age: f32,
+    /// Cells the field reached.
+    reached: usize,
 }
 
 impl Field {
@@ -120,6 +133,19 @@ impl Field {
         }
         let d = self.dist[(l.y * self.w + l.x) as usize];
         (d != UNREACHED).then_some(d)
+    }
+
+    /// Whether the field reached a grid cell: `None` when it cannot say (no field, a field that
+    /// reached too little to judge by, or a cell off its window).
+    fn reaches(&self, c: IVec2) -> Option<bool> {
+        if self.source.is_none() || self.reached < MIN_REACH {
+            return None;
+        }
+        let l = c - self.min;
+        if l.x < 0 || l.y < 0 || l.x >= self.w || l.y >= self.h {
+            return None;
+        }
+        Some(self.dist[(l.y * self.w + l.x) as usize] != UNREACHED)
     }
 }
 
@@ -194,13 +220,14 @@ impl NavGrid {
         self.is_solid(self.cell(pos))
     }
 
-    /// The nearest free cell to `to` within `max` rings of `c`.
+    /// The nearest free cell to `to` within `max` rings of `c`, one the field reaches when it can
+    /// tell: a sealed room next door is no way out.
     fn nearest_free(&self, c: IVec2, max: i32, to: Vec3) -> Option<IVec2> {
         for r in 1..=max {
             let mut best: Option<(f32, IVec2)> = None;
             for k in 0..ring_len(r) {
                 let n = c + ring_cell(r, k);
-                if !self.inside(n) || self.is_solid(n) {
+                if !self.inside(n) || self.is_solid(n) || self.field.reaches(n) == Some(false) {
                     continue;
                 }
                 let d = flat(self.center_of(n) - to).length_squared();
@@ -215,17 +242,26 @@ impl NavGrid {
         None
     }
 
-    /// `pos` itself when it is free, else the centre of the nearest free cell (height kept): where
-    /// a spawn that landed inside a tree or a wall goes instead.
-    pub fn free_near(&self, pos: Vec3) -> Vec3 {
+    /// Whether a spawn may stand at `pos` as far as the mask knows: its cell is free and, where
+    /// the field can tell, joined to the hero. The world itself is [`SpawnProbe`]'s to ask.
+    pub fn fits(&self, pos: Vec3) -> bool {
         let c = self.cell(pos);
-        if !self.is_solid(c) {
-            return pos;
+        !self.is_solid(c) && self.field.reaches(c) != Some(false)
+    }
+
+    /// Whether a walker at `pos` has no way to the hero by walking: it stands in solid space with
+    /// no free cell near, or in a free pocket the field does not reach. The caller sets it down
+    /// elsewhere. A walker in a wall with free ground near is not stuck: [`chase`](Self::chase)
+    /// and [`step`](Self::step) walk it out.
+    pub fn stuck(&self, pos: Vec3) -> bool {
+        if self.solid.is_empty() {
+            return false;
         }
-        match self.nearest_free(c, FREE_SEARCH, pos) {
-            Some(n) => self.center_of(n).with_y(pos.y),
-            None => pos,
+        let c = self.cell(pos);
+        if self.is_solid(c) {
+            return self.nearest_free(c, FREE_SEARCH, pos).is_none();
         }
+        self.field.reaches(c) == Some(false)
     }
 
     /// The point a walker at `from` reaches moving toward `to` (height of `to`) without entering
@@ -428,6 +464,7 @@ impl NavGrid {
         f.hero = hero;
         f.version = self.version;
         f.age = 0.0;
+        f.reached = 0;
         let src = if !self.inside(hero) {
             None
         } else if !self.is_solid(hero) {
@@ -461,6 +498,7 @@ impl NavGrid {
                     if u32::from(f.dist[slot(c)]) != cost {
                         continue;
                     }
+                    f.reached += 1;
                     for (dx, dz, step) in NEIGHBOURS {
                         let n = c + IVec2::new(dx, dz);
                         if !in_window(n) || !self.passable(c, n) {
@@ -520,6 +558,32 @@ struct Scan {
     /// The ring and the cell in it the scan is at.
     ring: i32,
     k: i32,
+}
+
+/// The probe: a capsule the size of a walker, centred on [`BODY_MID`].
+fn body_probe() -> Collider {
+    Collider::capsule(BODY_RADIUS, BODY_TOP - BODY_BOTTOM - 2.0 * BODY_RADIUS)
+}
+
+/// The world asked directly whether a walker fits at a spot, for a spawn: one capsule overlap
+/// query, against the colliders as they are now.
+#[derive(SystemParam)]
+pub(super) struct SpawnProbe<'w, 's> {
+    spatial: SpatialQuery<'w, 's>,
+    run: Query<'w, 's, (), With<RunEntity>>,
+}
+
+impl SpawnProbe<'_, '_> {
+    /// Whether no solid world collider touches a walker standing with its feet at `feet`.
+    pub fn clear(&self, feet: Vec3) -> bool {
+        !solid_at(
+            &self.spatial,
+            &self.run,
+            &body_probe(),
+            &WorldCollision::body_filter(),
+            feet + Vec3::Y * BODY_MID,
+        )
+    }
 }
 
 /// Whether a solid, non-run collider touches the probe at `at`.
@@ -593,9 +657,8 @@ fn scan_world(
         scan.k = 0;
     }
 
-    let probe = Collider::capsule(BODY_RADIUS, BODY_TOP - BODY_BOTTOM - 2.0 * BODY_RADIUS);
+    let probe = body_probe();
     let filter = WorldCollision::body_filter();
-    let mid = (BODY_BOTTOM + BODY_TOP) * 0.5;
     let started = Instant::now();
     let mut steps = 0u32;
     loop {
@@ -634,7 +697,7 @@ fn scan_world(
             &run_entities,
             &probe,
             &filter,
-            Vec3::new(at.x, ground + mid, at.z),
+            Vec3::new(at.x, ground + BODY_MID, at.z),
         );
         grid.set(c, solid);
     }
@@ -720,8 +783,88 @@ mod tests {
         assert_eq!(g.step(at(20.5, 10.5), to), to);
         let d = g.chase(at(20.5, 10.5), at(30.5, 10.5));
         assert!(d.length() > 0.99);
-        let out = g.free_near(at(20.5, 10.5));
-        assert!(!g.blocked(out));
+        let out = g.nearest_free(g.cell(at(20.5, 10.5)), FREE_SEARCH, at(20.5, 10.5));
+        assert!(out.is_some_and(|c| !g.is_solid(c)));
+        assert!(!g.stuck(at(20.5, 10.5)), "free ground is a step away");
+    }
+
+    /// A 7 by 7 block of solid cells with its corner at (10, 10) and a free 3 by 3 pocket in its
+    /// middle: a sealed room. The hero stands far off in the open.
+    fn sealed_room() -> NavGrid {
+        let mut g = grid(60, 60);
+        for x in 10..17 {
+            wall(&mut g, x, 10, 17);
+        }
+        for x in 12..15 {
+            for z in 12..15 {
+                g.set(IVec2::new(x, z), false);
+            }
+        }
+        g.rebuild_field(g.cell(at(40.5, 13.5)));
+        g
+    }
+
+    #[test]
+    fn a_spawn_does_not_fit_in_a_wall_or_a_sealed_room() {
+        let g = sealed_room();
+        assert!(!g.fits(at(11.5, 13.5)), "inside the wall");
+        assert!(!g.fits(at(13.5, 13.5)), "inside the room");
+        assert!(g.fits(at(30.5, 13.5)), "in the open");
+        assert!(g.fits(at(-5.0, 13.5)), "off the grid reads free");
+    }
+
+    #[test]
+    fn a_walker_sealed_in_a_room_is_stuck() {
+        let g = sealed_room();
+        assert!(g.stuck(at(13.5, 13.5)));
+        assert!(!g.stuck(at(30.5, 13.5)));
+        // Without a field nothing says the room is sealed.
+        let mut open = sealed_room();
+        open.field = Field::default();
+        assert!(!open.stuck(at(13.5, 13.5)));
+    }
+
+    #[test]
+    fn a_walker_deep_in_solid_space_is_stuck() {
+        let mut g = grid(60, 60);
+        for x in 5..55 {
+            wall(&mut g, x, 5, 55);
+        }
+        assert!(g.stuck(at(30.5, 30.5)));
+        assert!(!g.stuck(at(7.5, 30.5)), "the edge is near");
+        assert!(!g.stuck(at(2.5, 30.5)));
+    }
+
+    #[test]
+    fn a_walker_in_a_wall_leaves_it_away_from_the_sealed_room() {
+        let g = sealed_room();
+        // The room is one cell away, the open ground two: it walks out, not in.
+        let from = at(11.5, 13.5);
+        assert!(!g.stuck(from));
+        let d = g.chase(from, at(40.5, 13.5));
+        assert!(d.x < -0.9, "heads for the open side, got {d:?}");
+        let out = g.step(from, from + d * 0.5);
+        assert!(out.x < from.x);
+    }
+
+    #[test]
+    fn a_hero_shut_in_a_closet_does_not_strand_the_horde() {
+        let mut g = grid(60, 60);
+        // A 3 by 3 closet around the hero with a thick wall.
+        for x in 40..47 {
+            wall(&mut g, x, 10, 17);
+        }
+        for x in 42..45 {
+            for z in 12..15 {
+                g.set(IVec2::new(x, z), false);
+            }
+        }
+        g.rebuild_field(g.cell(at(43.5, 13.5)));
+        assert!(
+            !g.stuck(at(20.5, 13.5)),
+            "the field is too small to judge by"
+        );
+        assert!(g.fits(at(20.5, 13.5)));
     }
 
     #[test]

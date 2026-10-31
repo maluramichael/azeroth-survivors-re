@@ -15,7 +15,9 @@ use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use super::chatlog::{ChatKind, ChatLine};
-use super::{data, hud, Run, Selection};
+use super::difficulty::Difficulty;
+use super::mods::StatMods;
+use super::{data, hud, talents, Run, Selection};
 
 /// The level cap, as in 1.12.
 pub(super) const MAX_LEVEL: u32 = 60;
@@ -93,6 +95,10 @@ pub(super) struct Profile {
     pub classes: Vec<bool>,
     /// The trainer's ranks, by upgrade key.
     pub trainer: BTreeMap<String, u8>,
+    /// The talent ranks of every class, by [`talents::key`].
+    pub talents: BTreeMap<String, u8>,
+    /// The pick screen's difficulty, kept across runs.
+    pub difficulty: Difficulty,
     /// What the last run paid out.
     #[serde(skip)]
     pub last_award: Option<Award>,
@@ -114,6 +120,8 @@ impl Default for Profile {
                 .map(|i| STARTER_CLASSES.contains(&i))
                 .collect(),
             trainer: BTreeMap::new(),
+            talents: BTreeMap::new(),
+            difficulty: Difficulty::default(),
             last_award: None,
             unlock_all: false,
             ephemeral: false,
@@ -145,6 +153,9 @@ impl Profile {
             .unwrap_or_default();
         p.normalize();
         p.ephemeral = crate::webenv::var("WOW_SURVIVORS_AUTO").is_some();
+        if p.ephemeral {
+            p.apply_test_env();
+        }
         // An automated run opens everything unless `WOW_SURVIVORS_UNLOCK_ALL=0` keeps the locks, to
         // photograph them.
         p.unlock_all = match crate::webenv::var("WOW_SURVIVORS_UNLOCK_ALL") {
@@ -152,6 +163,26 @@ impl Profile {
             None => p.ephemeral,
         };
         p
+    }
+
+    /// `WOW_SURVIVORS_LEVEL=<n>` sets every character's level and `WOW_SURVIVORS_DIFFICULTY=
+    /// normal|heroic|hardcore` the pick, for an automated run; it saves nothing.
+    fn apply_test_env(&mut self) {
+        if let Some(level) = crate::webenv::var("WOW_SURVIVORS_LEVEL").and_then(|v| v.parse().ok())
+        {
+            for c in &mut self.characters {
+                c.level = u32::clamp(level, 1, MAX_LEVEL);
+            }
+        }
+        if let Some(d) = crate::webenv::var("WOW_SURVIVORS_DIFFICULTY") {
+            let d = d.trim().to_ascii_lowercase();
+            if let Some(d) = Difficulty::ALL
+                .into_iter()
+                .find(|x| x.label().to_ascii_lowercase() == d)
+            {
+                self.difficulty = d;
+            }
+        }
     }
 
     pub fn save(&self) {
@@ -209,6 +240,11 @@ impl Profile {
         };
         super::trainer::apply_ranks(&mut bonus, &self.trainer);
         bonus
+    }
+
+    /// The talent bonus a run with `class` starts with ([`Run::talents`]).
+    pub fn talent_bonus(&self, class: usize) -> StatMods {
+        talents::mods_for(&self.talents, class)
     }
 
     /// Add character experience to `class`, levelling up as far as it reaches; returns the levels
@@ -276,9 +312,11 @@ pub(super) fn award_run(
         return;
     };
     let char_level = profile.character(class).level;
-    let xp = run_xp(&run, char_level, zone_min_level(selection.stage));
+    let reward = run.difficulty.reward_mult();
+    let xp = (run_xp(&run, char_level, zone_min_level(selection.stage)) as f32 * reward).round()
+        as u64;
     let levels = profile.add_xp(class, xp);
-    let gold = u64::from(run.gold);
+    let gold = (u64::from(run.gold) as f32 * reward).round() as u64;
     profile.gold += gold;
     profile.last_award = Some(Award { xp, levels, gold });
     profile.save();
