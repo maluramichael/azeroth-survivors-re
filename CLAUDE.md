@@ -45,8 +45,7 @@ build. A round runs like this:
 - Save it as JPEG, 1600 px wide, as `docs/screenshots/fork-<feature>.jpg`, and keep a copy in
   `~/.claude/screenshots/azeroth-survivors-re/`.
 - Add a row at the top of the "What this fork adds" table in `README.md`: feature, what it does in
-  one or two sentences, the screenshot at `width="320"`, and the upstream PR link. A change with
-  nothing to show (a fix, tooling) gets a row without a screenshot.
+  one or two sentences, and the screenshot at `width="480"`. The table has no upstream PR column.
+  A change with nothing to show (a fix, tooling) gets a row without a screenshot.
 - README rows and screenshots are committed on `features` only, never on a feature branch: they
-  would break upstream's one-change-per-PR rule. A feature built straight on `features` has no
-  upstream PR; its PR column says so.
+  would break upstream's one-change-per-PR rule.
