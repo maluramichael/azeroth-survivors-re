@@ -207,7 +207,7 @@ impl Slot {
 /// A stat an item rolls, one per [`StatMods`] field.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-enum Stat {
+pub(super) enum Stat {
     Might,
     Health,
     Speed,
@@ -222,6 +222,23 @@ enum Stat {
 }
 
 impl Stat {
+    /// The stat's name as the collection book prints it.
+    pub(super) fn label(self) -> &'static str {
+        match self {
+            Stat::Might => "Damage",
+            Stat::Health => "Health",
+            Stat::Speed => "Speed",
+            Stat::Regen => "Regeneration",
+            Stat::Haste => "Haste",
+            Stat::Area => "Area",
+            Stat::Magnet => "Pickup range",
+            Stat::Growth => "Experience",
+            Stat::Armor => "Armor",
+            Stat::Crit => "Crit",
+            Stat::Greed => "Gold",
+        }
+    }
+
     /// What one point of it is worth in the stat's own units.
     fn unit(self) -> f32 {
         match self {
@@ -296,7 +313,7 @@ pub(super) struct Tpl {
     pub(super) slot: Slot,
     pub(super) quality: Quality,
     pub(super) name: &'static str,
-    stats: [Stat; 2],
+    pub(super) stats: [Stat; 2],
 }
 
 pub(super) mod table {
@@ -565,6 +582,7 @@ fn arm(
     mut gear: ResMut<Gear>,
     bank: Res<Bank>,
     mut run: ResMut<Run>,
+    mut profile: Option<ResMut<super::profile::Profile>>,
     mut chat: MessageWriter<ChatLine>,
 ) {
     if gear.armed {
@@ -576,6 +594,11 @@ fn arm(
             chat_kind(item.quality),
             format!("You equip your banked [{}].", item.name),
         ));
+        // The banked piece is a find too; the bank is read at Startup, before the profile may
+        // exist, so it is recorded here, when the run puts it on.
+        if let Some(profile) = profile.as_mut() {
+            profile.collection.insert(item.name.clone());
+        }
         gear.wear(item);
         sync(&mut run, &gear);
     }
@@ -601,6 +624,7 @@ fn drop_items(
     mut materials: ResMut<Assets<StandardMaterial>>,
     dead: Query<(&Transform, &Enemy, Has<Elite>, Has<Finale>), Added<Dying>>,
     drops: Query<(), With<ItemDrop>>,
+    mut profile: Option<ResMut<super::profile::Profile>>,
     mut chat: MessageWriter<ChatLine>,
 ) {
     let boost = drop_boost();
@@ -611,6 +635,9 @@ fn drop_items(
             let quality = pick_quality(&WEIGHTS_FINALE, rng.f32());
             let item = roll_item(&mut rng, quality, progress);
             loot_line(&mut chat, &item);
+            if let Some(profile) = profile.as_mut() {
+                profile.collection.insert(item.name.clone());
+            }
             gear.wear(item);
             sync(&mut run, &gear);
             continue;
@@ -654,6 +681,7 @@ fn collect_items(
     mut gear: ResMut<Gear>,
     hero: Query<&Transform, With<Hero>>,
     mut drops: Query<(Entity, &Transform, &mut ItemDrop)>,
+    mut profile: Option<ResMut<super::profile::Profile>>,
     mut chat: MessageWriter<ChatLine>,
 ) {
     let Ok(h) = hero.single() else { return };
@@ -672,6 +700,9 @@ fn collect_items(
         }
         commands.entity(e).despawn();
         loot_line(&mut chat, &lying.item);
+        if let Some(profile) = profile.as_mut() {
+            profile.collection.insert(lying.item.name.clone());
+        }
         if gear.wear(lying.item.clone()) {
             sync(&mut run, &gear);
         }
