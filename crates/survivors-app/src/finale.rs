@@ -195,7 +195,7 @@ fn summon(
     mut chat: MessageWriter<ChatLine>,
 ) {
     let Ok(h) = hero.single() else { return };
-    if run.dead_t.is_some() {
+    if run.party_down {
         return;
     }
     let hpos = h.translation;
@@ -253,7 +253,7 @@ fn finale_slain(
     hero: Query<Entity, With<Hero>>,
     mut fx: Fx,
 ) {
-    if slain.is_empty() || run.dead_t.is_some() {
+    if slain.is_empty() || run.party_down {
         return;
     }
     run.won = true;

@@ -386,7 +386,7 @@ pub(super) fn spawn_enemies(
     mut chat: MessageWriter<ChatLine>,
     mut turn: Local<usize>,
 ) {
-    if hero.single().is_err() || run.dead_t.is_some() {
+    if hero.single().is_err() || run.party_down {
         return;
     }
     // Each spawn rings the next standing hero in turn; alone, always this one.
@@ -900,7 +900,7 @@ pub(super) fn collect_gems(
     mut sweep: Local<f32>,
 ) {
     let Ok(h) = hero.single() else { return };
-    if run.dead_t.is_some() {
+    if run.party_down {
         return;
     }
     let dt = time.delta_secs();
@@ -910,8 +910,10 @@ pub(super) fn collect_gems(
     let sweeping = *sweep > 0.0;
     *sweep = (*sweep - dt).max(0.0);
     // Every standing hero's magnet: this machine's first (`None`), then the co-op puppets'.
-    let mut magnets: Vec<(Option<Entity>, Vec3, super::Stats)> =
-        vec![(None, h.translation + Vec3::Y * 1.0, run.stats())];
+    let mut magnets: Vec<(Option<Entity>, Vec3, super::Stats)> = Vec::new();
+    if run.dead_t.is_none() {
+        magnets.push((None, h.translation + Vec3::Y * 1.0, run.stats()));
+    }
     magnets.extend(
         peers
             .iter()
@@ -921,10 +923,13 @@ pub(super) fn collect_gems(
     for (e, mut tf, mut g) in &mut gems {
         // A gem flies to the nearest hero; it is pulled once it is in any hero's reach.
         let at = tf.translation;
-        let &(who, target, stats) = magnets
+        let Some(&(who, target, stats)) = magnets
             .iter()
             .min_by(|a, b| (a.1 - at).length().total_cmp(&(b.1 - at).length()))
-            .expect("the local hero's magnet is always there");
+        else {
+            // The last hero standing fell this frame.
+            break;
+        };
         let d = target - at;
         let dist = d.length();
         if !g.pulled

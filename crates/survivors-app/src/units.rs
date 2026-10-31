@@ -223,6 +223,13 @@ pub(super) fn kill_unit(store: &mut ObjectStore) {
         .merge(ObjectFields::from_pairs(&[(FIELD_HEALTH, 0)]));
 }
 
+/// Full health again: the body gets up from its death ([`kill_unit`]'s undoing).
+pub(super) fn revive_unit(store: &mut ObjectStore) {
+    store
+        .0
+        .merge(ObjectFields::from_pairs(&[(FIELD_HEALTH, 100)]));
+}
+
 /// A dynamic object, as a ground spell's server would place it: the dest-effect systems arm the
 /// spell's area visuals on it.
 pub(super) fn spawn_area_object(

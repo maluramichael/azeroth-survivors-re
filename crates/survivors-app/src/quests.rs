@@ -334,7 +334,7 @@ fn settle(
     mut sound: MessageWriter<benilla_app::survivors_host::sound::GlueSound>,
     mut mail: ResMut<GuestMail>,
 ) {
-    if run.dead_t.is_some() {
+    if run.party_down {
         return;
     }
     let secs = run.elapsed as u32;

@@ -276,7 +276,7 @@ pub(super) fn cast_abilities(
     mut hits: MessageWriter<Hit>,
 ) {
     let dt = time.delta_secs();
-    if run.dead_t.is_some() || dt <= 0.0 {
+    if run.party_down || dt <= 0.0 {
         return;
     }
     let Ok((me, htf)) = hero.single() else { return };
@@ -300,8 +300,10 @@ pub(super) fn cast_abilities(
         dt,
     };
     // This machine's hero casts with the focus and the target its player chose.
-    let foes = foes_from(&enemies, htf.translation, target.0);
-    cast.cast(me, htf.translation, &mut run.me, &foes, *focus);
+    if run.me.dead_t.is_none() {
+        let foes = foes_from(&enemies, htf.translation, target.0);
+        cast.cast(me, htf.translation, &mut run.me, &foes, *focus);
+    }
     // A co-op guest's spells are cast here too, at the nearest.
     for (e, tf, mut state) in &mut peers {
         if state.dead_t.is_some() {

@@ -545,6 +545,12 @@ fn sync_me(
                 marks.clear();
                 marks.flush(e, guid.0, &mut store, &mut fields);
             }
+        } else if !vitals.dead && me.dead_t.is_some() {
+            // A party member got this hero back up on the host.
+            me.dead_t = None;
+            if let Ok((_, _, mut store, _)) = hero.single_mut() {
+                units::revive_unit(&mut store);
+            }
         }
     }
     // Right after a pick here the host's build may still be the one from before it.

@@ -138,6 +138,7 @@ impl Plugin for SurvivorsPlugin {
                     enemies::drop_loot,
                     enemies::collect_gems,
                     hero::hero_vitals,
+                    hero::revive,
                 )
                     .chain()
                     .after(WorldStage::Input)
@@ -376,6 +377,9 @@ pub(crate) struct Run {
     pub difficulty: difficulty::Difficulty,
     /// Heroes in the run, this one included: 1 alone, up to 4 in a co-op party. Sizes the horde.
     pub party: u32,
+    /// Every hero of the run is down (alone: this one): the horde, the drops and the clock stop
+    /// until the results. Kept by [`hero::hero_vitals`].
+    pub party_down: bool,
     /// This machine's hero.
     pub me: HeroState,
 }
@@ -408,6 +412,8 @@ pub(crate) struct HeroState {
     /// Choosing level-up cards in a co-op run, where the world goes on: the horde leaves the hero
     /// be and nothing hurts it meanwhile.
     pub picking: bool,
+    /// Seconds a party member has stood by this fallen hero without a break ([`hero::revive`]).
+    pub revive: f32,
     pub damage_done: f64,
     /// Bumped whenever abilities or passives change, so the HUD rebuilds the icon rows once.
     pub version: u32,
@@ -448,6 +454,7 @@ impl Default for Run {
             party_banner: (0, String::new()),
             difficulty: difficulty::Difficulty::default(),
             party: 1,
+            party_down: false,
             me: HeroState::default(),
         }
     }
@@ -474,6 +481,7 @@ impl Default for HeroState {
             mobile: mobility::MobilityState::default(),
             dead_t: None,
             picking: false,
+            revive: 0.0,
             damage_done: 0.0,
             version: 0,
             gear: mods::StatMods::default(),

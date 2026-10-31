@@ -114,7 +114,9 @@ pub(super) fn steer(auto: &Auto) -> Vec3 {
 }
 
 /// Toward the nearest gem, pushed off by every enemy close enough to bite, drifting home when
-/// there is nothing to pick up.
+/// there is nothing to pick up. A co-op host first goes to a fallen guest and stays beside it
+/// until it is back up.
+#[allow(clippy::type_complexity)]
 pub(super) fn plan(
     time: Res<Time<Real>>,
     mut auto: ResMut<Auto>,
@@ -122,12 +124,22 @@ pub(super) fn plan(
     hero: Query<&Transform, With<Hero>>,
     gems: Query<&Transform, (With<Gem>, Without<Hero>)>,
     foes: Query<(&Transform, &Enemy), Without<Hero>>,
+    fallen: Query<(&Transform, &super::HeroState), (With<super::hero::Peer>, Without<Hero>)>,
 ) {
     let Some(hero) = hero.single().ok().filter(|_| !auto.idle) else {
         auto.dir = Vec3::ZERO;
         return;
     };
     let at = hero.translation;
+    if let Some(to) = fallen
+        .iter()
+        .filter(|(_, s)| s.dead_t.is_some())
+        .map(|(t, _)| flat(t.translation - at))
+        .min_by(|a, b| a.length().total_cmp(&b.length()))
+    {
+        auto.dir = if to.length() > 1.5 { to.normalize_or_zero() } else { Vec3::ZERO };
+        return;
+    }
     let mut want = gems
         .iter()
         .map(|t| flat(t.translation - at))

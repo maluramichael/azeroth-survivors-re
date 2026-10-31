@@ -678,9 +678,14 @@ pub(super) fn mark_picking(
     }
 }
 
+/// Seconds every hero lies before the run is lost.
+const DOWN_SECS: f32 = 3.0;
+
 /// The clock, regeneration, the timed buffs and their visuals, death and victory. A co-op guest's
-/// puppet on the host lives by the same rules; its fall ends nothing.
-#[allow(clippy::type_complexity)]
+/// puppet on the host lives by the same rules. Alone the run ends when the hero falls; in a party
+/// a fallen hero waits to be revived ([`revive`]) and the run ends when all have lain
+/// [`DOWN_SECS`].
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub(super) fn hero_vitals(
     time: Res<Time>,
     mut run: ResMut<Run>,
@@ -692,6 +697,9 @@ pub(super) fn hero_vitals(
     >,
     mut fields: MessageWriter<FieldChanged>,
     mut fx: Fx,
+    mut chat: MessageWriter<super::chatlog::ChatLine>,
+    mut mail: ResMut<super::GuestMail>,
+    mut all_down: Local<f32>,
 ) {
     let dt = time.delta_secs();
     for (entity, guid, mut store, mut marks, mut state) in &mut peers {
@@ -705,31 +713,152 @@ pub(super) fn hero_vitals(
         } else if state.hp <= 0.0 {
             fall(&mut state, &mut store, &mut marks);
             marks.flush(entity, guid.0, &mut store, &mut fields);
+            mail.0.push((entity, super::Mail::Line(DOWN_LINE.into())));
+            info!("survivors: a guest's hero is down");
         }
     }
     let Ok((entity, guid, mut store, mut marks)) = hero.single_mut() else {
         return;
     };
+    let party = !peers.is_empty();
     if let Some(t) = run.dead_t.as_mut() {
         *t += dt;
-        if *t > 3.0 {
+    }
+    let standing = run.dead_t.is_none() || peers.iter().any(|(.., s)| s.dead_t.is_none());
+    run.party_down = !standing;
+    if !party {
+        *all_down = 0.0;
+        if run.dead_t.is_some_and(|t| t > DOWN_SECS) {
+            next.set(Phase::GameOver);
+        }
+        if run.dead_t.is_some() {
+            return;
+        }
+    } else if !standing {
+        *all_down += dt;
+        if *all_down > DOWN_SECS {
             next.set(Phase::GameOver);
         }
         return;
+    } else {
+        *all_down = 0.0;
     }
     run.elapsed += dt;
-    tend(&mut run.me, dt);
-    show_buffs(&run.me, &mut marks);
-    marks.flush(entity, guid.0, &mut store, &mut fields);
-
-    if run.hp <= 0.0 {
-        fall(&mut run.me, &mut store, &mut marks);
+    if run.dead_t.is_none() {
+        tend(&mut run.me, dt);
+        show_buffs(&run.me, &mut marks);
         marks.flush(entity, guid.0, &mut store, &mut fields);
-    } else if run.elapsed >= data::VICTORY_SECS {
+        if run.hp <= 0.0 {
+            fall(&mut run.me, &mut store, &mut marks);
+            marks.flush(entity, guid.0, &mut store, &mut fields);
+            if party {
+                chat.write(super::chatlog::ChatLine::system(DOWN_LINE));
+                info!("survivors: this hero is down; the party fights on");
+            }
+            return;
+        }
+    }
+    if run.elapsed >= data::VICTORY_SECS {
         run.won = true;
         // A last flourish before the results.
         fx.cast(entity, 642, &[entity], None);
         next.set(Phase::GameOver);
+    }
+}
+
+/// Said to a hero that fell while others stand.
+const DOWN_LINE: &str =
+    "You are down. A party member who stands beside you for three seconds gets you back up.";
+
+/// How near a party member must stand to a fallen hero, and how long, to get it back up; and the
+/// share of health it gets up with.
+const REVIVE_REACH: f32 = 3.0;
+const REVIVE_SECS: f32 = 3.0;
+const REVIVE_HEALTH: f32 = 0.5;
+/// The light that plays on a fallen hero while someone revives it, once a second, and as it gets
+/// up: Resurrection's (2006). Unverified against Spell.dbc that its kit shows on the target.
+const REVIVE_SPELL: u32 = 2006;
+
+/// One frame of a fallen hero's revival ([`revive_step`]).
+#[derive(Debug, PartialEq, Eq)]
+enum Revival {
+    /// No one beside it, or it stands.
+    Idle,
+    /// Someone is beside it; `pulse` on the first frame and on each new second.
+    Going { pulse: bool },
+    /// It gets up now.
+    Up,
+}
+
+/// `hero` at the end of `dt` with a helper beside it or not: the count runs on, starts over, or
+/// gets the hero up with [`REVIVE_HEALTH`] of its health.
+fn revive_step(hero: &mut HeroState, helped: bool, dt: f32) -> Revival {
+    if hero.dead_t.is_none() || !helped {
+        hero.revive = 0.0;
+        return Revival::Idle;
+    }
+    let before = hero.revive;
+    hero.revive += dt;
+    if hero.revive >= REVIVE_SECS {
+        hero.revive = 0.0;
+        hero.dead_t = None;
+        hero.hp = hero.stats().max_hp * REVIVE_HEALTH;
+        return Revival::Up;
+    }
+    Revival::Going {
+        pulse: before == 0.0 || before.floor() < hero.revive.floor(),
+    }
+}
+
+/// A fallen hero with a standing party member beside it (not one choosing cards) gets up after
+/// [`REVIVE_SECS`] with half its health; walking away starts the count over.
+#[allow(clippy::type_complexity)]
+pub(super) fn revive(
+    time: Res<Time>,
+    mut run: ResMut<Run>,
+    mut hero: Query<(Entity, &Transform, &mut ObjectStore), With<Hero>>,
+    mut peers: Query<(Entity, &Transform, &mut ObjectStore, &mut HeroState), (With<Peer>, Without<Hero>)>,
+    mut fx: Fx,
+    mut chat: MessageWriter<super::chatlog::ChatLine>,
+    mut mail: ResMut<super::GuestMail>,
+) {
+    let dt = time.delta_secs();
+    let Ok((me, my_tf, mut my_store)) = hero.single_mut() else {
+        return;
+    };
+    // Who can help: every standing hero that is not choosing cards.
+    let mut helpers: Vec<Vec3> = Vec::new();
+    if run.dead_t.is_none() && !run.picking {
+        helpers.push(my_tf.translation);
+    }
+    helpers.extend(
+        peers
+            .iter()
+            .filter(|(.., s)| s.dead_t.is_none() && !s.picking)
+            .map(|(_, tf, ..)| tf.translation),
+    );
+    let helped = |at: Vec3| helpers.iter().any(|h| flat(*h - at).length() <= REVIVE_REACH);
+    match revive_step(&mut run.me, helped(my_tf.translation), dt) {
+        Revival::Up => {
+            units::revive_unit(&mut my_store);
+            fx.cast(me, REVIVE_SPELL, &[me], None);
+            chat.write(super::chatlog::ChatLine::system("You are back on your feet."));
+            info!("survivors: this hero is back on its feet");
+        }
+        Revival::Going { pulse: true } => fx.impact(me, REVIVE_SPELL),
+        Revival::Going { pulse: false } | Revival::Idle => {}
+    }
+    for (p, tf, mut store, mut state) in &mut peers {
+        match revive_step(&mut state, helped(tf.translation), dt) {
+            Revival::Up => {
+                units::revive_unit(&mut store);
+                fx.cast(p, REVIVE_SPELL, &[p], None);
+                mail.0.push((p, super::Mail::Line("You are back on your feet.".into())));
+                info!("survivors: a guest's hero is back on its feet");
+            }
+            Revival::Going { pulse: true } => fx.impact(p, REVIVE_SPELL),
+            Revival::Going { pulse: false } | Revival::Idle => {}
+        }
     }
 }
 
@@ -822,6 +951,27 @@ mod tests {
 
     fn left_held(world: &World) -> bool {
         world.resource::<ButtonInput<MouseButton>>().pressed(MouseButton::Left)
+    }
+
+    #[test]
+    fn a_fallen_hero_gets_up_after_three_seconds_beside_a_friend() {
+        let class = &data::CLASSES[0];
+        let mut hero = HeroState::new(class, 1, Default::default(), Default::default());
+        assert_eq!(revive_step(&mut hero, true, 1.0), Revival::Idle, "a standing hero");
+        hero.hp = 0.0;
+        hero.dead_t = Some(0.0);
+        assert_eq!(revive_step(&mut hero, true, 0.5), Revival::Going { pulse: true });
+        assert_eq!(revive_step(&mut hero, true, 0.2), Revival::Going { pulse: false });
+        assert_eq!(revive_step(&mut hero, true, 0.5), Revival::Going { pulse: true });
+        // Walking away starts over.
+        assert_eq!(revive_step(&mut hero, false, 0.1), Revival::Idle);
+        assert_eq!(hero.revive, 0.0);
+        for _ in 0..29 {
+            assert_ne!(revive_step(&mut hero, true, 0.1), Revival::Up);
+        }
+        assert_eq!(revive_step(&mut hero, true, 0.11), Revival::Up);
+        assert!(hero.dead_t.is_none());
+        assert!((hero.hp / hero.stats().max_hp - REVIVE_HEALTH).abs() < 1e-4);
     }
 
     #[test]
