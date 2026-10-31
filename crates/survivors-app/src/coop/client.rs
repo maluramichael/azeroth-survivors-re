@@ -10,7 +10,7 @@ use bevy_replicon::prelude::{ClientState, ClientSystems, Remote};
 use super::{Session, ASIDE_YARDS};
 use super::smooth;
 use super::wire::{
-    CardAction, EndRun, FxBatch, NetPicked, Hello, Look, MoveInput, NetAuras, NetBuild, NetEnemy, NetFx, NetHero, NetPos,
+    CardAction, EndRun, FxBatch, Loadout, NetPicked, Hello, Look, MoveInput, NetAuras, NetBuild, NetEnemy, NetFx, NetHero, NetPos,
     NetRun, NetVitals, Refused, RunOver, StartRun, Welcome,
 };
 use crate::chatlog::ChatLine;
@@ -77,7 +77,7 @@ pub(super) fn plugin(app: &mut App) {
     )
     .add_systems(
         PostUpdate,
-        (send_moves, send_picks)
+        (send_moves, send_picks, send_loadout)
             .before(ClientSystems::Send)
             .run_if(resource_equals(NetRole::Client)),
     );
@@ -341,6 +341,26 @@ fn send_picks(
     recent.0 = time.elapsed_secs_f64();
 }
 
+/// What this guest's hero brings (profile bonus, talents, gear, world buffs), to the host when
+/// the run starts and whenever it changes.
+fn send_loadout(
+    run: Res<Run>,
+    phase: Res<State<Phase>>,
+    session: Res<Session>,
+    mut sent: Local<Option<Loadout>>,
+    mut out: MessageWriter<Loadout>,
+) {
+    if *phase.get() == Phase::Menu || session.link != super::Link::Joined {
+        *sent = None;
+        return;
+    }
+    let now = Loadout::of(&run.me);
+    if *sent != Some(now) {
+        out.write(now);
+        *sent = Some(now);
+    }
+}
+
 /// The serials of the bodies built here, counting up from [`BODY_SERIAL_BASE`].
 #[derive(Resource, Default)]
 struct Serials(u64);
@@ -482,8 +502,8 @@ fn sync_auras(
 }
 
 /// What the host says of this guest's hero is this machine's hero: its health, shield, gold and
-/// fall, and its spells, ranks and cooldowns. A guest plays with its class's plain numbers for
-/// now, so the profile's bonuses are taken off here as they are on the host.
+/// fall, and its spells, ranks and cooldowns. Its bonuses, gear and world buffs are this
+/// machine's, sent the other way ([`send_loadout`]).
 #[allow(clippy::type_complexity)]
 fn sync_me(
     mut run: ResMut<Run>,
@@ -510,10 +530,6 @@ fn sync_me(
         *seen = Some((*vitals, build.clone()));
     }
     let me = &mut run.me;
-    me.meta = Default::default();
-    me.talents = Default::default();
-    me.gear = Default::default();
-    me.buffs = Default::default();
     if fresh_vitals {
         me.hp = vitals.hp;
         me.shield = vitals.shield;

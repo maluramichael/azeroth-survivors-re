@@ -132,6 +132,8 @@ pub(super) struct Guest {
     pub client: Entity,
     pub player: u8,
     pub hello: wire::Hello,
+    /// The guest's last word on what its hero brings ([`wire::Loadout`]).
+    pub loadout: Option<wire::Loadout>,
 }
 
 /// The lowest free seat for a new guest out of `seats` ([`Lobby::seats`]); `None` when full.
@@ -255,6 +257,7 @@ mod tests {
         Guest {
             client: Entity::PLACEHOLDER,
             player,
+            loadout: None,
             hello: wire::Hello {
                 name: format!("P{player}"),
                 class_id: 8,

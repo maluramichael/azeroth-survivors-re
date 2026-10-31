@@ -11,7 +11,7 @@ use bevy_replicon::prelude::*;
 use bevy_replicon::server::server_tick::ServerTick;
 
 use super::wire::{
-    CardAction, EndRun, FxBatch, Hello, Look, MoveInput, NetAuras, NetBuild, NetEnemy, NetFx, NetHero,
+    CardAction, EndRun, FxBatch, Loadout, Hello, Look, MoveInput, NetAuras, NetBuild, NetEnemy, NetFx, NetHero,
     NetPos, NetRun, NetVitals, Refused, RunOver, StartRun, Welcome,
 };
 use crate::enemies::{self, Elite, Enemy};
@@ -40,7 +40,7 @@ pub(super) fn plugin(app: &mut App) {
     app.init_resource::<Pulse>()
         .add_systems(
             PreUpdate,
-            (greet, apply_moves, apply_cards)
+            (greet, apply_moves, apply_cards, apply_loadouts)
                 .chain()
                 .after(ServerSystems::Receive)
                 .run_if(hosting),
@@ -148,7 +148,10 @@ fn spawn_puppet(commands: &mut Commands, run: &mut Run, guest: &Guest, class: &'
     let e = hero::spawn_peer(commands, class, h.display, h.race, h.sex, serial, at, guest.player);
     // The guest plays with the plain numbers of its class for now; its profile's bonuses come
     // with stage three.
-    let state = HeroState::new(class, h.race, Default::default(), Default::default());
+    let mut state = HeroState::new(class, h.race, Default::default(), Default::default());
+    if let Some(loadout) = guest.loadout {
+        loadout.apply(&mut state);
+    }
     commands.entity(e).insert((
         state,
         Replicated,
@@ -258,6 +261,7 @@ fn greet(
             client,
             player,
             hello,
+            loadout: None,
         });
         welcome.write(ToClients {
             targets: to,
@@ -617,6 +621,32 @@ fn count_party(mut run: ResMut<Run>, puppets: Query<(), With<Peer>>) {
     }
 }
 
+/// A guest's profile, gear and world buffs reach its hero here, uncapped (the party trusts its
+/// guests); kept for a hero built again later in the run.
+fn apply_loadouts(
+    mut loadouts: MessageReader<FromClient<Loadout>>,
+    mut session: ResMut<Session>,
+    mut puppets: Query<(&Peer, &mut HeroState)>,
+) {
+    for m in loadouts.read() {
+        let ClientId::Client(client) = m.client_id else {
+            continue;
+        };
+        if !m.message.is_finite() {
+            continue;
+        }
+        let Some(guest) = session.guests.iter_mut().find(|g| g.client == client) else {
+            continue;
+        };
+        guest.loadout = Some(m.message);
+        for (peer, mut hero) in &mut puppets {
+            if peer.player == guest.player {
+                m.message.apply(&mut hero);
+            }
+        }
+    }
+}
+
 /// A guest's level-up pick lands on its hero here, if the hero may take it ([`hud::resolve`]); a
 /// skipped hand pays the guest its gold, at most what the party's level pays.
 fn apply_cards(
@@ -784,8 +814,8 @@ mod tests {
         let stays = app.world_mut().spawn(Peer { player: 1 }).id();
         let goes = app.world_mut().spawn(Peer { player: 2 }).id();
         app.world_mut().resource_mut::<Session>().guests = vec![
-            Guest { client: here, player: 1, hello: hello("Stays") },
-            Guest { client: gone, player: 2, hello: hello("Goes") },
+            Guest { client: here, player: 1, hello: hello("Stays"), loadout: None },
+            Guest { client: gone, player: 2, hello: hello("Goes"), loadout: None },
         ];
         app.update();
         let session = app.world().resource::<Session>();

@@ -2,9 +2,11 @@
 //! [`super::Run::stats`] after the passives and the profile's bonus. Every field adds; the
 //! multiplied stats take a fraction (0.1 = +10 %).
 
+use serde::{Deserialize, Serialize};
+
 use super::Stats;
 
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub(crate) struct StatMods {
     /// Added to might (1.0 is base damage).
     pub might: f32,

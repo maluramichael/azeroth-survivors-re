@@ -50,7 +50,7 @@ pub(super) struct Award {
 
 /// The meta progression's effect on a run, copied into [`Run::meta`] when the run starts so
 /// [`Run::stats`] stays a pure function of the run.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) struct MetaBonus {
     /// Multiplies max health.
     pub max_hp: f32,

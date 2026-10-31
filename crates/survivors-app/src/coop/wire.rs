@@ -170,6 +170,57 @@ impl NetPicked {
     }
 }
 
+/// What the guest's hero brings beyond its class: the profile's bonus and talents, the gear worn
+/// and the world buffs taken. Sent when the run starts and whenever one changes; taken as it is.
+#[derive(Message, Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct Loadout {
+    pub meta: crate::profile::MetaBonus,
+    pub talents: crate::mods::StatMods,
+    pub gear: crate::mods::StatMods,
+    pub buffs: crate::mods::StatMods,
+}
+
+impl Loadout {
+    pub fn of(hero: &crate::HeroState) -> Self {
+        Self {
+            meta: hero.meta,
+            talents: hero.talents,
+            gear: hero.gear,
+            buffs: hero.buffs,
+        }
+    }
+
+    /// Every number is a number: no NaN or infinity reaches the host's sums.
+    pub fn is_finite(&self) -> bool {
+        let m = &self.meta;
+        let meta = [m.max_hp, m.might, m.speed, m.haste, m.magnet, m.armor, m.regen, m.greed];
+        let mods = |s: &crate::mods::StatMods| {
+            [
+                s.might, s.max_hp, s.speed, s.regen, s.haste, s.area, s.magnet, s.growth, s.armor,
+                s.crit, s.greed,
+            ]
+        };
+        meta.iter()
+            .chain(&mods(&self.talents))
+            .chain(&mods(&self.gear))
+            .chain(&mods(&self.buffs))
+            .all(|v| v.is_finite())
+    }
+
+    /// Onto `hero`, keeping its share of health.
+    pub fn apply(&self, hero: &mut crate::HeroState) {
+        let before = hero.stats().max_hp.max(1.0);
+        let share = (hero.hp / before).clamp(0.0, 1.0);
+        hero.meta = self.meta;
+        hero.talents = self.talents;
+        hero.gear = self.gear;
+        hero.buffs = self.buffs;
+        if hero.dead_t.is_none() {
+            hero.hp = share * hero.stats().max_hp;
+        }
+    }
+}
+
 /// The guest took a level-up card or skipped a hand.
 #[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub(crate) struct CardAction(pub NetPicked);
@@ -341,6 +392,7 @@ pub(super) fn protocol(app: &mut App) {
         .add_client_message::<Hello>(Channel::Ordered)
         .add_client_message::<MoveInput>(Channel::Unreliable)
         .add_client_message::<CardAction>(Channel::Ordered)
+        .add_client_message::<Loadout>(Channel::Ordered)
         .add_server_message::<Welcome>(Channel::Ordered)
         .add_server_message::<Refused>(Channel::Ordered)
         .make_message_independent::<Refused>()
@@ -354,6 +406,22 @@ pub(super) fn protocol(app: &mut App) {
 mod tests {
     use super::*;
     use crate::units::UnitSpec;
+
+    #[test]
+    fn a_loadout_keeps_the_share_of_health_and_refuses_nan() {
+        let class = &crate::data::CLASSES[0];
+        let mut hero = crate::HeroState::new(class, 1, Default::default(), Default::default());
+        hero.hp = hero.stats().max_hp / 2.0;
+        let mut loadout = Loadout::of(&hero);
+        loadout.meta.max_hp = 2.0;
+        loadout.gear.might = 0.5;
+        assert!(loadout.is_finite());
+        loadout.apply(&mut hero);
+        assert!((hero.hp / hero.stats().max_hp - 0.5).abs() < 1e-4);
+        assert_eq!(hero.gear.might, 0.5);
+        loadout.buffs.crit = f32::NAN;
+        assert!(!loadout.is_finite());
+    }
 
     #[test]
     fn an_effect_maps_every_entity_it_names() {

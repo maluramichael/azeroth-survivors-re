@@ -1432,6 +1432,7 @@ mod tests {
         Guest {
             client: Entity::PLACEHOLDER,
             player,
+            loadout: None,
             hello: Hello {
                 name: name.into(),
                 class_id,
