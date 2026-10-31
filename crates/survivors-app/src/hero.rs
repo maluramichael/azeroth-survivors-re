@@ -424,6 +424,7 @@ pub(super) fn drop_stray_buttons(
 /// At the menu a slow orbit the player can take over: a left drag that began over the scene swings
 /// and tilts it, the wheel zooms, and the orbit resumes where it was left. In play, a drag with
 /// either mouse button swings and tilts it around the hero, as in WoW.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn place_camera(
     time: Res<Time<Real>>,
     phase: Res<State<Phase>>,
@@ -435,6 +436,12 @@ pub(super) fn place_camera(
     player: Res<benilla_app::survivors_host::player::Player>,
     ui: UiCover,
     world: WorldPoint,
+    collision: benilla_world::collision::WorldCollision,
+    prefs: Res<super::prefs::Prefs>,
+    mut shake: ResMut<super::prefs::Shake>,
+    // The arm length as drawn, pulled in by obstacles; 0 means "not set yet" and takes the
+    // first target as it is.
+    mut arm: Local<f32>,
     hero: Query<&Transform, (With<Hero>, Without<WorldCamera>)>,
     mut cams: Query<&mut Transform, With<WorldCamera>>,
 ) {
@@ -468,9 +475,10 @@ pub(super) fn place_camera(
         }
         if rig.menu_drag {
             rig.menu_idle = 0.0;
-            rig.orbit -= motion.delta.x * ORBIT_RATE;
-            rig.menu_pitch = (rig.menu_pitch + motion.delta.y * ORBIT_RATE)
-                .clamp(MENU_PITCH_MIN, MENU_PITCH_MAX);
+            let rate = ORBIT_RATE * prefs.camera_sensitivity;
+            rig.orbit -= motion.delta.x * rate;
+            rig.menu_pitch =
+                (rig.menu_pitch + motion.delta.y * rate).clamp(MENU_PITCH_MIN, MENU_PITCH_MAX);
         } else {
             rig.menu_idle += dt;
             // Ease the idle orbit in, so it does not lurch into motion; the tilt drifts home with it.
@@ -487,12 +495,16 @@ pub(super) fn place_camera(
         if let Some(h) = world.terrain_height_under(eye) {
             eye.y = eye.y.max(h + 0.6);
         }
+        // The in-run arm starts afresh when the run does.
+        *arm = 0.0;
         (eye, look)
     } else {
         // Either mouse button drags the camera around the hero, as in WoW.
         if mouse.any_pressed([MouseButton::Left, MouseButton::Right]) {
-            rig.yaw -= motion.delta.x * ORBIT_RATE;
-            rig.pitch = (rig.pitch + motion.delta.y * ORBIT_RATE).clamp(PITCH_MIN, PITCH_MAX);
+            let rate = ORBIT_RATE * prefs.camera_sensitivity;
+            let flip = if prefs.invert_pitch { -1.0 } else { 1.0 };
+            rig.yaw -= motion.delta.x * rate;
+            rig.pitch = (rig.pitch + flip * motion.delta.y * rate).clamp(PITCH_MIN, PITCH_MAX);
         }
         // The left and right arrows turn it, so one hand runs and strafes on WASD while the
         // other turns.
@@ -504,17 +516,87 @@ pub(super) fn place_camera(
         let (sy, cy) = rig.yaw.sin_cos();
         let (sp, cp) = rig.pitch.sin_cos();
         let look = focus + Vec3::Y * 1.4;
-        let mut eye = look + Vec3::new(cp * sy, sp, cp * cy) * rig.dist;
+        // Trees and buildings between the hero and the lens pull the eye in along the boom: fast
+        // in, slowly back out, so passing a trunk does not make the picture flicker.
+        let dir = Vec3::new(cp * sy, sp, cp * cy);
+        let hit = collision.cast_camera(look, dir * rig.dist, false);
+        let target = arm_target(rig.dist, hit);
+        *arm = ease_arm(*arm, target, dt);
+        let mut eye = look + dir * *arm;
         // Never under the ground: a low tilt on a slope would bury the lens.
         if let Some(h) = world.terrain_height_under(eye) {
             eye.y = eye.y.max(h + 0.6);
         }
+        let mut look = look;
+        if prefs.camera_shake && shake.trauma > 0.0 {
+            let (de, dl) = shake_offsets(shake.trauma, time.elapsed_secs(), *arm);
+            eye += de;
+            look += dl;
+        }
         (eye, look)
     };
+    // Always decays, shake on or off, so it never piles up.
+    if shake.trauma > 0.0 {
+        shake.trauma = (shake.trauma - SHAKE_DECAY * dt).max(0.0);
+    }
     let placed = Transform::from_translation(eye).looking_at(look, Vec3::Y);
     for mut cam in &mut cams {
         *cam = placed;
     }
+}
+
+/// The closest the boom is pulled in by an obstacle, yards (never past the zoom the player asked
+/// for).
+const ARM_MIN: f32 = 2.0;
+/// Time constants of the arm, seconds: pulled in by an obstacle it settles in about 0.1 s, let
+/// out again in about 0.5 s.
+const ARM_IN_TAU: f32 = 0.03;
+const ARM_OUT_TAU: f32 = 0.17;
+
+/// Largest shake offset of the eye, yards, at full trauma.
+const SHAKE_MAX_OFFSET: f32 = 0.35;
+/// Largest shake tilt of the view, radians (a degree), at full trauma.
+const SHAKE_MAX_ANGLE: f32 = 0.017_5;
+/// Trauma lost per second.
+const SHAKE_DECAY: f32 = 1.6;
+
+/// The arm length the camera wants: the zoom `dist`, or where the trace `hit` an obstacle (the
+/// distance along the boom the probe may reach), but not under [`ARM_MIN`].
+fn arm_target(dist: f32, hit: Option<f32>) -> f32 {
+    match hit {
+        Some(d) => d.max(ARM_MIN.min(dist)).min(dist),
+        None => dist,
+    }
+}
+
+/// One step of the drawn arm length toward `target`: a quick pull in, a slow let out. An `arm` of
+/// zero is unset and takes the target at once.
+fn ease_arm(arm: f32, target: f32, dt: f32) -> f32 {
+    if arm <= 0.0 {
+        return target;
+    }
+    let tau = if target < arm { ARM_IN_TAU } else { ARM_OUT_TAU };
+    arm + (target - arm) * (1.0 - (-dt / tau).exp())
+}
+
+/// Smooth noise in -1..1 from a sum of three sines; `seed` decorrelates the channels.
+fn shake_noise(t: f32, seed: f32) -> f32 {
+    0.5 * (t * 13.0 + seed).sin()
+        + 0.3 * (t * 21.0 + seed * 1.7).sin()
+        + 0.2 * (t * 34.0 + seed * 2.9).sin()
+}
+
+/// How far a shake of `trauma` (0..1) moves the eye and the look point at time `t` seconds, for
+/// an arm of `arm` yards: scaled by trauma squared, so small knocks barely show. The look point
+/// moves by the tilt's worth at that distance. Each axis stays within `trauma^2` times
+/// [`SHAKE_MAX_OFFSET`] (eye) or `arm * tan(SHAKE_MAX_ANGLE)` (look).
+fn shake_offsets(trauma: f32, t: f32, arm: f32) -> (Vec3, Vec3) {
+    let k = trauma.clamp(0.0, 1.0).powi(2);
+    let eye = Vec3::new(shake_noise(t, 1.0), shake_noise(t, 2.3), shake_noise(t, 3.7))
+        * (k * SHAKE_MAX_OFFSET);
+    let look = Vec3::new(shake_noise(t, 4.1), shake_noise(t, 5.9), shake_noise(t, 7.3))
+        * (k * arm * SHAKE_MAX_ANGLE.tan());
+    (eye, look)
 }
 
 /// Damage the hero takes from one blow, after immunity, armour and the shield; returns what got
@@ -646,6 +728,48 @@ mod tests {
 
     fn left_held(world: &World) -> bool {
         world.resource::<ButtonInput<MouseButton>>().pressed(MouseButton::Left)
+    }
+
+    #[test]
+    fn the_shake_stays_within_its_bounds_and_dies_with_trauma() {
+        let arm = 30.0;
+        for i in 0..400 {
+            let t = i as f32 * 0.05;
+            for trauma in [0.2_f32, 0.5, 1.0] {
+                let (e, l) = shake_offsets(trauma, t, arm);
+                let k = trauma * trauma;
+                assert!(e.abs().max_element() <= k * SHAKE_MAX_OFFSET + 1e-4);
+                assert!(l.abs().max_element() <= k * arm * SHAKE_MAX_ANGLE.tan() + 1e-4);
+            }
+            assert_eq!(shake_offsets(0.0, t, arm), (Vec3::ZERO, Vec3::ZERO));
+        }
+        let (e, _) = shake_offsets(1.0, 0.7, arm);
+        assert!(e.length() > 0.0, "a full shake does move the eye");
+    }
+
+    #[test]
+    fn an_obstacle_pulls_the_arm_in_fast_and_lets_it_out_slowly() {
+        assert_eq!(arm_target(30.0, None), 30.0);
+        assert_eq!(arm_target(30.0, Some(12.0)), 12.0);
+        assert_eq!(arm_target(30.0, Some(0.5)), ARM_MIN, "never closer than the minimum");
+        assert_eq!(arm_target(1.5, Some(0.5)), 1.5, "nor past the zoom asked for");
+        assert_eq!(arm_target(10.0, Some(40.0)), 10.0);
+
+        assert_eq!(ease_arm(0.0, 12.0, 0.016), 12.0, "unset takes the target");
+        let mut a = 30.0;
+        for _ in 0..6 {
+            a = ease_arm(a, 10.0, 1.0 / 60.0);
+        }
+        assert!(a < 10.0 + 20.0 * 0.07, "pulled in within about 0.1 s: {a}");
+        let mut b = 10.0;
+        for _ in 0..6 {
+            b = ease_arm(b, 30.0, 1.0 / 60.0);
+        }
+        assert!(b < 10.0 + 20.0 * 0.5, "let out slower: {b}");
+        for _ in 0..40 {
+            b = ease_arm(b, 30.0, 1.0 / 60.0);
+        }
+        assert!(b > 29.0, "but all the way within about 0.7 s: {b}");
     }
 
     #[test]
