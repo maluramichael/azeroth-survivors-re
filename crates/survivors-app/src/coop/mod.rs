@@ -7,6 +7,7 @@ mod discovery;
 mod host;
 mod lobby;
 mod net;
+mod party;
 mod smooth;
 mod wire;
 
@@ -31,6 +32,7 @@ pub(super) fn plugin(app: &mut App) {
     client::plugin(app);
     discovery::plugin(app);
     lobby::plugin(app);
+    party::plugin(app);
     app.init_resource::<Session>()
         .init_resource::<super::CoopUi>()
         .add_message::<CoopCommand>()
