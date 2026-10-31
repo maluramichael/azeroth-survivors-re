@@ -445,12 +445,14 @@ WebSocket, UPnP.
   replicon bei jedem Bevy-Upgrade mitgezogen wird.
 - **Level-up**: keine Pause. Das Spiel läuft weiter; wer gerade seine Karten wählt, ist dabei
   unverwundbar und wird von den Gegnern ignoriert (sie verfolgen ihn nicht und schlagen nicht zu).
-  Das ersetzt 3a und 3b in Stufe 3. Solo bleibt der Level-up wie heute (Pause), bis Stufe 3 die
-  Regel für beide Fälle festlegt.
+  Das ersetzt 3a und 3b in Stufe 3. Solo bleibt der Level-up wie heute (Pause); so bestätigt am
+  2026-10-31 für Stufe 3.
 - **Zeitpunkt**: jetzt, als nächste Runde auf `features`, ohne parallele Feature-Runde.
+- **Profil-Mitbringsel** (2026-10-31): nichts gekappt. Ein Gast bringt Ausrüstung, Talente,
+  Trainer- und Charakterboni, Perks und Weltbuffs ungeprüft mit.
 - Noch offen, mit Vorschlag als Standard bis Michael anders entscheidet: gemeinsame XP-Leiste (2),
-  LAN plus Tailscale und Portweiterleitung ohne UPnP (3), Profil-Mitbringsel gekappt (5), Host geht
-  beendet den Lauf (6), Koop auf `features` ohne Upstream-PR (8).
+  LAN plus Tailscale und Portweiterleitung ohne UPnP (3), Host geht beendet den Lauf (6), Koop auf
+  `features` ohne Upstream-PR (8).
 
 ## Offene Fragen an Michael
 
