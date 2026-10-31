@@ -26,10 +26,10 @@ build. A round runs like this:
 
 1. The orchestrator (the main session) lays the shared groundwork itself first: data types,
    resources and the hooks every feature needs, plus an empty module per feature already
-   registered in `survivors/mod.rs` (`pub(super) fn plugin(app: &mut App)`). Commit it.
+   registered in `crates/survivors-app/src/lib.rs` (`pub(super) fn plugin(app: &mut App)`). Commit it.
 2. Cheap implementer agents (Sonnet) run in parallel, one feature each, in the background. Each
    brief lists exactly which files or functions the agent owns; agents edit only those (Edit,
-   never a whole-file rewrite of a shared file), never touch `mod.rs`, run no git command that
+   never a whole-file rewrite of a shared file), never touch `lib.rs`, run no git command that
    changes state, never launch the game, and check with
    `CC=gcc cargo check -p survivors-app --profile play`, ignoring errors in files they do not own.
 3. The orchestrator then builds once (`cargo survivors`), fixes what breaks between features,
