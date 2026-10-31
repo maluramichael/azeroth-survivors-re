@@ -1,6 +1,6 @@
-//! WoW unit frames: the hero's portrait frame at the top left and a target frame beside it; a
-//! click on an enemy targets it, and the abilities favour the target ([`Target`], read by
-//! [`super::abilities`]).
+//! WoW unit frames: the hero's `PlayerFrame` at the top left and a `TargetFrame` beside it, both
+//! drawn from `UI-TargetingFrame` with the stock 1.12 offsets. A click on an enemy targets it,
+//! and the abilities favour the target ([`Target`], read by [`super::abilities`]).
 //!
 //! A click is a press and a release that stay put: the left button also drags the camera, so a
 //! drag targets nothing. A click on an enemy (the cursor's ray through its body, else the ground
@@ -19,30 +19,78 @@ use super::profile::Profile;
 use super::{Phase, Run, Selection};
 use benilla_app::survivors_host::vplates::con_color;
 
-const FRAME_W: f32 = 190.0;
-const FRAME_H: f32 = 54.0;
-const LEFT: f32 = 10.0;
-const TOP: f32 = 10.0;
-const GAP: f32 = 8.0;
-const PAD: f32 = 5.0;
-const PORTRAIT: f32 = 42.0;
-const COLUMN_GAP: f32 = 6.0;
-/// What the column beside the portrait has, so its bars run to the frame's edge.
-const COLUMN_W: f32 = FRAME_W - 2.0 * PAD - 2.0 - PORTRAIT - COLUMN_GAP;
+/// `PlayerFrame` and `TargetFrame` are 232x100 (`PlayerFrame.xml`, `TargetFrame.xml`).
+const FRAME_W: f32 = 232.0;
+const FRAME_H: f32 = 100.0;
+const LEFT: f32 = 4.0;
+const TOP: f32 = 2.0;
+/// The player frame sits at x 0, the target frame at x 250 in the stock layout.
+const GAP: f32 = 18.0;
+const PORTRAIT: f32 = 64.0;
+const PORTRAIT_Y: f32 = 12.0;
+/// The health and mana bars, 119x12 (`PlayerFrameHealthBar`, `PlayerFrameManaBar`).
+const BAR_W: f32 = 119.0;
+const BAR_H: f32 = 12.0;
+const HEALTH_Y: f32 = 41.0;
+const MANA_Y: f32 = 52.0;
+/// The plate behind the name and both bars, 119x41 at y 22 (`PlayerFrameBackground`).
+const PLATE_Y: f32 = 22.0;
+const PLATE_H: f32 = 41.0;
+const NAME_Y: f32 = 31.0;
+const LEVEL_Y: f32 = 66.0;
 /// Level with the HUD (400), over it, under the character window and the level-up cards.
 const Z: i32 = 401;
-const FILL: Color = Color::srgba(0.02, 0.02, 0.03, 0.85);
-const EDGE: Color = Color::srgba(0.8, 0.8, 0.8, 0.9);
-const BAR_BACK: Color = Color::srgba(0.0, 0.0, 0.0, 0.6);
-const HERO_BAR: Color = Color::srgb(0.1, 0.75, 0.1);
-const FOE_BAR: Color = Color::srgb(0.8, 0.12, 0.12);
+const PLATE: Color = Color::srgba(0.0, 0.0, 0.0, 0.55);
+const HOSTILE: Color = Color::srgba(0.62, 0.08, 0.08, 0.8);
+const HERO_BAR: Color = Color::srgb(0.0, 0.9, 0.0);
 const XP_BAR: Color = Color::srgb(0.58, 0.0, 0.55);
-const TAG: Color = Color::srgb(0.9, 0.9, 0.9);
 const CLASSES: &str = "Interface\\Glues\\CharacterCreate\\UI-CharacterCreate-Classes";
+/// The frame art, 256x128: the 232x100 frame is its columns from `0.09375` on, rows to `0.78125`.
+/// The player frame draws it mirrored (`PlayerFrameTexture` texcoords `1.0, 0.09375, 0, 0.78125`),
+/// the target frame as it is (`0.09375, 1.0, 0, 0.78125`).
+const FRAME_ART: &str = "Interface\\TargetingFrame\\UI-TargetingFrame";
+/// The gold dragon of an elite or a boss (`TargetFrame_CheckClassification`).
+const ELITE_ART: &str = "Interface\\TargetingFrame\\UI-TargetingFrame-Elite";
+const FRAME_TC: [f32; 4] = [0.09375, 1.0, 0.0, 0.78125];
+const STATUS_BAR: &str = "Interface\\TargetingFrame\\UI-StatusBar";
+/// The target's portraits: a grunt, an elite, a boss.
+const FOE_ICONS: [&str; 3] = [
+    "Interface\\Icons\\Ability_Creature_Cursed_02",
+    "Interface\\Icons\\INV_Misc_Bone_HumanSkull_01",
+    "Interface\\Icons\\INV_Misc_Head_Dragon_01",
+];
+const WHOLE: [f32; 4] = [0.0, 1.0, 0.0, 1.0];
 /// A press and release this close (screen px) are a click, not a camera drag.
 const CLICK_PX: f32 = 5.0;
 /// How far from the cursor's ground point an enemy still counts as clicked (yd, besides its radius).
 const AIM_YD: f32 = 1.5;
+
+/// Where a frame has its parts, from the frame's own top left: the player frame has the portrait
+/// on the left, the target frame on the right.
+#[derive(Clone, Copy)]
+struct Side {
+    portrait_x: f32,
+    bars_x: f32,
+    /// The centres of the name (over the bars) and the level (under the portrait).
+    name_x: f32,
+    level_x: f32,
+}
+
+/// `PlayerFrame.xml`: portrait at 42,-12, bars at 106, name at the frame's centre +50,+19, level
+/// at -63,-16.
+const PLAYER: Side = Side {
+    portrait_x: 42.0,
+    bars_x: 106.0,
+    name_x: 166.0,
+    level_x: 53.0,
+};
+/// `TargetFrame.xml`: portrait at the right edge -42, bars at 7, name at -50,+19, level at 63,-16.
+const TARGET: Side = Side {
+    portrait_x: 126.0,
+    bars_x: 7.0,
+    name_x: 66.0,
+    level_x: 179.0,
+};
 
 pub(super) fn plugin(app: &mut App) {
     app.init_resource::<FramesUi>()
@@ -139,22 +187,27 @@ fn click(
     }
 }
 
-/// The nodes the frames update, once built.
-struct Parts {
+/// The parts of one unit frame the systems update.
+struct Frame {
     root: Entity,
     name: Entity,
     level: Entity,
     hp_fill: Entity,
     hp_text: Entity,
-    xp_fill: Entity,
-    /// The target frame, its parts and the marker over the target's head.
-    foe: Entity,
-    foe_box: Entity,
-    foe_name: Entity,
-    foe_level: Entity,
-    foe_tag: Entity,
-    foe_fill: Entity,
-    foe_text: Entity,
+    mp_fill: Entity,
+    mp_text: Entity,
+    /// The gold dragon over the plain frame art.
+    elite: Entity,
+    /// The portrait layers, one shown at a time.
+    icons: Vec<Entity>,
+}
+
+/// The nodes the frames update, once built.
+struct Parts {
+    root: Entity,
+    hero: Frame,
+    foe: Frame,
+    /// The marker over the target's head.
     marker: Entity,
 }
 
@@ -188,89 +241,173 @@ fn text(font: &Handle<Font>, size: f32, color: Color) -> impl Bundle {
             offset: Vec2::splat(1.0),
             color: Color::BLACK,
         },
+        TextLayout::new(Justify::Center, LineBreak::NoWrap),
     )
 }
 
-/// A frame's outer panel at `left`.
-fn panel(left: f32, shown: bool) -> impl Bundle {
-    (
-        Node {
-            display: if shown { Display::Flex } else { Display::None },
-            position_type: PositionType::Absolute,
-            left: Val::Px(left),
-            top: Val::Px(TOP),
-            width: Val::Px(FRAME_W),
-            height: Val::Px(FRAME_H),
-            padding: UiRect::all(Val::Px(PAD)),
-            column_gap: Val::Px(COLUMN_GAP),
-            border: UiRect::all(Val::Px(1.0)),
-            border_radius: BorderRadius::all(Val::Px(5.0)),
-            ..default()
-        },
-        BackgroundColor(FILL),
-        BorderColor::all(EDGE),
-    )
-}
-
-/// The column beside the portrait.
-fn column() -> impl Bundle {
+/// A box at `x`,`y` from its parent's top left.
+fn put(x: f32, y: f32, w: f32, h: f32) -> Node {
     Node {
-        width: Val::Px(COLUMN_W),
-        flex_direction: FlexDirection::Column,
-        justify_content: JustifyContent::Center,
-        row_gap: Val::Px(2.0),
+        position_type: PositionType::Absolute,
+        left: Val::Px(x),
+        top: Val::Px(y),
+        width: Val::Px(w),
+        height: Val::Px(h),
         ..default()
     }
 }
 
-/// A line with a name on the left and something small on the right.
-fn row() -> impl Bundle {
-    Node {
-        width: Val::Percent(100.0),
-        height: Val::Px(14.0),
-        justify_content: JustifyContent::SpaceBetween,
-        align_items: AlignItems::Center,
-        ..default()
-    }
-}
-
-/// A health bar with its numbers over the fill, or a thin one with none.
-fn bar(height: f32) -> impl Bundle {
-    (
-        Node {
-            width: Val::Percent(100.0),
-            height: Val::Px(height),
+/// A line of text centred on `cx`,`cy`, clipped to `w` wide; the text's entity.
+fn label(
+    parent: &mut ChildSpawnerCommands,
+    font: &Handle<Font>,
+    size: f32,
+    color: Color,
+    cx: f32,
+    cy: f32,
+    w: f32,
+) -> Entity {
+    const H: f32 = 16.0;
+    let mut id = Entity::PLACEHOLDER;
+    parent
+        .spawn(Node {
             justify_content: JustifyContent::Center,
             align_items: AlignItems::Center,
             overflow: Overflow::clip(),
-            ..default()
-        },
-        BackgroundColor(BAR_BACK),
-    )
+            ..put(cx - w / 2.0, cy - H / 2.0, w, H)
+        })
+        .with_children(|slot| {
+            id = slot.spawn(text(font, size, color)).id();
+        });
+    id
 }
 
-fn fill(color: Color) -> impl Bundle {
+/// A bar's fill, `UI-StatusBar` tinted, in a 119x12 seat at `x`,`y`; the fill's entity.
+fn bar(parent: &mut ChildSpawnerCommands, x: f32, y: f32, tint: Color) -> Entity {
+    let mut id = Entity::PLACEHOLDER;
+    parent.spawn(put(x, y, BAR_W, BAR_H)).with_children(|seat| {
+        id = seat
+            .spawn((
+                Node {
+                    width: Val::Percent(100.0),
+                    height: Val::Percent(100.0),
+                    ..default()
+                },
+                ImageNode {
+                    color: Color::NONE,
+                    ..default()
+                },
+                UiArt::tinted(STATUS_BAR, tint),
+            ))
+            .id();
+    });
+    id
+}
+
+/// A portrait layer: the art clipped to a circle over a dark disc.
+struct Icon {
+    path: &'static str,
+    coords: [f32; 4],
+    shown: bool,
+}
+
+/// A frame art layer filling the frame.
+fn art(path: &'static str, flip: bool, shown: bool) -> impl Bundle {
     (
-        Node {
-            position_type: PositionType::Absolute,
-            left: Val::Px(0.0),
-            top: Val::Px(0.0),
-            height: Val::Percent(100.0),
-            width: Val::Percent(100.0),
+        put(0.0, 0.0, FRAME_W, FRAME_H),
+        ImageNode {
+            color: Color::NONE,
+            flip_x: flip,
             ..default()
         },
-        BackgroundColor(color),
+        UiArt::crop(path, FRAME_TC),
+        if shown {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        },
     )
 }
 
-fn rgb(hex: u32) -> Color {
-    Color::srgb_u8((hex >> 16) as u8, (hex >> 8) as u8, hex as u8)
+/// One unit frame at `left`: from the back the plate (with a `strip` colour behind the name), the
+/// portraits, the bars, the frame art (mirrored for the player; with the elite dragon over it for
+/// a target), then the texts, as the stock frames layer them.
+#[allow(clippy::too_many_arguments)]
+fn unit_frame(
+    root: &mut ChildSpawnerCommands,
+    font: &Handle<Font>,
+    left: f32,
+    side: Side,
+    flip: bool,
+    shown: bool,
+    strip: Option<Color>,
+    icons: &[Icon],
+    bars: [Color; 2],
+) -> Frame {
+    let mut f = Frame {
+        root: Entity::PLACEHOLDER,
+        name: Entity::PLACEHOLDER,
+        level: Entity::PLACEHOLDER,
+        hp_fill: Entity::PLACEHOLDER,
+        hp_text: Entity::PLACEHOLDER,
+        mp_fill: Entity::PLACEHOLDER,
+        mp_text: Entity::PLACEHOLDER,
+        elite: Entity::PLACEHOLDER,
+        icons: Vec::new(),
+    };
+    let mut frame = root.spawn(Node {
+        display: if shown { Display::Flex } else { Display::None },
+        ..put(left, TOP, FRAME_W, FRAME_H)
+    });
+    f.root = frame.id();
+    frame.with_children(|p| {
+        p.spawn((put(side.bars_x, PLATE_Y, BAR_W, PLATE_H), BackgroundColor(PLATE)));
+        if let Some(color) = strip {
+            p.spawn((put(side.bars_x, PLATE_Y, BAR_W, 19.0), BackgroundColor(color)));
+        }
+        for icon in icons {
+            f.icons.push(
+                p.spawn((
+                    Node {
+                        border_radius: BorderRadius::MAX,
+                        ..put(side.portrait_x, PORTRAIT_Y, PORTRAIT, PORTRAIT)
+                    },
+                    BackgroundColor(if icon.shown {
+                        Color::srgba(0.0, 0.0, 0.0, 0.6)
+                    } else {
+                        Color::NONE
+                    }),
+                    ImageNode {
+                        color: Color::NONE,
+                        ..default()
+                    },
+                    UiArt::crop(icon.path, icon.coords),
+                    if icon.shown {
+                        Visibility::Inherited
+                    } else {
+                        Visibility::Hidden
+                    },
+                ))
+                .id(),
+            );
+        }
+        f.hp_fill = bar(p, side.bars_x, HEALTH_Y, bars[0]);
+        f.mp_fill = bar(p, side.bars_x, MANA_Y, bars[1]);
+        p.spawn(art(FRAME_ART, flip, true));
+        f.elite = p.spawn(art(ELITE_ART, flip, false)).id();
+        f.name = label(p, font, 12.0, GOLD_TONE, side.name_x, NAME_Y, BAR_W - 6.0);
+        f.level = label(p, font, 12.0, GOLD_TONE, side.level_x, LEVEL_Y, 26.0);
+        let bars_cx = side.bars_x + BAR_W / 2.0;
+        f.hp_text = label(p, font, 10.0, Color::WHITE, bars_cx, HEALTH_Y + BAR_H / 2.0, BAR_W);
+        f.mp_text = label(p, font, 10.0, Color::WHITE, bars_cx, MANA_Y + BAR_H / 2.0, BAR_W);
+    });
+    f
 }
 
 fn build(commands: &mut Commands, ui: &mut FramesUi, font: &Handle<Font>, run: &Run) {
-    let mut hero = [Entity::PLACEHOLDER; 5];
-    let mut foe = [Entity::PLACEHOLDER; 8];
-    let class = rgb(run.class.color);
+    let mut hero = None;
+    let mut foe = None;
+    let mut marker = Entity::PLACEHOLDER;
     let root = commands
         .spawn((
             Node {
@@ -282,73 +419,45 @@ fn build(commands: &mut Commands, ui: &mut FramesUi, font: &Handle<Font>, run: &
             GlobalZIndex(Z),
         ))
         .with_children(|root| {
-            // The hero: the class icon, name and level, health, and the run's experience.
-            root.spawn(panel(LEFT, true)).with_children(|p| {
-                let coords =
-                    benilla_app::survivors_host::glue::art::class_tc(run.class.id).unwrap_or([0.0, 1.0, 0.0, 1.0]);
-                p.spawn((
-                    Node {
-                        width: Val::Px(PORTRAIT),
-                        height: Val::Px(PORTRAIT),
-                        border: UiRect::all(Val::Px(1.0)),
-                        flex_shrink: 0.0,
-                        ..default()
-                    },
-                    BorderColor::all(class),
-                    ImageNode {
-                        color: Color::NONE,
-                        ..default()
-                    },
-                    UiArt::crop(CLASSES, coords),
-                ));
-                p.spawn(column()).with_children(|c| {
-                    c.spawn(row()).with_children(|r| {
-                        hero[0] = r.spawn(text(font, 12.0, class)).id();
-                        hero[1] = r.spawn(text(font, 12.0, GOLD_TONE)).id();
-                    });
-                    c.spawn(bar(15.0)).with_children(|b| {
-                        hero[2] = b.spawn(fill(HERO_BAR)).id();
-                        hero[3] = b.spawn(text(font, 11.0, Color::WHITE)).id();
-                    });
-                    c.spawn(bar(5.0)).with_children(|b| {
-                        hero[4] = b.spawn(fill(XP_BAR)).id();
-                    });
-                });
+            // The hero: the class icon in the round portrait, name and level, health, and the run's
+            // experience where the mana would be.
+            let coords =
+                benilla_app::survivors_host::glue::art::class_tc(run.class.id).unwrap_or(WHOLE);
+            let class = [Icon {
+                path: CLASSES,
+                coords,
+                shown: true,
+            }];
+            hero = Some(unit_frame(
+                root,
+                font,
+                LEFT,
+                PLAYER,
+                true,
+                true,
+                None,
+                &class,
+                [HERO_BAR, XP_BAR],
+            ));
+            // The target: hidden until there is one; its portrait follows the kind of enemy.
+            let icons = FOE_ICONS.map(|path| Icon {
+                path,
+                coords: WHOLE,
+                shown: false,
             });
-            // The target: its level in the portrait's seat, name and tag, health.
-            let mut frame = root.spawn(panel(LEFT + FRAME_W + GAP, false));
-            foe[0] = frame.id();
-            frame.with_children(|p| {
-                let mut seat = p.spawn((
-                    Node {
-                        width: Val::Px(PORTRAIT),
-                        height: Val::Px(PORTRAIT),
-                        border: UiRect::all(Val::Px(1.0)),
-                        flex_shrink: 0.0,
-                        justify_content: JustifyContent::Center,
-                        align_items: AlignItems::Center,
-                        ..default()
-                    },
-                    BackgroundColor(BAR_BACK),
-                    BorderColor::all(EDGE),
-                ));
-                foe[1] = seat.id();
-                seat.with_children(|s| {
-                    foe[3] = s.spawn(text(font, 20.0, GOLD_TONE)).id();
-                });
-                p.spawn(column()).with_children(|c| {
-                    c.spawn(row()).with_children(|r| {
-                        foe[2] = r.spawn(text(font, 12.0, GOLD_TONE)).id();
-                        foe[4] = r.spawn(text(font, 10.0, TAG)).id();
-                    });
-                    c.spawn(bar(15.0)).with_children(|b| {
-                        foe[5] = b.spawn(fill(FOE_BAR)).id();
-                        foe[6] = b.spawn(text(font, 11.0, Color::WHITE)).id();
-                    });
-                });
-            });
+            foe = Some(unit_frame(
+                root,
+                font,
+                LEFT + FRAME_W + GAP,
+                TARGET,
+                false,
+                false,
+                Some(HOSTILE),
+                &icons,
+                [HERO_BAR, Color::NONE],
+            ));
             // A gold diamond over the target's head.
-            foe[7] = root
+            marker = root
                 .spawn((
                     Node {
                         position_type: PositionType::Absolute,
@@ -363,21 +472,14 @@ fn build(commands: &mut Commands, ui: &mut FramesUi, font: &Handle<Font>, run: &
                 .id();
         })
         .id();
+    let (Some(hero), Some(foe)) = (hero, foe) else {
+        return;
+    };
     ui.parts = Some(Parts {
         root,
-        name: hero[0],
-        level: hero[1],
-        hp_fill: hero[2],
-        hp_text: hero[3],
-        xp_fill: hero[4],
-        foe: foe[0],
-        foe_box: foe[1],
-        foe_name: foe[2],
-        foe_level: foe[3],
-        foe_tag: foe[4],
-        foe_fill: foe[5],
-        foe_text: foe[6],
-        marker: foe[7],
+        hero,
+        foe,
+        marker,
     });
 }
 
@@ -387,8 +489,24 @@ fn set<T: PartialEq>(slot: &mut T, v: T) {
     }
 }
 
+/// Show the layer `shown` of `layers` and hide the rest.
+fn pick_layer(vis: &mut Query<&mut Visibility>, layers: &[Entity], shown: usize) {
+    for (i, &e) in layers.iter().enumerate() {
+        if let Ok(mut v) = vis.get_mut(e) {
+            set(
+                &mut *v,
+                if i == shown {
+                    Visibility::Inherited
+                } else {
+                    Visibility::Hidden
+                },
+            );
+        }
+    }
+}
+
 /// Build the frames on the first frame of a run, then keep them current: the hero's health and
-/// experience, and the target's name, level, health and tag. A target gone or dead is dropped.
+/// experience, and the target's name, level, health and portrait. A target gone or dead is dropped.
 #[allow(clippy::too_many_arguments)]
 fn show(
     mut commands: Commands,
@@ -401,7 +519,7 @@ fn show(
     enemies: Query<&Enemy>,
     mut nodes: Query<&mut Node>,
     mut texts: Query<(&mut Text, &mut TextColor)>,
-    mut borders: Query<&mut BorderColor>,
+    mut vis: Query<&mut Visibility>,
 ) {
     let ui = &mut *ui;
     let Some(parts) = &ui.parts else {
@@ -415,21 +533,26 @@ fn show(
     let hp = (run.hp / stats.max_hp.max(1.0)).clamp(0.0, 1.0);
     let need = super::data::xp_to_next(run.level);
     let xp = (run.xp / need).clamp(0.0, 1.0);
-    for (entity, share) in [(parts.hp_fill, hp), (parts.xp_fill, xp)] {
+    for (entity, share) in [(parts.hero.hp_fill, hp), (parts.hero.mp_fill, xp)] {
         if let Ok(mut node) = nodes.get_mut(entity) {
             set(&mut node.width, Val::Percent(share * 100.0));
         }
     }
-    let class = rgb(run.class.color);
     let hp_line = format!(
         "{} / {}",
         hud::grouped(run.hp.max(0.0).ceil() as u64),
         hud::grouped(stats.max_hp.round() as u64)
     );
+    let xp_line = format!(
+        "{} / {}",
+        hud::grouped(run.xp.max(0.0) as u64),
+        hud::grouped(need.max(0.0) as u64)
+    );
     for (entity, value, color) in [
-        (parts.name, run.class.name.to_string(), class),
-        (parts.level, run.level.to_string(), GOLD_TONE),
-        (parts.hp_text, hp_line, Color::WHITE),
+        (parts.hero.name, run.class.name.to_string(), GOLD_TONE),
+        (parts.hero.level, run.level.to_string(), GOLD_TONE),
+        (parts.hero.hp_text, hp_line, Color::WHITE),
+        (parts.hero.mp_text, xp_line, Color::WHITE),
     ] {
         if let Ok((mut text, mut tc)) = texts.get_mut(entity) {
             set(&mut text.0, value);
@@ -445,7 +568,8 @@ fn show(
     if foe.is_none() && target.0.is_some() {
         target.0 = None;
     }
-    if let Ok(mut node) = nodes.get_mut(parts.foe) {
+    let f = &parts.foe;
+    if let Ok(mut node) = nodes.get_mut(f.root) {
         set(
             &mut node.display,
             if foe.is_some() {
@@ -463,18 +587,17 @@ fn show(
         .map_or(1, |(class, p)| p.character(class).level);
     let [r, g, b, a] = con_color(my_level, e.def.level);
     let con = Color::srgba(r, g, b, a);
-    let tag = if e.boss {
-        "Boss"
+    // The portrait and the border follow the kind: a boss and an elite wear the gold dragon.
+    let kind = if e.boss {
+        2
     } else if e.def.big {
-        "Elite"
+        1
     } else {
-        ""
+        0
     };
-    let edge = if e.boss { GOLD_TONE } else { EDGE };
-    if let Ok(mut border) = borders.get_mut(parts.foe_box) {
-        *border = BorderColor::all(edge);
-    }
-    if let Ok(mut node) = nodes.get_mut(parts.foe_fill) {
+    pick_layer(&mut vis, &f.icons, kind);
+    pick_layer(&mut vis, &[f.elite], if kind > 0 { 0 } else { 1 });
+    if let Ok(mut node) = nodes.get_mut(f.hp_fill) {
         set(
             &mut node.width,
             Val::Percent((e.hp / e.max_hp.max(1.0)).clamp(0.0, 1.0) * 100.0),
@@ -486,14 +609,9 @@ fn show(
         hud::grouped(e.max_hp.ceil() as u64)
     );
     for (entity, value, color) in [
-        (parts.foe_name, e.def.name.to_string(), GOLD_TONE),
-        (parts.foe_level, e.def.level.to_string(), con),
-        (
-            parts.foe_tag,
-            tag.to_string(),
-            if e.boss { GOLD_TONE } else { TAG },
-        ),
-        (parts.foe_text, foe_hp, Color::WHITE),
+        (f.name, e.def.name.to_string(), GOLD_TONE),
+        (f.level, e.def.level.to_string(), con),
+        (f.hp_text, foe_hp, Color::WHITE),
     ] {
         if let Ok((mut text, mut tc)) = texts.get_mut(entity) {
             set(&mut text.0, value);

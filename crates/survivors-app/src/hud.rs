@@ -142,7 +142,7 @@ impl UiArt {
         }
     }
 
-    fn tinted(path: &'static str, tint: Color) -> Self {
+    pub(super) fn tinted(path: &'static str, tint: Color) -> Self {
         Self {
             path,
             coords: [0.0, 1.0, 0.0, 1.0],
@@ -539,7 +539,7 @@ pub(super) fn setup_hud(
                         AbilityRow,
                         Node {
                             column_gap: Val::Px(4.0),
-                            margin: UiRect::top(Val::Px(62.0)),
+                            margin: UiRect::top(Val::Px(74.0)),
                             ..default()
                         },
                     ));
