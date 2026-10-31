@@ -1,42 +1,39 @@
-//! The run's pick screen, laid out like the 1.12 character create and select glue screens and built
-//! from their own widgets and art ([`crate::glue`]): the race, gender and class tower on the left,
-//! the zone list in the character-select frame on the right, Enter World at the bottom.
+//! The run's pick screen, built from the mode's own kit ([`super::kit`]): a title and the
+//! Talents, Trainer and Options tabs with the bank on top, the class and race picks in a panel on
+//! the left, the zone list in a panel on the right, and the character line, the difficulty and the
+//! Enter button at the bottom. The hero model stands in the open middle; it is a world scene
+//! behind the UI.
 //!
-//! The survivors HUD lays out on the 768-unit canvas through `UiScale`, so every glue builder here
-//! takes a unit scale.
+//! The survivors HUD lays out on the 768-unit canvas through `UiScale`, so every size here is in
+//! those units.
 
 use bevy::prelude::*;
-use bevy::ui_render::ui_material::MaterialNode;
 
-use super::hud::{looks_for, rgb, start_run, HudFont, MenuRoot};
+use super::hud::{self, looks_for, rgb, start_run, MenuRoot};
+use super::kit::{self, KitButton, KitFonts, KitStyle};
 use super::profile::{xp_to_next, zone_min_level, Profile, MAX_LEVEL};
 use super::{data, Phase, Rng, Run, Selection};
 use benilla_app::survivors_host::char_select::race_name;
-use benilla_app::survivors_host::glue::art::{class_tc, race_tc, tc_rect, GlueArt, DIM, GOLD, NAME_EDGE};
-use benilla_app::survivors_host::glue::backdrop::{backdrop_border, tiled_bg_node};
-use benilla_app::survivors_host::glue::widgets::{
-    abs, glue_button, icon_button, outlined_text, GlueBtnKind, GlueDisabled, GlueText, Hilight,
-    HoverLabel, LockHighlight,
-};
-use benilla_app::survivors_host::glue::GlueClicks;
+use benilla_app::survivors_host::glue::art::{class_tc, race_tc, tc_rect, GlueArt};
+use benilla_app::survivors_host::glue::GlueVisuals;
+use benilla_app::survivors_host::ui_action::Spells;
 
-/// The create screen's two race columns.
+/// The create screen's two race columns, here two rows.
 const ALLIANCE: [u8; 4] = [1, 3, 4, 7];
 const HORDE: [u8; 4] = [2, 5, 6, 8];
 
-/// `CharacterSelectCharacterFrame`'s border and fill tints.
-const FRAME_BORDER: Color = Color::srgb(0.8, 0.8, 0.8);
-const FRAME_FILL: Color = Color::srgba(0.09, 0.09, 0.09, 0.85);
+/// The side panels' width, and the room above them for the title bar.
+const PANEL_W: f32 = 300.0;
+const PANEL_TOP: f32 = 96.0;
+const PANEL_EDGE_GAP: f32 = 12.0;
 
-/// The tower ends under the class grid and Randomize, where the create screen's appearance dials
-/// would start: there is nothing to customise here.
-const TOWER_H: f32 = 590.0;
-
-/// The zone rows: the character-select row, compacted so every zone fits the 642-tall frame.
-const ROW_TOP: f32 = 44.0;
-const ROW_PITCH: f32 = 36.0;
-const ROW_H: f32 = 34.0;
-const ROW_W: f32 = 228.0;
+/// A class button's icon size and the cell around it (icon and name).
+const CLASS_ICON: f32 = 50.0;
+const CLASS_CELL_W: f32 = 88.0;
+/// A race face button.
+const RACE_ICON: f32 = 40.0;
+/// A zone row's height.
+const ZONE_ROW_H: f32 = 30.0;
 
 #[derive(Component, Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum MenuAction {
@@ -56,6 +53,7 @@ pub(super) struct MenuBuilt;
 #[derive(Component)]
 pub(super) struct RaceFace(u8);
 
+/// The character line above the Enter button ("Level 12 Night Elf Warrior").
 #[derive(Component)]
 pub(super) struct PickName;
 
@@ -134,7 +132,151 @@ fn set(sel: &mut Selection, all: &[Vec<(u32, u8, u8)>], class: usize, look: usiz
     sel.version += 1;
 }
 
+/// A tab in the top bar: opens one of the windows that are built into the screen.
+#[derive(Component, Clone, Copy, PartialEq, Eq, Debug)]
+enum MenuTab {
+    Talents,
+    Trainer,
+    Options,
+}
+
+/// The bank's number in the top bar.
+#[derive(Component)]
+struct BankText;
+
+/// A zone row's name text.
+#[derive(Component)]
+struct ZoneName(usize);
+
+/// A zone row's level text; `lo` and `hi` are the lowest and highest creature level of the zone.
+#[derive(Component)]
+struct ZoneLevels {
+    map: usize,
+    lo: u32,
+    hi: u32,
+}
+
+/// A zone row, painted by selection and hover.
+#[derive(Component)]
+struct ZoneRow(usize);
+
+/// A zone row's padlock, shown while the selected class's character is below the zone.
+#[derive(Component)]
+struct ZoneLock(usize);
+
+/// The red "Requires level X" line above the character line.
+#[derive(Component)]
+struct ZoneWarn;
+
+/// The fill of the character's XP bar under [`PickName`].
+#[derive(Component)]
+struct PickXpFill;
+
+/// The Enter button, whose caption names the zone picked.
+#[derive(Component)]
+struct EnterButton;
+
+/// The picked class's name in the left panel, in its class colour.
+#[derive(Component)]
+struct ClassTitle;
+
+/// A stat box's value text in the left panel.
+#[derive(Component, Clone, Copy, PartialEq, Eq)]
+enum StatValue {
+    Health,
+    Start,
+    Zones,
+}
+
+/// A zone row's fill and edge: picked, and hovered.
+const ROW_FILL_ON: Color = Color::srgba(0.22, 0.16, 0.07, 0.6);
+const ROW_FILL_HOT: Color = Color::srgba(0.12, 0.09, 0.04, 0.55);
+const ROW_EDGE_ON: Color = Color::srgb(0.98, 0.82, 0.45);
+const ROW_EDGE_HOT: Color = Color::srgb(0.85, 0.68, 0.36);
+/// The HUD's XP bar colour.
+const XP_PURPLE: Color = Color::srgb(0.58, 0.0, 0.55);
+
+/// A face (sheet and crop) for a race button, or `None` while the art is not in.
+fn race_face(art: &GlueArt, race: u8) -> Option<(Handle<Image>, Rect)> {
+    let (sheet, size) = art.races.as_ref()?;
+    race_tc(race, 0).map(|tc| (sheet.clone(), tc_rect(*size, tc)))
+}
+
+/// A face (sheet and crop) for a class button, or `None` while the art is not in.
+fn class_face(art: &GlueArt, class: u8) -> Option<(Handle<Image>, Rect)> {
+    let (sheet, size) = art.classes.as_ref()?;
+    class_tc(class).map(|tc| (sheet.clone(), tc_rect(*size, tc)))
+}
+
+/// The lowest and highest creature level of `map`.
+fn zone_levels(map: usize) -> (u32, u32) {
+    let levels = data::roster(map).enemies.iter().map(|e| e.level);
+    let lo = levels.clone().min().unwrap_or(1);
+    let hi = levels.max().unwrap_or(lo);
+    (lo, hi)
+}
+
+/// "Level 12" or "Level 12-20".
+fn level_range(lo: u32, hi: u32) -> String {
+    if lo == hi {
+        format!("Level {lo}")
+    } else {
+        format!("Level {lo}-{hi}")
+    }
+}
+
+/// A square kit button with a picture in it (a race face, a class icon). `face_marker` goes on
+/// the picture, so a refresh can find it. The button carries [`KitButton`], so `selected` lights
+/// its edge.
+fn icon_button(
+    parent: &mut ChildSpawnerCommands,
+    size: f32,
+    action: MenuAction,
+    face: Option<(Handle<Image>, Rect)>,
+    face_marker: impl Bundle,
+) {
+    let px = Val::Px;
+    parent
+        .spawn((
+            Button,
+            action,
+            KitButton::default(),
+            Node {
+                width: px(size),
+                height: px(size),
+                border: UiRect::all(px(2.0)),
+                border_radius: BorderRadius::all(px(3.0)),
+                ..default()
+            },
+            BackgroundGradient::from(LinearGradient::to_bottom(vec![
+                ColorStop::percent(Color::srgb(0.20, 0.075, 0.05), 0.0),
+                ColorStop::percent(Color::srgb(0.11, 0.04, 0.03), 100.0),
+            ])),
+            BorderColor::all(Color::srgb(0.55, 0.42, 0.21)),
+        ))
+        .with_children(|b| {
+            let image = match face {
+                Some((sheet, rect)) => ImageNode {
+                    image: sheet,
+                    rect: Some(rect),
+                    ..default()
+                },
+                None => ImageNode::default(),
+            };
+            b.spawn((
+                image,
+                Node {
+                    width: Val::Percent(100.0),
+                    height: Val::Percent(100.0),
+                    ..default()
+                },
+                face_marker,
+            ));
+        });
+}
+
 /// Build the screen into [`MenuRoot`] once the archives are readable, so the glue art is there.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn build_menu(
     mut commands: Commands,
     roots: Query<Entity, (With<MenuRoot>, Without<MenuBuilt>)>,
@@ -142,395 +284,396 @@ pub(super) fn build_menu(
     mut art: ResMut<GlueArt>,
     mut images: ResMut<Assets<Image>>,
     mut add_mats: ResMut<Assets<benilla_app::survivors_host::glue::add_material::AddUiMaterial>>,
-    font: Res<HudFont>,
+    kit_fonts: Res<KitFonts>,
 ) {
     let Ok(root) = roots.single() else { return };
     let Some(mut assets) = assets else { return };
     art.ensure_loaded(&mut assets, &mut images, &mut add_mats);
-    let f = &font.0;
+    let lock = assets.sprite_texture("Interface\\ChatFrame\\UI-ChatFrame-LockIcon", &mut images);
+    let skull = assets.sprite_texture(super::difficulty::SKULL, &mut images);
+    let art = &*art;
+    let fonts = &*kit_fonts;
     commands.entity(root).insert(MenuBuilt).with_children(|ui| {
-        tower(ui, &art, f);
-        // `CharacterCreateWoWLogo`, 256×128 at TOPLEFT (3,-7), after the tower so it draws over
-        // the border art, as the create screen orders it.
-        if let Some(logo) = &art.logo {
-            ui.spawn((
-                ImageNode::new(logo.clone()),
-                abs(1.0, 3.0, 7.0, 256.0, 128.0),
-            ));
-        }
-        zone_frame(ui, &art, f);
-
-        // `CharSelectCharacterName`, GlueFontNormalHuge at BOTTOM (0,100).
-        ui.spawn(Node {
-            position_type: PositionType::Absolute,
-            bottom: Val::Px(100.0),
-            width: Val::Percent(100.0),
-            justify_content: JustifyContent::Center,
-            ..default()
-        })
-        .with_children(|c| {
-            outlined_text(
-                c,
-                Node::default(),
-                (),
-                PickName,
-                GlueText {
-                    text: "",
-                    size: 22.0,
-                    color: GOLD,
-                    wrap: false,
-                },
-                f,
-                1.0,
-            );
-        });
-        // `CharSelectEnterWorldButton`, 200×60 at BOTTOM (0,30).
-        ui.spawn(Node {
-            position_type: PositionType::Absolute,
-            bottom: Val::Px(30.0),
-            width: Val::Percent(100.0),
-            justify_content: JustifyContent::Center,
-            ..default()
-        })
-        .with_children(|c| {
-            glue_button(
-                c,
-                &art,
-                f,
-                MenuAction::Enter,
-                "Enter World",
-                200.0,
-                60.0,
-                GlueBtnKind::Normal,
-                1.0,
-            );
-        });
+        top_bar(ui, fonts);
+        class_panel(ui, fonts, art);
+        zone_panel(ui, fonts, lock);
+        bottom_block(ui, fonts, skull);
     });
 }
 
-/// `CharacterCreateConfigurationFrame`, 206×600 at TOPLEFT (28,-74): the race columns under the
-/// faction banners, the gender pair, the class grid, the class text and Randomize.
-fn tower(ui: &mut ChildSpawnerCommands, art: &GlueArt, f: &Handle<Font>) {
+/// The top bar: the title, the three tabs under it and the bank at the right end.
+fn top_bar(ui: &mut ChildSpawnerCommands, fonts: &KitFonts) {
     let px = Val::Px;
     ui.spawn(Node {
         position_type: PositionType::Absolute,
-        left: px(28.0),
-        top: px(74.0),
-        width: px(206.0),
-        height: px(TOWER_H),
+        top: px(8.0),
+        width: Val::Percent(100.0),
+        flex_direction: FlexDirection::Column,
+        align_items: AlignItems::Center,
+        row_gap: px(6.0),
         ..default()
     })
-    .with_children(|tower| {
-        if let Some(bg) = &art.tower_bg {
-            tower.spawn((
-                ImageNode::new(bg.clone()),
-                abs(1.0, -3.0, 0.0, 218.0, TOWER_H + 6.0),
-            ));
-        }
-        // The create tower's top piece, then its foot piece cut to end where the class grid does.
-        if let Some((border, size)) = &art.tower_border {
-            for (top, height, tc) in [
-                (0.0, 236.0, [0.0, 0.875, 0.0, 0.9375]),
-                (
-                    236.0,
-                    TOWER_H - 236.0 + 6.0,
-                    [
-                        0.0,
-                        0.875,
-                        1.0 - (TOWER_H - 236.0 + 6.0) / 256.0 * 0.8203125 / (210.0 / 256.0),
-                        1.0,
-                    ],
-                ),
+    .with_children(|bar| {
+        bar.spawn(kit::title(fonts, "Azeroth Survivors", 40.0));
+        bar.spawn(Node {
+            column_gap: px(8.0),
+            ..default()
+        })
+        .with_children(|tabs| {
+            for (tab, caption) in [
+                (MenuTab::Talents, "Talents"),
+                (MenuTab::Trainer, "Trainer"),
+                (MenuTab::Options, "Options"),
             ] {
-                tower.spawn((
-                    ImageNode {
-                        image: border.clone(),
-                        rect: Some(tc_rect(*size, tc)),
+                kit::button(
+                    tabs,
+                    fonts,
+                    KitStyle::Tab,
+                    caption,
+                    None,
+                    Node {
+                        width: px(112.0),
+                        height: px(28.0),
                         ..default()
                     },
-                    abs(1.0, -9.0, top, 224.0, height),
-                ));
+                    tab,
+                );
             }
-        }
-        if let Some(banners) = &art.banners {
-            tower.spawn((
-                ImageNode::new(banners.clone()),
-                abs(1.0, -27.0, 60.0, 256.0, 259.0),
-            ));
-        }
-        for (label, center) in [("Alliance", 51.0), ("Horde", 151.0)] {
-            outlined_text(
-                tower,
-                Node {
-                    justify_content: JustifyContent::Center,
-                    ..abs(1.0, center - 60.0, 40.0, 120.0, 17.0)
-                },
-                (),
-                (),
-                GlueText {
-                    text: label,
-                    size: 15.0,
-                    color: GOLD,
-                    wrap: false,
-                },
-                f,
-                1.0,
-            );
-        }
+        });
+    });
+    // The bank, at the right end of the bar.
+    ui.spawn(Node {
+        position_type: PositionType::Absolute,
+        right: px(20.0),
+        top: px(18.0),
+        align_items: AlignItems::Center,
+        column_gap: px(5.0),
+        ..default()
+    })
+    .with_children(|bank| {
+        bank.spawn(hud::coin_icon(14.0));
+        bank.spawn((BankText, kit::body(fonts, "", 16.0, kit::CREAM)));
+    });
+}
 
-        for (faction, left) in [(ALLIANCE, 33.0), (HORDE, 127.0)] {
-            tower
-                .spawn(Node {
-                    position_type: PositionType::Absolute,
-                    left: px(left),
-                    top: px(68.0),
-                    flex_direction: FlexDirection::Column,
-                    row_gap: px(5.0),
-                    ..default()
-                })
-                .with_children(|col| {
-                    for race in faction {
-                        let face = art.races.as_ref().and_then(|(sheet, size)| {
-                            race_tc(race, 0).map(|tc| (sheet.clone(), tc_rect(*size, tc)))
-                        });
-                        icon_button(
-                            col,
-                            f,
-                            MenuAction::Race(race),
-                            Some(RaceFace(race)),
-                            face,
-                            None::<()>,
-                            race_name(race),
-                            art,
-                            1.0,
-                        );
-                    }
-                });
-        }
+/// The left panel: the class grid, the races and genders, the class title with its stat boxes,
+/// and Randomize.
+fn class_panel(ui: &mut ChildSpawnerCommands, fonts: &KitFonts, art: &GlueArt) {
+    let px = Val::Px;
+    ui.spawn(kit::panel(Node {
+        position_type: PositionType::Absolute,
+        left: px(PANEL_EDGE_GAP),
+        top: px(PANEL_TOP),
+        bottom: px(PANEL_EDGE_GAP),
+        width: px(PANEL_W),
+        flex_direction: FlexDirection::Column,
+        padding: UiRect::all(px(14.0)),
+        row_gap: px(6.0),
+        ..default()
+    }))
+    .with_children(|panel| {
+        kit::heading(panel, fonts, "Class", 20.0);
 
-        tower
+        // The class grid, three to a row; a class the race cannot be leaves it.
+        panel
             .spawn(Node {
-                position_type: PositionType::Absolute,
-                left: px(53.0),
-                top: px(303.0),
-                flex_direction: FlexDirection::Row,
-                column_gap: px(5.0),
-                ..default()
-            })
-            .with_children(|g| {
-                for (sex, label) in [(0u8, "Male"), (1u8, "Female")] {
-                    let face = art.gender.as_ref().map(|(sheet, size)| {
-                        let half = if sex == 0 {
-                            [0.0, 0.5, 0.0, 1.0]
-                        } else {
-                            [0.5, 1.0, 0.0, 1.0]
-                        };
-                        (sheet.clone(), tc_rect(*size, half))
-                    });
-                    icon_button(
-                        g,
-                        f,
-                        MenuAction::Sex(sex),
-                        None::<()>,
-                        face,
-                        None::<()>,
-                        label,
-                        art,
-                        1.0,
-                    );
-                }
-            });
-
-        tower
-            .spawn(Node {
-                position_type: PositionType::Absolute,
-                // The gender pair's centre line: 53 + (2·48 + 5)/2 ≈ 103.
-                left: px(103.0 - (3.0 * 48.0 + 2.0 * 4.0) / 2.0),
-                width: px(3.0 * 48.0 + 2.0 * 4.0),
-                top: px(368.0),
+                width: Val::Percent(100.0),
                 flex_direction: FlexDirection::Row,
                 flex_wrap: FlexWrap::Wrap,
                 justify_content: JustifyContent::Center,
                 column_gap: px(4.0),
-                row_gap: px(4.0),
+                row_gap: px(6.0),
                 ..default()
             })
             .with_children(|grid| {
                 for (i, class) in data::CLASSES.iter().enumerate() {
-                    let face = art.classes.as_ref().and_then(|(sheet, size)| {
-                        class_tc(class.id).map(|tc| (sheet.clone(), tc_rect(*size, tc)))
+                    grid.spawn(Node {
+                        width: px(CLASS_CELL_W),
+                        flex_direction: FlexDirection::Column,
+                        align_items: AlignItems::Center,
+                        row_gap: px(2.0),
+                        ..default()
+                    })
+                    .with_children(|cell| {
+                        icon_button(cell, CLASS_ICON, MenuAction::Class(i), class_face(art, class.id), ());
+                        cell.spawn((
+                            kit::body(fonts, class.name, 11.0, kit::CREAM),
+                            TextLayout::new_with_justify(Justify::Center),
+                        ));
                     });
-                    icon_button(
-                        grid,
-                        f,
-                        MenuAction::Class(i),
-                        None::<()>,
-                        face,
-                        None::<()>,
-                        class.name,
-                        art,
-                        1.0,
+                }
+            });
+
+        // The races, one row per faction.
+        for (faction, races) in [("Alliance", ALLIANCE), ("Horde", HORDE)] {
+            panel
+                .spawn(Node {
+                    width: Val::Percent(100.0),
+                    align_items: AlignItems::Center,
+                    column_gap: px(6.0),
+                    ..default()
+                })
+                .with_children(|row| {
+                    row.spawn(Node {
+                        width: px(62.0),
+                        ..default()
+                    })
+                    .with_children(|l| {
+                        l.spawn(kit::label(fonts, faction));
+                    });
+                    for race in races {
+                        icon_button(row, RACE_ICON, MenuAction::Race(race), race_face(art, race), RaceFace(race));
+                    }
+                });
+        }
+
+        // The gender pair.
+        panel
+            .spawn(Node {
+                width: Val::Percent(100.0),
+                justify_content: JustifyContent::Center,
+                column_gap: px(6.0),
+                ..default()
+            })
+            .with_children(|row| {
+                for (sex, caption) in [(0u8, "Male"), (1u8, "Female")] {
+                    kit::button(
+                        row,
+                        fonts,
+                        KitStyle::Normal,
+                        caption,
+                        None,
+                        Node {
+                            width: px(84.0),
+                            height: px(26.0),
+                            ..default()
+                        },
+                        MenuAction::Sex(sex),
                     );
                 }
             });
 
-        tower
+        panel.spawn(kit::rule(Val::Percent(100.0)));
+
+        // The pick, named in its class colour, and what it brings.
+        panel
             .spawn(Node {
-                position_type: PositionType::Absolute,
-                left: px(30.0),
-                top: px(TOWER_H - 46.0),
+                width: Val::Percent(100.0),
+                justify_content: JustifyContent::Center,
                 ..default()
             })
-            .with_children(|r| {
-                glue_button(
-                    r,
-                    art,
-                    f,
-                    MenuAction::Randomize,
-                    "Randomize",
-                    146.0,
-                    30.0,
-                    GlueBtnKind::Small,
-                    1.0,
-                );
+            .with_children(|row| {
+                row.spawn((ClassTitle, kit::text(&fonts.title, "", 22.0, kit::TITLE)));
             });
+        panel
+            .spawn(Node {
+                width: Val::Percent(100.0),
+                column_gap: px(6.0),
+                ..default()
+            })
+            .with_children(|row| {
+                for (caption, marker) in [("Health", StatValue::Health), ("Zones open", StatValue::Zones)] {
+                    kit::stat_box(
+                        row,
+                        fonts,
+                        caption,
+                        "",
+                        Node {
+                            flex_grow: 1.0,
+                            flex_basis: px(0.0),
+                            ..default()
+                        },
+                        marker,
+                    );
+                }
+            });
+        kit::stat_box(
+            panel,
+            fonts,
+            "Starts with",
+            "",
+            Node {
+                width: Val::Percent(100.0),
+                ..default()
+            },
+            StatValue::Start,
+        );
+
+        // Randomize sits at the foot of the panel.
+        panel.spawn(Node {
+            flex_grow: 1.0,
+            ..default()
+        });
+        kit::button(
+            panel,
+            fonts,
+            KitStyle::Normal,
+            "Randomize",
+            None,
+            Node {
+                width: Val::Percent(100.0),
+                height: px(28.0),
+                ..default()
+            },
+            MenuAction::Randomize,
+        );
     });
 }
 
-/// The zone list in `CharacterSelectCharacterFrame` (260×642 at TOPRIGHT (-5,-15)), one
-/// character-row per zone, lowest level first.
-fn zone_frame(ui: &mut ChildSpawnerCommands, art: &GlueArt, f: &Handle<Font>) {
+/// The right panel: one row per zone, lowest level first. A locked zone is dimmed, with its
+/// padlock; `refresh_zone_rows` keeps them current.
+fn zone_panel(ui: &mut ChildSpawnerCommands, fonts: &KitFonts, lock: Option<Handle<Image>>) {
     let px = Val::Px;
     let mut order: Vec<(usize, u32, u32)> = (0..data::MAPS.len())
         .map(|i| {
-            let levels = data::roster(i).enemies.iter().map(|e| e.level);
-            let lo = levels.clone().min().unwrap_or(1);
-            let hi = levels.max().unwrap_or(lo);
+            let (lo, hi) = zone_levels(i);
             (i, lo, hi)
         })
         .collect();
     order.sort_by_key(|&(i, lo, _)| (lo, data::MAPS[i].name));
 
-    ui.spawn(Node {
+    ui.spawn(kit::panel(Node {
         position_type: PositionType::Absolute,
-        right: px(5.0),
-        top: px(15.0),
-        width: px(260.0),
-        height: px(642.0),
+        right: px(PANEL_EDGE_GAP),
+        top: px(PANEL_TOP),
+        bottom: px(PANEL_EDGE_GAP),
+        width: px(PANEL_W),
+        flex_direction: FlexDirection::Column,
+        padding: UiRect::all(px(14.0)),
+        row_gap: px(6.0),
         ..default()
-    })
-    .with_children(|frame| {
-        if let (Some(bg), Some(border)) = (&art.tooltip_bg, &art.name_border) {
-            frame.spawn((
-                tiled_bg_node(bg.clone(), NAME_EDGE, 1.0, FRAME_FILL),
-                Node {
-                    position_type: PositionType::Absolute,
-                    left: px(10.0),
-                    right: px(5.0),
-                    top: px(4.0),
-                    bottom: px(9.0),
-                    ..default()
-                },
-            ));
-            backdrop_border(frame, border, NAME_EDGE, FRAME_BORDER);
-        } else {
-            frame.spawn((BackgroundColor(FRAME_FILL), benilla_app::survivors_host::glue::widgets::overlay()));
-        }
-        outlined_text(
-            frame,
-            Node {
-                position_type: PositionType::Absolute,
-                top: px(12.0),
+    }))
+    .with_children(|panel| {
+        kit::heading(panel, fonts, "Zone", 20.0);
+        panel
+            .spawn(Node {
                 width: Val::Percent(100.0),
-                justify_content: JustifyContent::Center,
+                flex_grow: 1.0,
+                min_height: px(0.0),
+                flex_direction: FlexDirection::Column,
+                row_gap: px(4.0),
+                overflow: Overflow::scroll_y(),
                 ..default()
-            },
-            (),
-            (),
-            GlueText {
-                text: "Choose a Zone",
-                size: 18.0,
-                color: DIM,
-                wrap: false,
-            },
-            f,
-            1.0,
-        );
-        for (row, &(i, lo, hi)) in order.iter().enumerate() {
-            let map = &data::MAPS[i];
-            frame
-                .spawn((
-                    MenuAction::Map(i),
-                    Button,
-                    LockHighlight::default(),
-                    Node {
-                        position_type: PositionType::Absolute,
-                        left: px(24.0),
-                        top: px(ROW_TOP + row as f32 * ROW_PITCH),
-                        width: px(ROW_W),
-                        height: px(ROW_H),
-                        ..default()
-                    },
-                ))
-                .with_children(|b| {
-                    if let Some(hi) = &art.select_highlight {
-                        b.spawn((
-                            Hilight,
-                            Visibility::Hidden,
-                            MaterialNode(hi.clone()),
-                            abs(1.0, -20.0, -6.0, ROW_W + 20.0, ROW_H + 12.0),
-                        ));
-                    }
-                    outlined_text(
-                        b,
-                        abs(1.0, 0.0, 2.0, ROW_W, 16.0),
-                        (),
-                        ZoneName(i),
-                        GlueText {
-                            text: map.name,
-                            size: 15.0,
-                            color: GOLD,
-                            wrap: false,
-                        },
-                        f,
-                        1.0,
-                    );
-                    let levels = if lo == hi {
-                        format!("Level {lo}")
-                    } else {
-                        format!("Level {lo}-{hi}")
-                    };
-                    outlined_text(
-                        b,
-                        abs(1.0, 0.0, 19.0, ROW_W, 14.0),
-                        (),
-                        ZoneLevels { map: i, lo, hi },
-                        GlueText {
-                            text: &format!("{levels}  {}", map.zone),
-                            size: 12.0,
-                            color: Color::WHITE,
-                            wrap: false,
-                        },
-                        f,
-                        1.0,
-                    );
-                    // The padlock of a zone the character is too low for; `refresh_zone_rows`
-                    // shows it and `build_pick_extras` gives it its art.
-                    b.spawn((
-                        ZoneLock(i),
-                        Visibility::Hidden,
-                        ImageNode::default(),
-                        abs(1.0, ROW_W - 22.0, 9.0, 16.0, 16.0),
-                    ));
-                });
-        }
+            })
+            .with_children(|list| {
+                for &(i, lo, hi) in &order {
+                    let map = &data::MAPS[i];
+                    list.spawn((
+                        Button,
+                        MenuAction::Map(i),
+                        ZoneRow(i),
+                        kit::inset(Node {
+                            width: Val::Percent(100.0),
+                            height: px(ZONE_ROW_H),
+                            flex_shrink: 0.0,
+                            justify_content: JustifyContent::SpaceBetween,
+                            align_items: AlignItems::Center,
+                            padding: UiRect::axes(px(10.0), px(0.0)),
+                            ..default()
+                        }),
+                    ))
+                    .with_children(|row| {
+                        row.spawn((ZoneName(i), kit::title(fonts, map.name, 18.0)));
+                        row.spawn(Node {
+                            align_items: AlignItems::Center,
+                            column_gap: px(4.0),
+                            ..default()
+                        })
+                        .with_children(|right| {
+                            // The padlock of a zone the character is too low for.
+                            right.spawn((
+                                ZoneLock(i),
+                                Visibility::Hidden,
+                                lock.clone().map(ImageNode::new).unwrap_or_default(),
+                                Node {
+                                    width: px(13.0),
+                                    height: px(13.0),
+                                    ..default()
+                                },
+                            ));
+                            right.spawn((
+                                ZoneLevels { map: i, lo, hi },
+                                kit::body(fonts, level_range(lo, hi), 11.0, kit::MUTED),
+                            ));
+                        });
+                    });
+                }
+            });
     });
 }
 
+/// The bottom centre: the red zone warning, the character line with its XP bar, and under them
+/// the difficulty control left of the Enter button. The row wraps, so a narrow screen puts the
+/// difficulty above Enter.
+fn bottom_block(ui: &mut ChildSpawnerCommands, fonts: &KitFonts, skull: Option<Handle<Image>>) {
+    let px = Val::Px;
+    ui.spawn(Node {
+        position_type: PositionType::Absolute,
+        left: px(PANEL_W + 2.0 * PANEL_EDGE_GAP),
+        right: px(PANEL_W + 2.0 * PANEL_EDGE_GAP),
+        bottom: px(14.0),
+        flex_direction: FlexDirection::Column,
+        align_items: AlignItems::Center,
+        row_gap: px(4.0),
+        ..default()
+    })
+    .with_children(|block| {
+        block.spawn((ZoneWarn, kit::body(fonts, "", 14.0, kit::WARN)));
+        block.spawn((PickName, kit::text(&fonts.title, "", 22.0, kit::TITLE)));
+        block
+            .spawn(kit::inset(Node {
+                width: px(220.0),
+                height: px(10.0),
+                padding: UiRect::all(px(1.0)),
+                ..default()
+            }))
+            .with_children(|frame| {
+                frame.spawn((
+                    PickXpFill,
+                    Node {
+                        width: Val::Percent(0.0),
+                        height: Val::Percent(100.0),
+                        border_radius: BorderRadius::all(px(2.0)),
+                        ..default()
+                    },
+                    BackgroundColor(XP_PURPLE),
+                ));
+            });
+        block
+            .spawn(Node {
+                width: Val::Percent(100.0),
+                flex_wrap: FlexWrap::Wrap,
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                column_gap: px(14.0),
+                row_gap: px(8.0),
+                margin: UiRect::top(px(6.0)),
+                ..default()
+            })
+            .with_children(|row| {
+                super::difficulty::spawn_control(row, fonts, skull);
+                kit::button(
+                    row,
+                    fonts,
+                    KitStyle::Primary,
+                    "Enter World",
+                    Some(""),
+                    Node {
+                        width: px(360.0),
+                        max_width: Val::Percent(100.0),
+                        height: px(64.0),
+                        ..default()
+                    },
+                    (MenuAction::Enter, EnterButton),
+                );
+            });
+    });
+}
+
+/// A press on a pick-screen button: race, gender, class, zone, Randomize or Enter.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn menu_clicks(
-    clicks: Res<GlueClicks>,
-    actions: Query<(Entity, &MenuAction)>,
+    pressed: Query<(&Interaction, &MenuAction), Changed<Interaction>>,
     phase: Res<State<Phase>>,
     creatures: Option<Res<benilla_app::survivors_host::entities::Creatures>>,
     mut selection: ResMut<Selection>,
@@ -545,9 +688,9 @@ pub(super) fn menu_clicks(
     let Some(creatures) = creatures.as_deref() else {
         return;
     };
-    let Some(action) = actions
+    let Some(action) = pressed
         .iter()
-        .find(|(e, _)| clicks.hit(*e))
+        .find(|(interaction, _)| **interaction == Interaction::Pressed)
         .map(|(_, a)| *a)
     else {
         return;
@@ -614,23 +757,16 @@ pub(super) fn menu_clicks(
     save_pick(&selection);
 }
 
-/// The screen's per-frame state: the locked highlights, hover labels, which races and classes
-/// the pick allows, the gender on the race faces and Enter World.
+/// The screen's per-frame state: which button is lit, which races and classes the pick allows,
+/// the gender on the race faces and whether Enter is off.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub(super) fn refresh_menu_ui(
     selection: Res<Selection>,
+    profile: Option<Res<Profile>>,
     creatures: Option<Res<benilla_app::survivors_host::entities::Creatures>>,
     art: Res<GlueArt>,
-    mut buttons: Query<(
-        &MenuAction,
-        &Interaction,
-        &Children,
-        Option<&mut LockHighlight>,
-        Option<&mut GlueDisabled>,
-        &mut Node,
-        &mut Visibility,
-    )>,
-    mut labels: Query<&mut Visibility, (With<HoverLabel>, Without<MenuAction>)>,
+    mut buttons: Query<(&MenuAction, Option<&ChildOf>, &mut Node, Option<&mut KitButton>)>,
+    mut cells: Query<&mut Node, Without<MenuAction>>,
     mut faces: Query<(&RaceFace, &mut ImageNode)>,
     mut cache: Local<(Option<u32>, bool, Vec<Vec<(u32, u8, u8)>>)>,
 ) {
@@ -643,66 +779,55 @@ pub(super) fn refresh_menu_ui(
         );
     }
     let all = &cache.2;
+    let profile = profile.as_deref();
     let cur = selection
         .look
         .and_then(|i| selection.looks.get(i))
         .map(|&(_, r, s)| (r, s));
+    let class_locked = selection
+        .class
+        .zip(profile)
+        .is_some_and(|(c, p)| !p.class_unlocked(c));
+    let enter_off = cur.is_none() || class_locked || zone_locked(&selection, profile, selection.map);
 
-    for (action, interaction, children, lock, disabled, mut node, mut vis) in &mut buttons {
+    for (action, parent, mut node, kit_button) in &mut buttons {
         let selected = match *action {
             MenuAction::Race(r) => cur.is_some_and(|c| c.0 == r),
             MenuAction::Sex(s) => cur.is_some_and(|c| c.1 == s),
             MenuAction::Class(i) => selection.class == Some(i),
-            MenuAction::Map(i) => selection.map == i,
-            MenuAction::Randomize | MenuAction::Enter => false,
+            MenuAction::Map(_) | MenuAction::Randomize | MenuAction::Enter => false,
         };
-        if let Some(mut lock) = lock {
-            if lock.0 != selected {
-                lock.0 = selected;
+        if let Some(mut button) = kit_button {
+            if button.selected != selected {
+                button.selected = selected;
             }
-        }
-        if let Some(mut disabled) = disabled {
-            let off = *action == MenuAction::Enter && cur.is_none();
-            if disabled.0 != off {
-                disabled.0 = off;
+            let off = *action == MenuAction::Enter && enter_off;
+            if button.disabled != off {
+                button.disabled = off;
             }
         }
         match *action {
-            // As on the create screen, a class the race cannot be leaves the grid.
+            // As on the create screen, a class the race cannot be leaves the grid; its cell
+            // (icon and name) goes with it.
             MenuAction::Class(i) => {
                 let ok = cur.is_none_or(|(r, _)| {
                     all.get(i).is_some_and(|l| find(l, Some(r), None).is_some())
                 });
                 let display = if ok { Display::Flex } else { Display::None };
-                if node.display != display {
-                    node.display = display;
+                if let Some(Ok(mut cell)) = parent.map(|p| cells.get_mut(p.parent())) {
+                    if cell.display != display {
+                        cell.display = display;
+                    }
                 }
             }
             MenuAction::Race(r) => {
                 let ok = all.is_empty() || all.iter().any(|l| find(l, Some(r), None).is_some());
-                let want = if ok {
-                    Visibility::Inherited
-                } else {
-                    Visibility::Hidden
-                };
-                if *vis != want {
-                    *vis = want;
+                let display = if ok { Display::Flex } else { Display::None };
+                if node.display != display {
+                    node.display = display;
                 }
             }
             _ => {}
-        }
-        let show = selected || *interaction != Interaction::None || art.races.is_none();
-        for child in children {
-            if let Ok(mut label) = labels.get_mut(*child) {
-                let want = if show {
-                    Visibility::Inherited
-                } else {
-                    Visibility::Hidden
-                };
-                if *label != want {
-                    *label = want;
-                }
-            }
         }
     }
 
@@ -718,56 +843,25 @@ pub(super) fn refresh_menu_ui(
     }
 }
 
-/// The menu's own systems beyond the plugin's shared tuple: the zone locks and the character line.
+/// The menu's own systems beyond the plugin's shared tuple: the tabs, the bank, the class
+/// stats, the zone rows and the character line.
 pub(super) fn plugin(app: &mut App) {
     app.add_systems(
         Update,
         (
-            build_pick_extras.after(build_menu),
-            (refresh_zone_rows, refresh_pick_line, lock_enter)
-                .after(refresh_menu_ui)
-                .before(benilla_app::survivors_host::glue::GlueVisuals),
+            tab_clicks,
+            refresh_tabs,
+            refresh_bank,
+            refresh_stats,
+            refresh_zone_rows,
+            refresh_pick_line,
+            refresh_enter,
         )
+            .after(refresh_menu_ui)
+            .before(GlueVisuals)
             .run_if(in_state(Phase::Menu)),
     );
 }
-
-/// A zone row's name text.
-#[derive(Component)]
-struct ZoneName(usize);
-
-/// A zone row's level line; `lo` and `hi` are the lowest and highest creature level of the zone.
-#[derive(Component)]
-struct ZoneLevels {
-    map: usize,
-    lo: u32,
-    hi: u32,
-}
-
-/// A zone row's padlock, shown while the selected class's character is below the zone.
-#[derive(Component)]
-struct ZoneLock(usize);
-
-/// The red "Requires level X" line above Enter World.
-#[derive(Component)]
-struct ZoneWarn;
-
-/// The fill of the character's XP bar under [`PickName`].
-#[derive(Component)]
-struct PickXpFill;
-
-/// On [`MenuRoot`] once [`build_pick_extras`] has added the warning line and the XP bar.
-#[derive(Component)]
-struct PickExtras;
-
-/// A locked zone's name, as a disabled glue button's caption.
-const LOCKED_NAME: Color = Color::srgb(0.5, 0.5, 0.5);
-/// A locked zone's "Requires level X" in its row.
-const LOCKED_LEVEL: Color = Color::srgb(0.8, 0.3, 0.3);
-/// The red line above Enter World.
-const WARN_RED: Color = Color::srgb(1.0, 0.1, 0.1);
-/// The HUD's XP bar colour.
-const XP_PURPLE: Color = Color::srgb(0.58, 0.0, 0.55);
 
 /// Whether the selected class's character is too low for `map`. False with no class or profile.
 fn zone_locked(selection: &Selection, profile: Option<&Profile>, map: usize) -> bool {
@@ -777,122 +871,181 @@ fn zone_locked(selection: &Selection, profile: Option<&Profile>, map: usize) -> 
         .is_some_and(|(class, p)| !p.zone_unlocked(class, map))
 }
 
-/// Once the menu is built: the padlock art, the red zone warning and the XP bar under the name.
-fn build_pick_extras(
-    mut commands: Commands,
-    roots: Query<Entity, (With<MenuBuilt>, Without<PickExtras>)>,
-    assets: Option<ResMut<benilla_assets::WorldAssets>>,
-    mut images: ResMut<Assets<Image>>,
-    mut locks: Query<&mut ImageNode, With<ZoneLock>>,
-    font: Res<HudFont>,
+/// A press on a tab opens its window by setting the window's own flag.
+fn tab_clicks(
+    tabs: Query<(&Interaction, &MenuTab), Changed<Interaction>>,
+    mut talents: ResMut<super::talents::TalentsUi>,
+    mut trainer: ResMut<super::trainer::TrainerUi>,
+    mut options: ResMut<super::options::OptionsUi>,
 ) {
-    let Ok(root) = roots.single() else { return };
-    let Some(mut assets) = assets else { return };
-    if let Some(lock) =
-        assets.sprite_texture("Interface\\ChatFrame\\UI-ChatFrame-LockIcon", &mut images)
-    {
-        for mut img in &mut locks {
-            img.image = lock.clone();
-        }
+    let Some(tab) = tabs
+        .iter()
+        .find(|(interaction, _)| **interaction == Interaction::Pressed)
+        .map(|(_, t)| *t)
+    else {
+        return;
+    };
+    match tab {
+        MenuTab::Talents => talents.open = true,
+        MenuTab::Trainer => trainer.open = true,
+        MenuTab::Options => options.open = true,
     }
-    let bar = assets
-        .sprite_texture("Interface\\TargetingFrame\\UI-StatusBar", &mut images)
-        .unwrap_or_default();
-    let f = &font.0;
-    commands.entity(root).insert(PickExtras).with_children(|ui| {
-        // Above the name line, which sits above Enter World.
-        ui.spawn(Node {
-            position_type: PositionType::Absolute,
-            bottom: Val::Px(130.0),
-            width: Val::Percent(100.0),
-            justify_content: JustifyContent::Center,
-            ..default()
-        })
-        .with_children(|c| {
-            outlined_text(
-                c,
-                Node::default(),
-                (),
-                ZoneWarn,
-                GlueText {
-                    text: "",
-                    size: 16.0,
-                    color: WARN_RED,
-                    wrap: false,
-                },
-                f,
-                1.0,
-            );
-        });
-        // The thin XP bar between the name and the Enter World button.
-        ui.spawn(Node {
-            position_type: PositionType::Absolute,
-            bottom: Val::Px(91.0),
-            width: Val::Percent(100.0),
-            justify_content: JustifyContent::Center,
-            ..default()
-        })
-        .with_children(|c| {
-            c.spawn((
-                Node {
-                    width: Val::Px(200.0),
-                    height: Val::Px(8.0),
-                    padding: UiRect::all(Val::Px(1.0)),
-                    ..default()
-                },
-                BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.75)),
-            ))
-            .with_children(|frame| {
-                frame.spawn((
-                    PickXpFill,
-                    Node {
-                        width: Val::Percent(0.0),
-                        height: Val::Percent(100.0),
-                        ..default()
-                    },
-                    ImageNode::new(bar).with_color(XP_PURPLE),
-                ));
-            });
-        });
-    });
 }
 
-/// The zone rows: a zone above the selected character's level greys its name, shows its padlock
-/// and says what level it needs where the level range was.
+/// The Talents tab shows how many points the picked class has left to spend.
+fn refresh_tabs(
+    selection: Res<Selection>,
+    profile: Option<Res<Profile>>,
+    tabs: Query<(&MenuTab, &Children)>,
+    mut captions: Query<&mut Text, With<kit::KitCaption>>,
+) {
+    let Some(profile) = profile else { return };
+    let left = selection.class.map_or(0, |c| {
+        super::talents::available(&profile.talents, c, profile.character(c).level)
+    });
+    let want = if left > 0 {
+        format!("Talents ({left})")
+    } else {
+        "Talents".to_string()
+    };
+    for (tab, children) in &tabs {
+        if *tab != MenuTab::Talents {
+            continue;
+        }
+        for child in children.iter() {
+            if let Ok(mut text) = captions.get_mut(child) {
+                if text.0 != want {
+                    text.0 = want.clone();
+                }
+            }
+        }
+    }
+}
+
+/// The bank in the top bar.
+fn refresh_bank(profile: Option<Res<Profile>>, mut bank: Query<&mut Text, With<BankText>>) {
+    let Some(profile) = profile else { return };
+    let want = hud::grouped(profile.gold);
+    for mut text in &mut bank {
+        if text.0 != want {
+            text.0 = want.clone();
+        }
+    }
+}
+
+/// The class title and its stat boxes: starting health, the first ability, the zones open.
+#[allow(clippy::type_complexity)]
+fn refresh_stats(
+    selection: Res<Selection>,
+    profile: Option<Res<Profile>>,
+    spells: Option<Res<Spells>>,
+    mut values: Query<(&StatValue, &mut Text), Without<ClassTitle>>,
+    mut title: Query<(&mut Text, &mut TextColor), (With<ClassTitle>, Without<StatValue>)>,
+) {
+    let class = selection.class_def();
+    if let Ok((mut text, mut color)) = title.single_mut() {
+        let want = class.map_or("", |c| c.name);
+        if text.0 != want {
+            text.0 = want.to_string();
+        }
+        let tint = class.map_or(kit::TITLE, |c| rgb(c.color));
+        if color.0 != tint {
+            color.0 = tint;
+        }
+    }
+    // Health builds a whole `Run`, so it is only worked out when something it reads changed.
+    let stale = selection.is_changed()
+        || profile.as_ref().is_some_and(|p| p.is_changed())
+        || values.iter().any(|(_, t)| t.0.is_empty());
+    if !stale {
+        return;
+    }
+    let profile = profile.as_deref();
+    for (value, mut text) in &mut values {
+        let (Some(def), Some(index)) = (class, selection.class) else {
+            if !text.0.is_empty() {
+                text.0.clear();
+            }
+            continue;
+        };
+        let want = match value {
+            StatValue::Health => {
+                let mut run = Run {
+                    class: def,
+                    ..Run::default()
+                };
+                if let Some(p) = profile {
+                    run.meta = p.bonus(index);
+                    run.talents = p.talent_bonus(index);
+                }
+                format!("{}", run.stats().max_hp.round() as u32)
+            }
+            StatValue::Start => {
+                let ability = data::ability(def.start);
+                hud::spell_name(spells.as_deref(), ability.spell, def.start)
+            }
+            StatValue::Zones => {
+                let total = data::MAPS.len();
+                let open = profile.map_or(total, |p| {
+                    (0..total).filter(|&m| p.zone_unlocked(index, m)).count()
+                });
+                format!("{open} of {total}")
+            }
+        };
+        if text.0 != want {
+            text.0 = want;
+        }
+    }
+}
+
+/// The zone rows: the picked one has a bright edge and a lighter fill; a zone above the selected
+/// character's level is dimmed, shows its padlock and says what level it needs.
 #[allow(clippy::type_complexity)]
 fn refresh_zone_rows(
     selection: Res<Selection>,
     profile: Option<Res<Profile>>,
+    mut rows: Query<(&ZoneRow, &Interaction, &mut BackgroundColor, &mut BorderColor)>,
     mut names: Query<(&ZoneName, &mut TextColor), Without<ZoneLevels>>,
     mut levels: Query<(&ZoneLevels, &mut Text, &mut TextColor), Without<ZoneName>>,
     mut locks: Query<(&ZoneLock, &mut Visibility)>,
 ) {
     let profile = profile.as_deref();
+    for (row, interaction, mut fill, mut edge) in &mut rows {
+        let (want_fill, want_edge) = if selection.map == row.0 {
+            (ROW_FILL_ON, ROW_EDGE_ON)
+        } else if *interaction != Interaction::None {
+            (ROW_FILL_HOT, ROW_EDGE_HOT)
+        } else {
+            (kit::INSET_FILL, kit::INSET_EDGE)
+        };
+        if fill.0 != want_fill {
+            fill.0 = want_fill;
+        }
+        if edge.top != want_edge {
+            *edge = BorderColor::all(want_edge);
+        }
+    }
     for (name, mut color) in &mut names {
         let want = if zone_locked(&selection, profile, name.0) {
-            LOCKED_NAME
+            kit::DISABLED
         } else {
-            GOLD
+            kit::TITLE
         };
         if color.0 != want {
             color.0 = want;
         }
     }
     for (row, mut text, mut color) in &mut levels {
-        let locked = zone_locked(&selection, profile, row.map);
-        let zone = data::MAPS[row.map].zone;
-        let (want, tint) = if locked {
-            (format!("Requires level {}  {zone}", row.lo), LOCKED_LEVEL)
-        } else if row.lo == row.hi {
-            (format!("Level {}  {zone}", row.lo), Color::WHITE)
+        let want = if zone_locked(&selection, profile, row.map) {
+            format!("Locked, level {}", row.lo)
         } else {
-            (format!("Level {}-{}  {zone}", row.lo, row.hi), Color::WHITE)
+            level_range(row.lo, row.hi)
         };
         if text.0 != want {
             text.0 = want;
         }
-        if color.0 != tint {
-            color.0 = tint;
+        if color.0 != kit::MUTED {
+            color.0 = kit::MUTED;
         }
     }
     for (lock, mut vis) in &mut locks {
@@ -907,8 +1060,8 @@ fn refresh_zone_rows(
     }
 }
 
-/// The character line above Enter World ("Level 12 Night Elf Warrior"), its XP bar, and the red
-/// warning when the zone picked is above the character.
+/// The character line above the Enter button ("Level 12 Night Elf Warrior"), its XP bar, and the
+/// red warning when the zone picked is above the character.
 #[allow(clippy::type_complexity)]
 fn refresh_pick_line(
     selection: Res<Selection>,
@@ -940,7 +1093,7 @@ fn refresh_pick_line(
             t.0 = want;
         }
         // In the class's own colour, as the game's raid frames and chat show it.
-        let want = class.map_or(GOLD, |c| rgb(c.color));
+        let want = class.map_or(kit::TITLE, |c| rgb(c.color));
         if color.0 != want {
             color.0 = want;
         }
@@ -971,19 +1124,30 @@ fn refresh_pick_line(
     }
 }
 
-/// Enter World looks disabled while the zone picked is above the character; `start_run` refuses it
-/// either way. Runs after [`refresh_menu_ui`], which owns the button's other disabled reason.
-fn lock_enter(
+/// The Enter button names the zone picked and its level range.
+#[allow(clippy::type_complexity)]
+fn refresh_enter(
     selection: Res<Selection>,
-    profile: Option<Res<Profile>>,
-    mut buttons: Query<(&MenuAction, &mut GlueDisabled)>,
+    enter: Query<&Children, With<EnterButton>>,
+    mut captions: Query<&mut Text, (With<kit::KitCaption>, Without<kit::KitSubCaption>)>,
+    mut subs: Query<&mut Text, (With<kit::KitSubCaption>, Without<kit::KitCaption>)>,
 ) {
-    if !zone_locked(&selection, profile.as_deref(), selection.map) {
-        return;
-    }
-    for (action, mut disabled) in &mut buttons {
-        if *action == MenuAction::Enter && !disabled.0 {
-            disabled.0 = true;
+    let map = selection.map_def();
+    let caption = format!("Enter {}", map.name);
+    let (lo, hi) = zone_levels(selection.map);
+    let sub = format!("{}, {}", level_range(lo, hi), map.zone);
+    for children in &enter {
+        for child in children.iter() {
+            if let Ok(mut text) = captions.get_mut(child) {
+                if text.0 != caption {
+                    text.0 = caption.clone();
+                }
+            }
+            if let Ok(mut text) = subs.get_mut(child) {
+                if text.0 != sub {
+                    text.0 = sub.clone();
+                }
+            }
         }
     }
 }

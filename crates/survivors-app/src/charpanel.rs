@@ -5,7 +5,8 @@
 
 use bevy::prelude::*;
 
-use super::hud::{self, HudFont, GOLD_TONE};
+use super::hud;
+use super::kit;
 use super::profile::Profile;
 use super::{Phase, Run, Selection};
 
@@ -14,14 +15,13 @@ const ROWS: usize = 48;
 const WIDTH: f32 = 300.0;
 /// Over the HUD (400), under the level-up cards and the pause screen (410 and up).
 const Z: i32 = 405;
-const FILL: Color = Color::srgba(0.02, 0.02, 0.03, 0.85);
-const EDGE: Color = Color::srgba(0.8, 0.8, 0.8, 0.9);
-/// Labels in the pane's yellow, values in white, as the WoW character pane prints them.
-const LABEL: Color = Color::srgb(1.0, 0.82, 0.0);
-const VALUE: Color = Color::WHITE;
-const RANK: Color = Color::srgb(0.6, 0.6, 0.6);
+/// Labels muted, values cream, bonuses green, as the kit sets them.
+const LABEL: Color = kit::MUTED;
+const VALUE: Color = kit::CREAM;
+const BONUS: Color = kit::BONUS;
+const RANK: Color = kit::MUTED;
 /// A section heading.
-const HEAD: Color = Color::srgb(0.9, 0.9, 0.9);
+const HEAD: Color = kit::TITLE;
 /// Cooldowns go no lower than this share of their base, as [`super::Owned::cooldown`] holds them.
 const HASTE_CAP: f32 = 0.65;
 
@@ -57,7 +57,7 @@ struct Line {
 impl Line {
     fn head(text: &str) -> Self {
         Self {
-            left: text.to_string(),
+            left: text.to_uppercase(),
             right: String::new(),
             left_color: HEAD,
             right_color: VALUE,
@@ -69,6 +69,13 @@ impl Line {
             right: value,
             left_color: LABEL,
             right_color: VALUE,
+        }
+    }
+    /// A stat that is a bonus, its value in the tooltip green.
+    fn bonus(label: &str, value: String) -> Self {
+        Self {
+            right_color: BONUS,
+            ..Self::stat(label, value)
         }
     }
     fn gap() -> Self {
@@ -92,61 +99,27 @@ fn teardown(mut commands: Commands, mut panel: ResMut<CharPanel>) {
 }
 
 /// The window's frame, its title and a pool of empty lines, hidden.
-fn build(commands: &mut Commands, panel: &mut CharPanel, font: &Handle<Font>) {
-    let text = |size: f32, color: Color| {
-        (
-            Text::new(""),
-            TextFont {
-                font: font.clone(),
-                font_size: size,
-                ..default()
-            },
-            TextColor(color),
-            TextShadow {
-                offset: Vec2::splat(1.0),
-                color: Color::BLACK,
-            },
-        )
-    };
+fn build(commands: &mut Commands, panel: &mut CharPanel, fonts: &kit::KitFonts) {
+    let text = |size: f32, color: Color| kit::body(fonts, "", size, color);
     let mut rows = Vec::with_capacity(ROWS);
     let root = commands
         .spawn((
-            Node {
+            kit::panel(Node {
                 position_type: PositionType::Absolute,
                 left: Val::Px(16.0),
                 // Under the unit frames and the ability icons ([`super::frames`], [`super::hud`]).
                 top: Val::Px(160.0),
                 width: Val::Px(WIDTH),
                 flex_direction: FlexDirection::Column,
-                padding: UiRect::axes(Val::Px(12.0), Val::Px(10.0)),
+                padding: UiRect::axes(Val::Px(14.0), Val::Px(10.0)),
                 row_gap: Val::Px(2.0),
-                border: UiRect::all(Val::Px(1.0)),
-                border_radius: BorderRadius::all(Val::Px(6.0)),
                 ..default()
-            },
-            BackgroundColor(FILL),
-            BorderColor::all(EDGE),
+            }),
             GlobalZIndex(Z),
             Visibility::Hidden,
         ))
         .with_children(|p| {
-            p.spawn((
-                Text::new("Character"),
-                TextFont {
-                    font: font.clone(),
-                    font_size: 16.0,
-                    ..default()
-                },
-                TextColor(GOLD_TONE),
-                TextShadow {
-                    offset: Vec2::splat(1.0),
-                    color: Color::BLACK,
-                },
-                Node {
-                    margin: UiRect::bottom(Val::Px(4.0)),
-                    ..default()
-                },
-            ));
+            kit::heading(p, fonts, "Character", 22.0);
             for _ in 0..ROWS {
                 let mut row = p.spawn(Node {
                     justify_content: JustifyContent::SpaceBetween,
@@ -196,7 +169,7 @@ fn lines(run: &Run, char_level: u32, spells: Option<&benilla_app::survivors_host
         // Whole points, as the unit frames count them.
         format!("{} / {}", run.hp.max(0.0).ceil(), s.max_hp.round()),
     ));
-    out.push(Line::stat("Health per second", hud::num(s.regen)));
+    out.push(Line::bonus("Health per second", hud::num(s.regen)));
     out.push(Line::stat("Damage blocked per hit", hud::num(s.armor)));
     out.push(Line::stat(
         "Movement speed",
@@ -205,15 +178,15 @@ fn lines(run: &Run, char_level: u32, spells: Option<&benilla_app::survivors_host
 
     out.push(Line::gap());
     out.push(Line::head("Offense"));
-    out.push(Line::stat("Damage", hud::pct(s.might)));
+    out.push(Line::bonus("Damage", hud::pct(s.might)));
     // Haste shortens every cooldown, so the abilities fire this much more often.
-    out.push(Line::stat(
+    out.push(Line::bonus(
         "Attack and cast speed",
         format!("+{}", hud::pct(1.0 / (1.0 - haste) - 1.0)),
     ));
-    out.push(Line::stat("Cooldowns", format!("-{}", hud::pct(haste))));
-    out.push(Line::stat("Critical strike chance", hud::pct(s.crit)));
-    out.push(Line::stat("Area of effect", hud::pct(s.area)));
+    out.push(Line::bonus("Cooldowns", format!("-{}", hud::pct(haste))));
+    out.push(Line::bonus("Critical strike chance", hud::pct(s.crit)));
+    out.push(Line::bonus("Area of effect", hud::pct(s.area)));
 
     out.push(Line::gap());
     out.push(Line::head("Utility"));
@@ -221,8 +194,8 @@ fn lines(run: &Run, char_level: u32, spells: Option<&benilla_app::survivors_host
         "Pickup range",
         format!("{} yd", hud::num(s.magnet)),
     ));
-    out.push(Line::stat("Experience gained", hud::pct(s.growth)));
-    out.push(Line::stat(
+    out.push(Line::bonus("Experience gained", hud::pct(s.growth)));
+    out.push(Line::bonus(
         "Gold found",
         hud::pct(run.meta.greed + run.gear.greed + run.buffs.greed + run.talents.greed),
     ));
@@ -278,7 +251,7 @@ fn lines(run: &Run, char_level: u32, spells: Option<&benilla_app::survivors_host
 fn refresh(
     mut commands: Commands,
     mut panel: ResMut<CharPanel>,
-    font: Option<Res<HudFont>>,
+    fonts: Option<Res<kit::KitFonts>>,
     run: Res<Run>,
     selection: Res<Selection>,
     profile: Option<Res<Profile>>,
@@ -290,9 +263,9 @@ fn refresh(
     let panel = &mut *panel;
     let Some(root) = panel.root else {
         if panel.open {
-            if let Some(font) = font {
+            if let Some(fonts) = fonts {
                 // Seated from the next frame on, once its nodes exist.
-                build(&mut commands, panel, &font.0);
+                build(&mut commands, panel, &fonts);
             }
         }
         return;

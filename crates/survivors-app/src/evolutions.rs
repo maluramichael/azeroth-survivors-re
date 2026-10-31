@@ -8,15 +8,14 @@ use serde::{Deserialize, Serialize};
 
 use super::chatlog::{ChatKind, ChatLine};
 use super::data::{self, Evolution};
-use super::hud::{self, HudFont, GOLD_TONE};
+use super::hud;
+use super::kit;
 use super::{Phase, Run};
 
 /// Level with the level-up screen's vignette (420) and over it.
 const Z: i32 = 425;
-const FILL: Color = Color::srgba(0.02, 0.02, 0.03, 0.85);
-const EDGE: Color = Color::srgba(0.8, 0.8, 0.8, 0.9);
 const FOUND: Color = super::cards::LEGENDARY;
-const HINT: Color = Color::srgb(0.6, 0.6, 0.6);
+const HINT: Color = kit::MUTED;
 const WIDTH: f32 = 560.0;
 /// Most recipes a class has; the panel holds this many lines.
 const ROWS: usize = 4;
@@ -167,26 +166,11 @@ fn teardown(mut commands: Commands, mut ui: ResMut<BookUi>) {
     ui.rows.clear();
 }
 
-fn build(commands: &mut Commands, ui: &mut BookUi, font: &Handle<Font>) {
-    let text = |size: f32, color: Color| {
-        (
-            Text::new(""),
-            TextFont {
-                font: font.clone(),
-                font_size: size,
-                ..default()
-            },
-            TextColor(color),
-            TextShadow {
-                offset: Vec2::splat(1.0),
-                color: Color::BLACK,
-            },
-        )
-    };
+fn build(commands: &mut Commands, ui: &mut BookUi, fonts: &kit::KitFonts) {
     let mut rows = Vec::with_capacity(ROWS);
     let root = commands
         .spawn((
-            Node {
+            kit::panel(Node {
                 position_type: PositionType::Absolute,
                 left: Val::Percent(50.0),
                 bottom: Val::Px(28.0),
@@ -194,25 +178,19 @@ fn build(commands: &mut Commands, ui: &mut BookUi, font: &Handle<Font>) {
                 width: Val::Px(WIDTH),
                 flex_direction: FlexDirection::Column,
                 align_items: AlignItems::Center,
-                padding: UiRect::axes(Val::Px(12.0), Val::Px(8.0)),
-                row_gap: Val::Px(2.0),
-                border: UiRect::all(Val::Px(1.0)),
-                border_radius: BorderRadius::all(Val::Px(6.0)),
+                padding: UiRect::axes(Val::Px(18.0), Val::Px(8.0)),
+                row_gap: Val::Px(3.0),
                 ..default()
-            },
-            BackgroundColor(FILL),
-            BorderColor::all(EDGE),
+            }),
             GlobalZIndex(Z),
             Visibility::Hidden,
         ))
         .with_children(|p| {
-            let mut title = text(15.0, GOLD_TONE);
-            title.0 = Text::new("Spellbook");
-            p.spawn(title);
+            kit::heading(p, fonts, "Spellbook", 20.0);
             for _ in 0..ROWS {
                 rows.push(
                     p.spawn((
-                        text(12.0, HINT),
+                        kit::body(fonts, "", 12.0, HINT),
                         Node {
                             display: Display::None,
                             ..default()
@@ -270,16 +248,16 @@ fn show(
     phase: Res<State<Phase>>,
     run: Res<Run>,
     book: Res<Spellbook>,
-    font: Option<Res<HudFont>>,
+    fonts: Option<Res<kit::KitFonts>>,
     spells: Option<Res<benilla_app::survivors_host::ui_action::Spells>>,
     mut vis: Query<&mut Visibility>,
     mut rows: Query<(&mut Text, &mut TextColor, &mut Node)>,
 ) {
     let ui = &mut *ui;
     let Some(root) = ui.root else {
-        if let Some(font) = font {
+        if let Some(fonts) = fonts {
             // Seated from the next frame on, once its nodes exist.
-            build(&mut commands, ui, &font.0);
+            build(&mut commands, ui, &fonts);
         }
         return;
     };

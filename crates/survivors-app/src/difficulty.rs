@@ -8,13 +8,11 @@ use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use super::chatlog::ChatLine;
-use super::hud::{self, HudFont, MenuRoot, OverPayout};
-use super::menu::MenuBuilt;
+use super::hud::{self, OverPayout};
+use super::kit;
 use super::profile::Profile;
 use super::{Phase, Run};
-use benilla_app::survivors_host::glue::art::GlueArt;
-use benilla_app::survivors_host::glue::widgets::{glue_button, outlined_text, GlueBtnKind, GlueDisabled, GlueText};
-use benilla_app::survivors_host::glue::{GlueClicks, GlueVisuals};
+use benilla_app::survivors_host::glue::GlueVisuals;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -47,9 +45,9 @@ impl Difficulty {
 
     fn color(self) -> Color {
         match self {
-            Self::Normal => Color::WHITE,
+            Self::Normal => kit::MUTED,
             Self::Heroic => Color::srgb(1.0, 0.6, 0.15),
-            Self::Hardcore => Color::srgb(1.0, 0.25, 0.2),
+            Self::Hardcore => kit::WARN,
         }
     }
 
@@ -98,25 +96,20 @@ struct DifficultyLine;
 /// The red skull beside the line, shown for Hardcore.
 #[derive(Component)]
 struct Skull;
-/// On [`MenuRoot`] once the selector is built into it.
-#[derive(Component)]
-struct DifficultyBuilt;
 
 /// Whether this run's start was announced in the chat; reset at the menu.
 #[derive(Resource, Default)]
 struct Announced(bool);
 
-/// Under the zone list, on the right: the line with the skull, then three buttons.
-const BLOCK_TOP: f32 = 664.0;
-const BLOCK_W: f32 = 260.0;
-const SKULL: &str = "Interface\\Icons\\INV_Misc_Bone_HumanSkull_01.blp";
+/// The icon of the Hardcore skull.
+pub(super) const SKULL: &str = "Interface\\Icons\\INV_Misc_Bone_HumanSkull_01.blp";
 const SKULL_RED: Color = Color::srgb(1.0, 0.2, 0.15);
 
 pub(super) fn plugin(app: &mut App) {
     app.init_resource::<Announced>()
         .add_systems(
             Update,
-            (build, clicks, refresh)
+            (clicks, refresh)
                 .chain()
                 // After the keys, like the other pick-screen panels.
                 .after(hud::keys)
@@ -134,96 +127,71 @@ pub(super) fn plugin(app: &mut App) {
         });
 }
 
-/// Build the selector into the pick screen once it is built.
-fn build(
-    mut commands: Commands,
-    roots: Query<Entity, (With<MenuRoot>, With<MenuBuilt>, Without<DifficultyBuilt>)>,
-    glue: Res<GlueArt>,
-    font: Res<HudFont>,
-    assets: Option<ResMut<benilla_assets::WorldAssets>>,
-    mut images: ResMut<Assets<Image>>,
+/// The compact selector the pick screen puts left of its Enter button: three kit buttons in a
+/// row and, under them, the pick's one-line description with the Hardcore skull. `skull` is the
+/// loaded [`SKULL`] icon, if any.
+pub(super) fn spawn_control(
+    parent: &mut ChildSpawnerCommands,
+    fonts: &kit::KitFonts,
+    skull: Option<Handle<Image>>,
 ) {
-    let Ok(root) = roots.single() else { return };
-    let Some(mut assets) = assets else { return };
-    let skull = assets.sprite_texture(SKULL, &mut images);
-    let f = &font.0;
     let px = Val::Px;
-    commands
-        .entity(root)
-        .insert(DifficultyBuilt)
-        .with_children(|ui| {
-            ui.spawn(Node {
-                position_type: PositionType::Absolute,
-                right: px(5.0),
-                top: px(BLOCK_TOP),
-                width: px(BLOCK_W),
-                flex_direction: FlexDirection::Column,
-                align_items: AlignItems::Center,
-                row_gap: px(4.0),
+    parent
+        .spawn(Node {
+            flex_direction: FlexDirection::Column,
+            align_items: AlignItems::Center,
+            row_gap: px(4.0),
+            ..default()
+        })
+        .with_children(|col| {
+            col.spawn(Node {
+                column_gap: px(4.0),
                 ..default()
             })
-            .with_children(|col| {
-                col.spawn(Node {
-                    height: px(18.0),
-                    align_items: AlignItems::Center,
-                    column_gap: px(4.0),
-                    ..default()
-                })
-                .with_children(|line| {
-                    let mut image = skull.map(ImageNode::new).unwrap_or_default();
-                    image.color = SKULL_RED;
-                    line.spawn((
-                        Skull,
-                        image,
+            .with_children(|row| {
+                for d in Difficulty::ALL {
+                    kit::button(
+                        row,
+                        fonts,
+                        kit::KitStyle::Normal,
+                        d.label(),
+                        None,
                         Node {
-                            width: px(16.0),
-                            height: px(16.0),
-                            display: Display::None,
+                            width: px(88.0),
+                            height: px(26.0),
                             ..default()
                         },
-                    ));
-                    outlined_text(
-                        line,
-                        Node::default(),
-                        (),
-                        DifficultyLine,
-                        GlueText {
-                            text: "",
-                            size: 12.0,
-                            color: Color::WHITE,
-                            wrap: false,
-                        },
-                        f,
-                        1.0,
+                        DifficultyAction(d),
                     );
-                });
-                col.spawn(Node {
-                    column_gap: px(4.0),
-                    ..default()
-                })
-                .with_children(|row| {
-                    for d in Difficulty::ALL {
-                        glue_button(
-                            row,
-                            &glue,
-                            f,
-                            DifficultyAction(d),
-                            d.label(),
-                            84.0,
-                            28.0,
-                            GlueBtnKind::Small,
-                            1.0,
-                        );
-                    }
-                });
+                }
+            });
+            col.spawn(Node {
+                height: px(14.0),
+                align_items: AlignItems::Center,
+                column_gap: px(4.0),
+                ..default()
+            })
+            .with_children(|line| {
+                let mut image = skull.map(ImageNode::new).unwrap_or_default();
+                image.color = SKULL_RED;
+                line.spawn((
+                    Skull,
+                    image,
+                    Node {
+                        width: px(12.0),
+                        height: px(12.0),
+                        display: Display::None,
+                        ..default()
+                    },
+                ));
+                line.spawn((DifficultyLine, kit::body(fonts, "", 11.0, kit::MUTED)));
             });
         });
 }
 
 /// A click on a selector button sets the pick and saves it.
 fn clicks(
-    clicks: Res<GlueClicks>,
-    actions: Query<(Entity, &DifficultyAction)>,
+    actions: Query<(&Interaction, &DifficultyAction), Changed<Interaction>>,
     phase: Res<State<Phase>>,
     mut profile: ResMut<Profile>,
 ) {
@@ -232,7 +200,7 @@ fn clicks(
     }
     let Some(picked) = actions
         .iter()
-        .find(|(e, _)| clicks.hit(*e))
+        .find(|(i, _)| **i == Interaction::Pressed)
         .map(|(_, a)| a.0)
     else {
         return;
@@ -243,18 +211,18 @@ fn clicks(
     }
 }
 
-/// The picked button greys (it is what is on), the line and the skull follow the pick.
+/// The picked button is lit, the line and the skull follow the pick.
 fn refresh(
     profile: Res<Profile>,
-    mut buttons: Query<(&DifficultyAction, &mut GlueDisabled)>,
+    mut buttons: Query<(&DifficultyAction, &mut kit::KitButton)>,
     mut line: Query<(&mut Text, &mut TextColor), With<DifficultyLine>>,
     mut skull: Query<&mut Node, With<Skull>>,
 ) {
     let picked = profile.difficulty;
-    for (action, mut disabled) in &mut buttons {
-        let off = action.0 == picked;
-        if disabled.0 != off {
-            disabled.0 = off;
+    for (action, mut button) in &mut buttons {
+        let on = action.0 == picked;
+        if button.selected != on {
+            button.selected = on;
         }
     }
     for (mut text, mut color) in &mut line {

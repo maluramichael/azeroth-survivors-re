@@ -34,21 +34,6 @@ fn lin(c: Color) -> Vec4 {
 }
 
 impl FillMaterial {
-    /// Top to bottom through `mid` at `mid_at` (0..1), with corners rounded by `radius`, a
-    /// fraction of the node's height.
-    pub(super) fn vertical(top: Color, mid: Color, mid_at: f32, bottom: Color, radius: f32) -> Self {
-        Self {
-            fill: FillUniform {
-                a: lin(top),
-                b: lin(mid),
-                c: lin(bottom),
-                glow: Vec4::ZERO,
-                glow_at: Vec4::ZERO,
-                shape: Vec4::new(radius, 0.0, mid_at, 0.0),
-            },
-        }
-    }
-
     /// From `centre` at the middle to `edge` at the farthest corner.
     pub(super) fn radial(centre: Color, edge: Color) -> Self {
         Self {

@@ -7,26 +7,23 @@
 //! kept in [`Profile::talents`] under [`key`] (class id and talent name) and folded into a
 //! [`StatMods`] by [`mods_for`]. Renaming a talent drops its saved ranks; never rename one.
 //!
-//! The panel is a window in the glue frame art on the pick screen, opened from the Talents button
-//! under the zone list. Clicking a talent spends a point; Respec hands every point of the selected
-//! class back for free.
+//! The panel is a kit window ([`super::kit`]) on the pick screen, opened through [`TalentsUi`]:
+//! three trees over their 1.12 background art, each talent an icon button with a rank badge.
+//! Hovering a talent reads it at the bottom, clicking spends a point; Respec hands every point of
+//! the selected class back for free.
 
 use std::collections::BTreeMap;
 
 use bevy::prelude::*;
 use bevy::ui::FocusPolicy;
 
-use super::hud::{self, HudFont, MenuRoot};
+use super::hud::{self, MenuRoot};
+use super::kit::{self, KitButton, KitFonts, KitStyle};
 use super::menu::MenuBuilt;
 use super::mods::StatMods;
 use super::profile::Profile;
 use super::{data, Phase, Selection};
-use benilla_app::survivors_host::glue::art::{GlueArt, DIM, GOLD, NAME_EDGE};
-use benilla_app::survivors_host::glue::backdrop::{backdrop_border, tiled_bg_node};
-use benilla_app::survivors_host::glue::widgets::{
-    abs, glue_button, outlined_text, GlueBtnKind, GlueCaption, GlueDisabled, GlueText,
-};
-use benilla_app::survivors_host::glue::{GlueClicks, GlueVisuals};
+use benilla_app::survivors_host::glue::GlueVisuals;
 
 /// The first character level that earns a point.
 pub(super) const FIRST_LEVEL: u32 = 10;
@@ -871,15 +868,14 @@ pub(super) fn mods_for(ranks: &BTreeMap<String, u8>, class: usize) -> StatMods {
 
 // ── The panel ────────────────────────────────────────────────────────────────────────────────────
 
-/// A button of the panel or the pick screen.
+/// A button of the window.
 #[derive(Component, Clone, Copy, PartialEq, Eq, Debug)]
 enum TalentAction {
-    Open,
     Close,
     Respec,
 }
 
-/// A talent's row, a button of its own.
+/// A talent's icon button.
 #[derive(Component, Clone, Copy)]
 struct TalentRow {
     spec: usize,
@@ -893,9 +889,14 @@ enum Label {
     Sub,
     SpecName(usize),
     SpecPoints(usize),
-    Name(usize, usize),
-    Effect(usize, usize),
+    /// The "x/y" badge on a talent's icon.
     Rank(usize, usize),
+    /// The hovered talent's name and rank, or the idle hint.
+    TipName,
+    /// Its effect per rank.
+    TipEffect,
+    /// Whether it can be raised.
+    TipHint,
 }
 
 /// An icon the refresh fills for the selected class.
@@ -905,10 +906,25 @@ enum Icon {
     Row(usize, usize),
 }
 
+/// One quarter of a tree's background art: `quad` 0 top left, 1 top right, 2 bottom left,
+/// 3 bottom right.
+#[derive(Component, Clone, Copy)]
+struct Backdrop {
+    spec: usize,
+    quad: usize,
+}
+
+/// A line of the tree between talent `idx - 1` and `idx` of `spec`.
+#[derive(Component, Clone, Copy)]
+struct Connector {
+    spec: usize,
+    idx: usize,
+}
+
 /// The dimmed full-screen layer holding the window, hidden until opened.
 #[derive(Component)]
 struct TalentPanel;
-/// On [`MenuRoot`] once the button and the window are built into it.
+/// On [`MenuRoot`] once the window is built into it.
 #[derive(Component)]
 struct TalentsBuilt;
 
@@ -918,31 +934,72 @@ pub(super) struct TalentsUi {
     pub(super) open: bool,
 }
 
-const PANEL_W: f32 = 790.0;
-const PANEL_H: f32 = 540.0;
-const COL_W: f32 = 236.0;
-const COL_GAP: f32 = 12.0;
-const COL_X0: f32 = (PANEL_W - (3.0 * COL_W + 2.0 * COL_GAP)) / 2.0;
-const HEAD_TOP: f32 = 86.0;
-const ROWS_TOP: f32 = 126.0;
-const ROW_PITCH: f32 = 54.0;
-const ROW_H: f32 = 50.0;
-/// The Talents button: centred under the difficulty selector, below its three buttons.
-const BUTTON_TOP: f32 = 722.0;
-const BUTTON_W: f32 = 136.0;
+const PANEL_W: f32 = 980.0;
+const PANEL_H: f32 = 640.0;
+/// A tree's body: the background art at its own size, 320 x 384, clipped to this.
+const TREE_W: f32 = 300.0;
+const TREE_H: f32 = 384.0;
+/// The art is painted over the talent frame's 332-unit-tall scroll area, not the quarters' full
+/// 384: stretched by `TREE_H / 332`, so the painted part fills the tree body.
+const ART_Y: f32 = TREE_H / 332.0;
+/// The art's four quarters: top left 256 x 256, top right 64 x 256, bottom left 256 x 128,
+/// bottom right 64 x 128, stretched by [`ART_Y`]; `(left, top, width, height)`.
+const QUARTERS: [(f32, f32, f32, f32); 4] = [
+    (0.0, 0.0, 256.0, 256.0 * ART_Y),
+    (256.0, 0.0, 64.0, 256.0 * ART_Y),
+    (0.0, 256.0 * ART_Y, 256.0, 128.0 * ART_Y),
+    (256.0, 256.0 * ART_Y, 64.0, 128.0 * ART_Y),
+];
+const ICON: f32 = 40.0;
+const TIER_TOP: f32 = 20.0;
+const TIER_PITCH: f32 = 60.0;
+const COL_X0: f32 = 36.0;
+const COL_PITCH: f32 = 64.0;
+/// The column (of four) each position of a spec sits in, so a tree zigzags and some neighbours
+/// stack. One row of this per spec.
+const COLUMNS: [[usize; MAX_ROWS]; 3] = [[1, 2, 2, 1, 1, 2], [2, 1, 1, 2, 2, 1], [1, 1, 2, 2, 1, 1]];
 
-const FRAME_BORDER: Color = Color::srgb(0.8, 0.8, 0.8);
-const FRAME_FILL: Color = Color::srgba(0.09, 0.09, 0.09, 0.95);
-const ROW_BG: Color = Color::srgba(0.0, 0.0, 0.0, 0.35);
-const ROW_HOT: Color = Color::srgba(0.35, 0.28, 0.1, 0.6);
-const ROW_EDGE: Color = Color::srgb(0.25, 0.2, 0.1);
-const ROW_EDGE_OPEN: Color = Color::srgb(1.0, 0.78, 0.0);
-const MAXED: Color = Color::srgb(0.4, 1.0, 0.4);
-const SHORT: Color = Color::srgb(1.0, 0.3, 0.3);
+const ART_TINT: Color = Color::srgb(0.75, 0.75, 0.75);
+const EDGE_GREY: Color = Color::srgb(0.55, 0.55, 0.55);
+const EDGE_DARK: Color = Color::srgb(0.22, 0.2, 0.18);
+const LINE_LIT: Color = Color::srgb(0.75, 0.6, 0.28);
+const LINE_DIM: Color = Color::srgba(0.45, 0.4, 0.3, 0.5);
+const BADGE_FILL: Color = Color::srgba(0.0, 0.0, 0.0, 0.85);
 const QUESTION: &str = "Interface\\Icons\\INV_Misc_QuestionMark.blp";
+const IDLE_TIP: &str = "Hover a talent to read it.";
+const IDLE_HINT: &str = "Click spends a point. Respec hands every point back for free.";
 
 fn icon_path(icon: &str) -> String {
     format!("Interface\\Icons\\{icon}.blp")
+}
+
+/// `Interface\TalentFrame\<this>-TopLeft.blp` and its three siblings: the tree's background art,
+/// by class id ([`data::ClassDef::id`]) and spec position, as `TalentTab.dbc` names it.
+fn backdrop_name(class_id: u8, spec: usize) -> Option<&'static str> {
+    let names: [&str; 3] = match class_id {
+        1 => ["WarriorArms", "WarriorFury", "WarriorProtection"],
+        2 => ["PaladinHoly", "PaladinProtection", "PaladinCombat"],
+        3 => ["HunterBeastMastery", "HunterMarksmanship", "HunterSurvival"],
+        4 => ["RogueAssassination", "RogueCombat", "RogueSubtlety"],
+        5 => ["PriestDiscipline", "PriestHoly", "PriestShadow"],
+        7 => ["ShamanElementalCombat", "ShamanEnhancement", "ShamanRestoration"],
+        8 => ["MageArcane", "MageFire", "MageFrost"],
+        9 => ["WarlockCurses", "WarlockSummoning", "WarlockDestruction"],
+        11 => ["DruidBalance", "DruidFeralCombat", "DruidRestoration"],
+        _ => return None,
+    };
+    names.get(spec).copied()
+}
+
+const QUARTER_NAMES: [&str; 4] = ["TopLeft", "TopRight", "BottomLeft", "BottomRight"];
+
+/// Where talent `idx` of `spec` sits in the tree body: `(left, top)`.
+fn slot(spec: usize, idx: usize) -> (f32, f32) {
+    let col = COLUMNS[spec % 3][idx % MAX_ROWS];
+    (
+        COL_X0 + col as f32 * COL_PITCH,
+        TIER_TOP + idx as f32 * TIER_PITCH,
+    )
 }
 
 pub(super) fn plugin(app: &mut App) {
@@ -956,70 +1013,23 @@ pub(super) fn plugin(app: &mut App) {
     );
 }
 
-/// Build the Talents button and the window into the pick screen once it is built.
+/// Build the window into the pick screen once it is built.
 fn build(
     mut commands: Commands,
     roots: Query<Entity, (With<MenuRoot>, With<MenuBuilt>, Without<TalentsBuilt>)>,
-    glue: Res<GlueArt>,
-    font: Res<HudFont>,
+    fonts: Res<KitFonts>,
 ) {
     let Ok(root) = roots.single() else { return };
-    let f = &font.0;
-    let px = Val::Px;
     commands
         .entity(root)
         .insert(TalentsBuilt)
         .with_children(|ui| {
-            ui.spawn(Node {
-                position_type: PositionType::Absolute,
-                right: px(5.0 + (260.0 - BUTTON_W) / 2.0),
-                top: px(BUTTON_TOP),
-                ..default()
-            })
-            .with_children(|b| {
-                glue_button(
-                    b,
-                    &glue,
-                    f,
-                    TalentAction::Open,
-                    "Talents",
-                    BUTTON_W,
-                    30.0,
-                    GlueBtnKind::Small,
-                    1.0,
-                );
-            });
-            panel(ui, &glue, f);
+            panel(ui, &fonts);
         });
 }
 
-/// A text at `(left, top)` in a `w` × `h` box, tagged `label`.
-fn label(
-    frame: &mut ChildSpawnerCommands,
-    f: &Handle<Font>,
-    label: Label,
-    (left, top, w, h): (f32, f32, f32, f32),
-    size: f32,
-    color: Color,
-) {
-    outlined_text(
-        frame,
-        abs(1.0, left, top, w, h),
-        (),
-        label,
-        GlueText {
-            text: "",
-            size,
-            color,
-            wrap: false,
-        },
-        f,
-        1.0,
-    );
-}
-
-/// The window: title, the class line, three specs of six rows, Respec and Close.
-fn panel(ui: &mut ChildSpawnerCommands, glue: &GlueArt, f: &Handle<Font>) {
+/// The window: title, the class line, three trees, the hovered talent's text, Respec and Close.
+fn panel(ui: &mut ChildSpawnerCommands, fonts: &KitFonts) {
     let px = Val::Px;
     ui.spawn((
         TalentPanel,
@@ -1037,208 +1047,259 @@ fn panel(ui: &mut ChildSpawnerCommands, glue: &GlueArt, f: &Handle<Font>) {
         },
     ))
     .with_children(|dim| {
-        dim.spawn(Node {
+        dim.spawn(kit::panel(Node {
             width: px(PANEL_W),
             height: px(PANEL_H),
+            flex_direction: FlexDirection::Column,
+            padding: UiRect::axes(px(24.0), px(12.0)),
+            row_gap: px(6.0),
+            ..default()
+        }))
+        .with_children(|win| {
+            kit::heading(win, fonts, "Talents", 26.0);
+            win.spawn(Node {
+                width: Val::Percent(100.0),
+                justify_content: JustifyContent::Center,
+                ..default()
+            })
+            .with_children(|row| {
+                row.spawn((kit::body(fonts, "", 14.0, kit::CREAM), Label::Sub));
+            });
+
+            win.spawn(Node {
+                width: Val::Percent(100.0),
+                justify_content: JustifyContent::Center,
+                column_gap: px(25.0),
+                margin: UiRect::top(px(4.0)),
+                ..default()
+            })
+            .with_children(|cols| {
+                for spec in 0..3 {
+                    tree(cols, fonts, spec);
+                }
+            });
+
+            // The hovered talent, or the idle hint.
+            win.spawn(kit::inset(Node {
+                width: Val::Percent(100.0),
+                height: px(56.0),
+                flex_direction: FlexDirection::Column,
+                justify_content: JustifyContent::Center,
+                padding: UiRect::axes(px(12.0), px(4.0)),
+                row_gap: px(2.0),
+                ..default()
+            }))
+            .with_children(|tip| {
+                tip.spawn((
+                    kit::body(fonts, IDLE_TIP, 15.0, kit::MUTED),
+                    Label::TipName,
+                ));
+                tip.spawn((
+                    kit::body(fonts, IDLE_HINT, 12.0, kit::MUTED),
+                    Label::TipEffect,
+                ));
+                tip.spawn((kit::body(fonts, "", 12.0, kit::MUTED), Label::TipHint));
+            });
+
+            win.spawn(Node {
+                width: Val::Percent(100.0),
+                justify_content: JustifyContent::SpaceBetween,
+                ..default()
+            })
+            .with_children(|foot| {
+                for (action, caption) in [
+                    (TalentAction::Respec, "Respec"),
+                    (TalentAction::Close, "Close"),
+                ] {
+                    kit::button(
+                        foot,
+                        fonts,
+                        KitStyle::Normal,
+                        caption,
+                        None,
+                        Node {
+                            width: px(150.0),
+                            height: px(30.0),
+                            ..default()
+                        },
+                        action,
+                    );
+                }
+            });
+        });
+    });
+}
+
+/// One tree: its header line (icon, name, points) over the body with the art and the talents.
+fn tree(cols: &mut ChildSpawnerCommands, fonts: &KitFonts, spec: usize) {
+    let px = Val::Px;
+    cols.spawn(Node {
+        width: px(TREE_W),
+        flex_direction: FlexDirection::Column,
+        row_gap: px(4.0),
+        ..default()
+    })
+    .with_children(|col| {
+        col.spawn(Node {
+            width: Val::Percent(100.0),
+            height: px(30.0),
+            align_items: AlignItems::Center,
+            justify_content: JustifyContent::SpaceBetween,
             ..default()
         })
-        .with_children(|frame| {
-            if let (Some(bg), Some(border)) = (&glue.tooltip_bg, &glue.name_border) {
-                frame.spawn((
-                    tiled_bg_node(bg.clone(), NAME_EDGE, 1.0, FRAME_FILL),
-                    BackgroundColor(Color::srgb(0.03, 0.03, 0.04)),
-                    Node {
-                        position_type: PositionType::Absolute,
-                        left: px(10.0),
-                        right: px(5.0),
-                        top: px(4.0),
-                        bottom: px(9.0),
-                        ..default()
-                    },
-                ));
-                backdrop_border(frame, border, NAME_EDGE, FRAME_BORDER);
-            } else {
-                frame.spawn((BackgroundColor(FRAME_FILL), benilla_app::survivors_host::glue::widgets::overlay()));
-            }
-            outlined_text(
-                frame,
-                Node {
-                    position_type: PositionType::Absolute,
-                    top: px(16.0),
-                    width: Val::Percent(100.0),
-                    justify_content: JustifyContent::Center,
-                    ..default()
-                },
-                (),
-                (),
-                GlueText {
-                    text: "Talents",
-                    size: 22.0,
-                    color: GOLD,
-                    wrap: false,
-                },
-                f,
-                1.0,
-            );
-            // Full width, centred by the node; the text itself is left-aligned inside it.
-            frame
-                .spawn(Node {
-                    position_type: PositionType::Absolute,
-                    top: px(52.0),
-                    width: Val::Percent(100.0),
-                    justify_content: JustifyContent::Center,
-                    ..default()
-                })
-                .with_children(|row| {
-                    outlined_text(
-                        row,
-                        Node::default(),
-                        (),
-                        Label::Sub,
-                        GlueText {
-                            text: "",
-                            size: 14.0,
-                            color: Color::WHITE,
-                            wrap: false,
-                        },
-                        f,
-                        1.0,
-                    );
-                });
-
-            for spec in 0..3 {
-                let x = COL_X0 + spec as f32 * (COL_W + COL_GAP);
-                frame.spawn((
+        .with_children(|head| {
+            head.spawn(Node {
+                align_items: AlignItems::Center,
+                column_gap: px(8.0),
+                ..default()
+            })
+            .with_children(|left| {
+                left.spawn((
                     Icon::Spec(spec),
                     ImageNode {
                         color: Color::NONE,
                         ..default()
                     },
-                    abs(1.0, x, HEAD_TOP, 30.0, 30.0),
+                    Node {
+                        width: px(26.0),
+                        height: px(26.0),
+                        ..default()
+                    },
                 ));
-                label(
-                    frame,
-                    f,
+                left.spawn((
+                    kit::text(&fonts.title, "", 20.0, kit::TITLE),
                     Label::SpecName(spec),
-                    (x + 38.0, HEAD_TOP, COL_W - 38.0, 17.0),
-                    16.0,
-                    GOLD,
-                );
-                label(
-                    frame,
-                    f,
-                    Label::SpecPoints(spec),
-                    (x + 38.0, HEAD_TOP + 18.0, COL_W - 38.0, 14.0),
-                    11.0,
-                    DIM,
-                );
-                for idx in 0..MAX_ROWS {
-                    row(frame, f, x, spec, idx);
-                }
-            }
+                ));
+            });
+            head.spawn((
+                kit::body(fonts, "", 12.0, kit::MUTED),
+                Label::SpecPoints(spec),
+            ));
+        });
 
-            let foot = PANEL_H - 56.0;
-            for (left, action, caption) in [
-                (34.0, TalentAction::Respec, "Respec"),
-                (PANEL_W - 34.0 - 146.0, TalentAction::Close, "Close"),
-            ] {
-                frame
-                    .spawn(Node {
+        col.spawn((
+            BackgroundColor(Color::srgb(0.03, 0.025, 0.02)),
+            BorderColor::all(kit::INSET_EDGE),
+            Node {
+                width: px(TREE_W),
+                height: px(TREE_H),
+                border: UiRect::all(px(1.0)),
+                overflow: Overflow::clip(),
+                ..default()
+            },
+        ))
+        .with_children(|body| {
+            for (quad, (left, top, w, h)) in QUARTERS.into_iter().enumerate() {
+                body.spawn((
+                    Backdrop { spec, quad },
+                    ImageNode {
+                        color: Color::NONE,
+                        ..default()
+                    },
+                    Node {
                         position_type: PositionType::Absolute,
                         left: px(left),
-                        top: px(foot),
+                        top: px(top),
+                        width: px(w),
+                        height: px(h),
                         ..default()
-                    })
-                    .with_children(|b| {
-                        glue_button(
-                            b,
-                            glue,
-                            f,
-                            action,
-                            caption,
-                            146.0,
-                            30.0,
-                            GlueBtnKind::Small,
-                            1.0,
-                        );
-                    });
+                    },
+                ));
             }
-            outlined_text(
-                frame,
-                Node {
-                    position_type: PositionType::Absolute,
-                    top: px(foot + 9.0),
-                    width: Val::Percent(100.0),
-                    justify_content: JustifyContent::Center,
-                    ..default()
-                },
-                (),
-                (),
-                GlueText {
-                    text: "Click a talent to spend a point. Respec is free.",
-                    size: 12.0,
-                    color: DIM,
-                    wrap: false,
-                },
-                f,
-                1.0,
-            );
+            for idx in 1..MAX_ROWS {
+                connectors(body, spec, idx);
+            }
+            for idx in 0..MAX_ROWS {
+                row(body, fonts, spec, idx);
+            }
         });
     });
 }
 
-/// One talent's row: icon, name, the effect (or what is missing to open it) and the rank.
-fn row(frame: &mut ChildSpawnerCommands, f: &Handle<Font>, x: f32, spec: usize, idx: usize) {
-    frame
-        .spawn((
-            TalentRow { spec, idx },
-            Button,
-            BackgroundColor(ROW_BG),
-            BorderColor::all(ROW_EDGE),
+/// The lines from talent `idx - 1` down to `idx`: one straight line in the same column, else a
+/// stub, a bar across and a stub.
+fn connectors(body: &mut ChildSpawnerCommands, spec: usize, idx: usize) {
+    let px = Val::Px;
+    let (px0, py0) = slot(spec, idx - 1);
+    let (px1, _) = slot(spec, idx);
+    let (cx0, cx1) = (px0 + ICON / 2.0, px1 + ICON / 2.0);
+    let y0 = py0 + ICON;
+    let gap = TIER_PITCH - ICON;
+    let line = |left: f32, top: f32, w: f32, h: f32| {
+        (
+            Connector { spec, idx },
+            BackgroundColor(LINE_DIM),
             Node {
                 position_type: PositionType::Absolute,
-                left: Val::Px(x),
-                top: Val::Px(ROWS_TOP + idx as f32 * ROW_PITCH),
-                width: Val::Px(COL_W),
-                height: Val::Px(ROW_H),
-                border: UiRect::all(Val::Px(1.0)),
+                left: px(left),
+                top: px(top),
+                width: px(w),
+                height: px(h),
+                ..default()
+            },
+        )
+    };
+    if (cx0 - cx1).abs() < 1.0 {
+        body.spawn(line(cx0 - 1.0, y0, 2.0, gap));
+    } else {
+        let half = gap / 2.0;
+        body.spawn(line(cx0 - 1.0, y0, 2.0, half));
+        body.spawn(line(cx0.min(cx1) - 1.0, y0 + half - 1.0, (cx0 - cx1).abs() + 2.0, 2.0));
+        body.spawn(line(cx1 - 1.0, y0 + half, 2.0, half));
+    }
+}
+
+/// One talent: an icon button in the tree with its rank badge at the bottom right corner.
+fn row(body: &mut ChildSpawnerCommands, fonts: &KitFonts, spec: usize, idx: usize) {
+    let px = Val::Px;
+    let (left, top) = slot(spec, idx);
+    body.spawn((
+        TalentRow { spec, idx },
+        Button,
+        BackgroundColor(Color::BLACK),
+        BorderColor::all(EDGE_DARK),
+        Node {
+            position_type: PositionType::Absolute,
+            left: px(left),
+            top: px(top),
+            width: px(ICON),
+            height: px(ICON),
+            border: UiRect::all(px(2.0)),
+            border_radius: BorderRadius::all(px(3.0)),
+            ..default()
+        },
+    ))
+    .with_children(|r| {
+        r.spawn((
+            Icon::Row(spec, idx),
+            ImageNode {
+                color: Color::NONE,
+                ..default()
+            },
+            Node {
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                ..default()
+            },
+        ));
+        r.spawn((
+            BackgroundColor(BADGE_FILL),
+            Node {
+                position_type: PositionType::Absolute,
+                right: px(-8.0),
+                bottom: px(-8.0),
+                padding: UiRect::axes(px(3.0), px(0.0)),
+                border_radius: BorderRadius::all(px(3.0)),
                 ..default()
             },
         ))
-        .with_children(|r| {
-            r.spawn((
-                Icon::Row(spec, idx),
-                ImageNode {
-                    color: Color::NONE,
-                    ..default()
-                },
-                abs(1.0, 6.0, 6.0, 36.0, 36.0),
-            ));
-            label(
-                r,
-                f,
-                Label::Name(spec, idx),
-                (50.0, 6.0, COL_W - 56.0, 15.0),
-                12.0,
-                Color::WHITE,
-            );
-            label(
-                r,
-                f,
-                Label::Effect(spec, idx),
-                (50.0, 25.0, COL_W - 90.0, 14.0),
-                11.0,
-                DIM,
-            );
-            label(
-                r,
-                f,
+        .with_children(|badge| {
+            badge.spawn((
+                kit::body(fonts, "", 11.0, kit::MUTED),
                 Label::Rank(spec, idx),
-                (COL_W - 40.0, 24.0, 34.0, 16.0),
-                14.0,
-                Color::WHITE,
-            );
+            ));
         });
+    });
 }
 
 /// Close on Esc or when the pick screen goes; for an automated run, `WOW_SURVIVORS_TALENTS=1`
@@ -1289,26 +1350,23 @@ fn show_panel(
     }
 }
 
-/// The button's and the rows' clicks: open, close, respec, spend a point.
+/// The window's buttons and the talents' clicks: close, respec, spend a point.
 fn talent_clicks(
-    clicks: Res<GlueClicks>,
-    actions: Query<(Entity, &TalentAction)>,
-    rows: Query<(Entity, &TalentRow)>,
+    actions: Query<(&Interaction, &TalentAction, &KitButton), Changed<Interaction>>,
+    rows: Query<(&Interaction, &TalentRow), Changed<Interaction>>,
     phase: Res<State<Phase>>,
     selection: Res<Selection>,
     mut profile: ResMut<Profile>,
     mut ui: ResMut<TalentsUi>,
 ) {
-    if *phase.get() != Phase::Menu {
+    if *phase.get() != Phase::Menu || !ui.open {
         return;
     }
-    if let Some(action) = actions
-        .iter()
-        .find(|(e, _)| clicks.hit(*e))
-        .map(|(_, a)| *a)
-    {
+    for (interaction, action, button) in &actions {
+        if *interaction != Interaction::Pressed || button.disabled {
+            continue;
+        }
         match action {
-            TalentAction::Open => ui.open = true,
             TalentAction::Close => ui.open = false,
             TalentAction::Respec => {
                 if let Some(class) = selection.class {
@@ -1321,38 +1379,20 @@ fn talent_clicks(
         }
         return;
     }
-    if !ui.open {
-        return;
-    }
     let Some(class) = selection.class else { return };
-    let Some(&TalentRow { spec, idx }) = rows.iter().find(|(e, _)| clicks.hit(*e)).map(|(_, r)| r)
-    else {
-        return;
-    };
-    let level = profile.character(class).level;
-    if spend(&mut profile.talents, class, level, spec, idx) {
-        profile.save();
-    }
-}
-
-/// Set a glue button's caption, which sits in a text under it.
-fn set_caption(
-    button: Entity,
-    want: &str,
-    children: &Query<&Children>,
-    captions: &mut Query<&mut Text, With<GlueCaption>>,
-) {
-    for d in children.iter_descendants(button) {
-        if let Ok(mut text) = captions.get_mut(d) {
-            if text.0 != want {
-                text.0 = want.to_string();
-            }
-            return;
+    for (interaction, &TalentRow { spec, idx }) in &rows {
+        if *interaction != Interaction::Pressed {
+            continue;
         }
+        let level = profile.character(class).level;
+        if spend(&mut profile.talents, class, level, spec, idx) {
+            profile.save();
+        }
+        return;
     }
 }
 
-/// The button's caption with the points free; while open, the whole window for the selected class.
+/// While open, the whole window for the selected class.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn refresh(
     ui: Res<TalentsUi>,
@@ -1362,61 +1402,46 @@ fn refresh(
     mut images: ResMut<Assets<Image>>,
     mut loaded: Local<Option<usize>>,
     mut rows: Query<
-        (
-            &TalentRow,
-            &Interaction,
-            &mut Node,
-            &mut BackgroundColor,
-            &mut BorderColor,
-        ),
-        Without<Icon>,
+        (&TalentRow, &Interaction, &mut Node, &mut BorderColor),
+        (Without<Icon>, Without<Connector>),
     >,
-    mut icons: Query<(&Icon, &mut ImageNode)>,
-    mut labels: Query<(&Label, &mut Text, &mut TextColor), Without<GlueCaption>>,
-    mut buttons: Query<(Entity, &TalentAction, &mut GlueDisabled)>,
-    children: Query<&Children>,
-    mut captions: Query<&mut Text, With<GlueCaption>>,
+    mut lines: Query<(&Connector, &mut Node, &mut BackgroundColor), Without<TalentRow>>,
+    mut icons: Query<(&Icon, &mut ImageNode), Without<Backdrop>>,
+    mut backs: Query<(&Backdrop, &mut ImageNode), Without<Icon>>,
+    mut labels: Query<(&Label, &mut Text, &mut TextColor)>,
+    mut buttons: Query<(&TalentAction, &mut KitButton)>,
 ) {
     let class = selection.class;
-    let level = class.map_or(1, |c| profile.character(c).level);
-    let left = class.map_or(0, |c| available(&profile.talents, c, level));
-    for (button, action, mut disabled) in &mut buttons {
-        match *action {
-            TalentAction::Open => {
-                let want = if left > 0 {
-                    format!("Talents ({left})")
-                } else {
-                    "Talents".to_string()
-                };
-                set_caption(button, &want, &children, &mut captions);
+    for (action, mut button) in &mut buttons {
+        if *action == TalentAction::Respec {
+            let off = class.is_none_or(|c| spent(&profile.talents, c) == 0);
+            if button.disabled != off {
+                button.disabled = off;
             }
-            TalentAction::Respec => {
-                let off = class.is_none_or(|c| spent(&profile.talents, c) == 0);
-                if disabled.0 != off {
-                    disabled.0 = off;
-                }
-            }
-            TalentAction::Close => {}
         }
     }
     if !ui.open {
         return;
     }
+    let level = class.map_or(1, |c| profile.character(c).level);
     let (Some(class), Some(def)) = (class, selection.class_def()) else {
         return;
     };
+    let left = available(&profile.talents, class, level);
     let trees = specs(class);
     let ranks = &profile.talents;
+    let talent_at = |spec: usize, idx: usize| {
+        trees
+            .and_then(|t| t.get(spec))
+            .and_then(|s| s.talents.get(idx))
+    };
 
     if *loaded != Some(class) {
         if let Some(mut assets) = assets {
             for (icon, mut image) in &mut icons {
                 let name = match *icon {
                     Icon::Spec(s) => trees.and_then(|t| t.get(s)).map(|s| s.icon),
-                    Icon::Row(s, i) => trees
-                        .and_then(|t| t.get(s))
-                        .and_then(|s| s.talents.get(i))
-                        .map(|t| t.icon),
+                    Icon::Row(s, i) => talent_at(s, i).map(|t| t.icon),
                 };
                 let Some(name) = name else { continue };
                 let handle = assets
@@ -1426,15 +1451,30 @@ fn refresh(
                     image.image = handle;
                 }
             }
+            let class_id = def.id;
+            for (back, mut image) in &mut backs {
+                let handle = backdrop_name(class_id, back.spec).and_then(|name| {
+                    let path = format!(
+                        "Interface\\TalentFrame\\{name}-{}.blp",
+                        QUARTER_NAMES[back.quad]
+                    );
+                    assets.sprite_texture(&path, &mut images)
+                });
+                // A missing file leaves the quarter invisible rather than a white block.
+                let tint = if handle.is_some() { ART_TINT } else { Color::NONE };
+                if let Some(handle) = handle {
+                    image.image = handle;
+                }
+                image.color = tint;
+            }
             *loaded = Some(class);
         }
     }
 
-    for (row, interaction, mut node, mut bg, mut edge) in &mut rows {
-        let talent = trees
-            .and_then(|t| t.get(row.spec))
-            .and_then(|s| s.talents.get(row.idx));
-        let display = if talent.is_some() {
+    let mut hover: Option<(usize, usize)> = None;
+    for (row, interaction, mut node, mut edge) in &mut rows {
+        let t = talent_at(row.spec, row.idx);
+        let display = if t.is_some() {
             Display::Flex
         } else {
             Display::None
@@ -1442,20 +1482,50 @@ fn refresh(
         if node.display != display {
             node.display = display;
         }
-        let open = can_spend(ranks, class, level, row.spec, row.idx);
-        let want_bg = if open && *interaction != Interaction::None {
-            ROW_HOT
-        } else {
-            ROW_BG
-        };
-        if bg.0 != want_bg {
-            bg.0 = want_bg;
+        let Some(t) = t else { continue };
+        let r = rank(ranks, class, t);
+        let can = can_spend(ranks, class, level, row.spec, row.idx);
+        let hot = *interaction != Interaction::None;
+        if hot {
+            hover = Some((row.spec, row.idx));
         }
-        let want_edge = BorderColor::all(if open { ROW_EDGE_OPEN } else { ROW_EDGE });
-        if *edge != want_edge {
-            *edge = want_edge;
+        let unlocked = trees
+            .and_then(|t| t.get(row.spec))
+            .is_some_and(|s| spec_spent(ranks, class, s) >= needs(row.idx));
+        let want = if r >= t.max {
+            kit::TITLE
+        } else if r > 0 {
+            kit::BONUS
+        } else if hot && can {
+            kit::CREAM
+        } else if unlocked {
+            EDGE_GREY
+        } else {
+            EDGE_DARK
+        };
+        let want = BorderColor::all(want);
+        if *edge != want {
+            *edge = want;
         }
     }
+    for (line, mut node, mut bg) in &mut lines {
+        let display = if talent_at(line.spec, line.idx).is_some() {
+            Display::Flex
+        } else {
+            Display::None
+        };
+        if node.display != display {
+            node.display = display;
+        }
+        let lit = trees
+            .and_then(|t| t.get(line.spec))
+            .is_some_and(|s| spec_spent(ranks, class, s) >= needs(line.idx));
+        let want = if lit { LINE_LIT } else { LINE_DIM };
+        if bg.0 != want {
+            bg.0 = want;
+        }
+    }
+    // Which icons exist for this class: a spec with fewer than six talents leaves the rest empty.
     for (icon, mut image) in &mut icons {
         if loaded.is_none() {
             break;
@@ -1467,11 +1537,13 @@ fn refresh(
         let Some(s) = trees.and_then(|t| t.get(spec)) else {
             continue;
         };
-        // A talent with no rank and none to open reads grey, one with ranks full colour.
-        let want = match idx.and_then(|i| s.talents.get(i)) {
-            Some(t) if rank(ranks, class, t) > 0 => Color::WHITE,
-            Some(_) if can_spend(ranks, class, level, spec, idx.unwrap_or(0)) => Color::WHITE,
-            Some(_) => Color::srgb(0.4, 0.4, 0.4),
+        // A reachable talent or one with ranks reads in full colour, one with points to spend
+        // but not yet open duller, one out of reach dark and desaturated.
+        let want = match idx.and_then(|i| s.talents.get(i).map(|t| (i, t))) {
+            Some((_, t)) if rank(ranks, class, t) > 0 => Color::WHITE,
+            Some((i, _)) if can_spend(ranks, class, level, spec, i) => Color::WHITE,
+            Some((i, _)) if spec_spent(ranks, class, s) >= needs(i) => Color::srgb(0.6, 0.6, 0.6),
+            Some(_) => Color::srgb(0.35, 0.35, 0.35),
             None => Color::WHITE,
         };
         if image.color != want {
@@ -1489,53 +1561,84 @@ fn refresh(
                     )
                 } else {
                     format!(
-                        "{}, level {level}.   Points to spend: {left} of {total}",
+                        "{}, level {level}. Points to spend: {left} of {total}",
                         def.name
                     )
                 };
-                (line, if left > 0 { GOLD } else { Color::WHITE })
+                (line, if left > 0 { kit::TITLE } else { kit::CREAM })
             }
             Label::SpecName(s) => (
                 trees
                     .and_then(|t| t.get(s))
                     .map_or(String::new(), |s| s.name.to_string()),
-                GOLD,
+                kit::TITLE,
             ),
             Label::SpecPoints(s) => (
                 trees.and_then(|t| t.get(s)).map_or(String::new(), |sp| {
                     format!("{} points", spec_spent(ranks, class, sp))
                 }),
-                DIM,
+                kit::MUTED,
             ),
-            Label::Name(s, i) | Label::Effect(s, i) | Label::Rank(s, i) => {
-                let Some(sp) = trees.and_then(|t| t.get(s)) else {
-                    continue;
-                };
-                let Some(t) = sp.talents.get(i) else { continue };
-                let r = rank(ranks, class, t);
-                match *label {
-                    Label::Name(..) => (
-                        t.name.to_string(),
-                        if r >= t.max { MAXED } else { Color::WHITE },
-                    ),
-                    Label::Effect(..) => {
-                        let have = spec_spent(ranks, class, sp);
-                        if have < needs(i) {
-                            (format!("Needs {} points in {}", needs(i), sp.name), SHORT)
-                        } else {
-                            (format!("{} a rank", t.fx.describe(t.per_rank)), DIM)
-                        }
-                    }
-                    _ => (
+            Label::Rank(s, i) => match talent_at(s, i) {
+                // Not a talent of this spec: the badge stays empty.
+                None => (String::new(), kit::MUTED),
+                Some(t) => {
+                    let r = rank(ranks, class, t);
+                    (
                         format!("{r}/{}", t.max),
                         if r >= t.max {
-                            MAXED
+                            kit::TITLE
                         } else if r > 0 {
-                            GOLD
+                            kit::BONUS
                         } else {
-                            Color::WHITE
+                            kit::MUTED
                         },
-                    ),
+                    )
+                }
+            },
+            Label::TipName | Label::TipEffect | Label::TipHint => {
+                let shown = hover.and_then(|(s, i)| Some((i, talent_at(s, i)?, trees?.get(s)?)));
+                match shown {
+                    None => match *label {
+                        Label::TipName => (IDLE_TIP.to_string(), kit::MUTED),
+                        Label::TipEffect => (IDLE_HINT.to_string(), kit::MUTED),
+                        _ => (String::new(), kit::MUTED),
+                    },
+                    Some((i, t, sp)) => {
+                        let r = rank(ranks, class, t);
+                        match *label {
+                            Label::TipName => (
+                                format!("{}   Rank {r}/{}", t.name, t.max),
+                                if r >= t.max { kit::TITLE } else { kit::CREAM },
+                            ),
+                            Label::TipEffect => (
+                                if r == 0 {
+                                    format!("{} per rank", t.fx.describe(t.per_rank))
+                                } else {
+                                    format!(
+                                        "{} per rank, {} now",
+                                        t.fx.describe(t.per_rank),
+                                        t.fx.describe(t.per_rank * f32::from(r))
+                                    )
+                                },
+                                kit::BONUS,
+                            ),
+                            _ => {
+                                if spec_spent(ranks, class, sp) < needs(i) {
+                                    (
+                                        format!("Needs {} points in {}", needs(i), sp.name),
+                                        kit::WARN,
+                                    )
+                                } else if r >= t.max {
+                                    ("Maxed".to_string(), kit::TITLE)
+                                } else if left == 0 {
+                                    ("No points left to spend".to_string(), kit::MUTED)
+                                } else {
+                                    ("Click to spend a point".to_string(), kit::CREAM)
+                                }
+                            }
+                        }
+                    }
                 }
             }
         };

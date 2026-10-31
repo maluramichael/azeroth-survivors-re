@@ -44,7 +44,7 @@ const SLOT_PX: f32 = 26.0;
 const SLOT_GAP: f32 = 3.0;
 /// With the HUD (400), under the chat window (402) and the character window (405).
 const Z: i32 = 401;
-const SLOT_FILL: Color = Color::srgba(0.02, 0.02, 0.03, 0.85);
+const SLOT_FILL: Color = super::kit::INSET_FILL;
 
 pub(super) fn plugin(app: &mut App) {
     app.init_resource::<Gear>()
@@ -755,6 +755,7 @@ fn show_strip(
                                 width: Val::Px(SLOT_PX),
                                 height: Val::Px(SLOT_PX),
                                 border: UiRect::all(Val::Px(2.0)),
+                                border_radius: BorderRadius::all(Val::Px(3.0)),
                                 display: Display::None,
                                 ..default()
                             },

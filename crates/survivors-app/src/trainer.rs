@@ -14,13 +14,13 @@ use bevy::prelude::*;
 use bevy::ui::FocusPolicy;
 
 use super::hud::{self, HudFont, MenuRoot};
+use super::kit::{self, KitButton, KitCaption, KitStyle};
 use super::menu::{self, MenuAction, MenuBuilt};
 use super::profile::{MetaBonus, Profile};
 use super::{data, Phase, Selection};
-use benilla_app::survivors_host::glue::art::{GlueArt, DIM, GOLD, NAME_EDGE};
-use benilla_app::survivors_host::glue::backdrop::{backdrop_border, tiled_bg_node};
+use benilla_app::survivors_host::glue::art::GlueArt;
 use benilla_app::survivors_host::glue::widgets::{
-    abs, glue_button, outlined_text, GlueBtnKind, GlueCaption, GlueDisabled, GlueText,
+    abs, glue_button, GlueBtnKind, GlueCaption, GlueDisabled,
 };
 use benilla_app::survivors_host::glue::GlueClicks;
 
@@ -149,7 +149,6 @@ pub(super) fn class_price(profile: &Profile) -> u64 {
 /// A button of the trainer or the class shop.
 #[derive(Component, Clone, Copy, PartialEq, Eq, Debug)]
 enum TrainerAction {
-    Open,
     Close,
     Reset,
     /// An index into [`UPGRADES`].
@@ -192,34 +191,19 @@ pub(super) struct TrainerUi {
     pub(super) open: bool,
 }
 
-/// Textures loaded once for the trainer.
-#[derive(Resource, Default)]
-struct TrainerArt {
-    /// `UI-GoldIcon`; without it the bank reads "1,234 g".
-    gold: Option<Handle<Image>>,
-}
-
 const PANEL_W: f32 = 600.0;
-const PANEL_H: f32 = 530.0;
-const ROWS_TOP: f32 = 92.0;
-const ROW_PITCH: f32 = 46.0;
-const PIPS_X: f32 = 300.0;
-const PRICE_X: f32 = 392.0;
-const BUY_X: f32 = 486.0;
+const ROW_H: f32 = 44.0;
 
-const FRAME_BORDER: Color = Color::srgb(0.8, 0.8, 0.8);
-const FRAME_FILL: Color = Color::srgba(0.09, 0.09, 0.09, 0.95);
-const PIP_FULL: Color = Color::srgb(1.0, 0.78, 0.0);
-const PIP_EMPTY: Color = Color::srgb(0.12, 0.12, 0.12);
-const PIP_EDGE: Color = Color::srgb(0.5, 0.4, 0.2);
-const SHORT: Color = Color::srgb(1.0, 0.3, 0.3);
-const MAXED: Color = Color::srgb(0.4, 1.0, 0.4);
+const PIP_FULL: Color = kit::TITLE;
+const PIP_EMPTY: Color = Color::srgb(0.08, 0.065, 0.05);
+const PIP_EDGE: Color = Color::srgb(0.47, 0.37, 0.19);
+const SHORT: Color = kit::WARN;
+const MAXED: Color = kit::BONUS;
 /// A locked class's face.
 const LOCKED_FACE: Color = Color::srgb(0.3, 0.3, 0.3);
 
 pub(super) fn plugin(app: &mut App) {
     app.init_resource::<TrainerUi>()
-        .init_resource::<TrainerArt>()
         .add_systems(
             Update,
             (
@@ -238,17 +222,8 @@ pub(super) fn plugin(app: &mut App) {
 }
 
 /// A coin and the bank (or a price) beside it, in a row.
-fn gold_line(row: &mut ChildSpawnerCommands, art: &TrainerArt, size: f32) {
-    if let Some(icon) = &art.gold {
-        row.spawn((
-            ImageNode::new(icon.clone()),
-            Node {
-                width: Val::Px(size),
-                height: Val::Px(size),
-                ..default()
-            },
-        ));
-    }
+fn gold_line(row: &mut ChildSpawnerCommands, size: f32) {
+    row.spawn(hud::coin_icon(size));
 }
 
 /// A built pick screen the trainer has not been added to yet.
@@ -265,14 +240,12 @@ fn build_trainer(
     glue: Res<GlueArt>,
     mut images: ResMut<Assets<Image>>,
     font: Res<HudFont>,
-    mut art: ResMut<TrainerArt>,
+    fonts: Res<kit::KitFonts>,
 ) {
     let Ok(root) = roots.single() else { return };
     let Some(mut assets) = assets else { return };
-    art.gold = assets.sprite_texture("Interface\\MoneyFrame\\UI-GoldIcon", &mut images);
-    let lock = assets.sprite_texture("Interface\\Buttons\\LockButton-Locked-Up", &mut images);
+    let lock = assets.sprite_texture("Interface\\ChatFrame\\UI-ChatFrame-LockIcon", &mut images);
     let f = &font.0;
-    let art = &*art;
     let px = Val::Px;
 
     for (button, action) in &class_buttons {
@@ -292,47 +265,13 @@ fn build_trainer(
         .entity(root)
         .insert(TrainerBuilt)
         .with_children(|ui| {
-            // Under the class tower: the Trainer button and the bank.
-            ui.spawn(Node {
-                position_type: PositionType::Absolute,
-                left: px(58.0),
-                top: px(676.0),
-                ..default()
-            })
-            .with_children(|b| {
-                glue_button(
-                    b,
-                    &glue,
-                    f,
-                    TrainerAction::Open,
-                    "Trainer",
-                    146.0,
-                    30.0,
-                    GlueBtnKind::Small,
-                    1.0,
-                );
-            });
-            ui.spawn(Node {
-                position_type: PositionType::Absolute,
-                left: px(28.0),
-                top: px(712.0),
-                width: px(206.0),
-                justify_content: JustifyContent::Center,
-                align_items: AlignItems::Center,
-                column_gap: px(4.0),
-                ..default()
-            })
-            .with_children(|row| {
-                gold_line(row, art, 14.0);
-                gold_text(row, f, 14.0);
-            });
-
-            // The unlock button above the name line, only while a locked class is selected.
+            // The unlock button above the pick screen's Enter block (see `menu::build_menu`),
+            // only while a locked class is selected.
             ui.spawn((
                 UnlockWrap,
                 Node {
                     position_type: PositionType::Absolute,
-                    bottom: px(140.0),
+                    bottom: px(196.0),
                     width: Val::Percent(100.0),
                     justify_content: JustifyContent::Center,
                     display: Display::None,
@@ -353,30 +292,12 @@ fn build_trainer(
                 );
             });
 
-            panel(ui, &glue, art, f);
+            panel(ui, &fonts);
         });
 }
 
-/// The bank's number, white as the game's money frames show it.
-fn gold_text(row: &mut ChildSpawnerCommands, f: &Handle<Font>, size: f32) {
-    outlined_text(
-        row,
-        Node::default(),
-        (),
-        Label::Gold,
-        GlueText {
-            text: "",
-            size,
-            color: Color::WHITE,
-            wrap: false,
-        },
-        f,
-        1.0,
-    );
-}
-
 /// The trainer panel: title, bank, one row per upgrade, Reset and Close.
-fn panel(ui: &mut ChildSpawnerCommands, glue: &GlueArt, art: &TrainerArt, f: &Handle<Font>) {
+fn panel(ui: &mut ChildSpawnerCommands, fonts: &kit::KitFonts) {
     let px = Val::Px;
     ui.spawn((
         TrainerPanel,
@@ -394,235 +315,158 @@ fn panel(ui: &mut ChildSpawnerCommands, glue: &GlueArt, art: &TrainerArt, f: &Ha
         },
     ))
     .with_children(|dim| {
-        dim.spawn(Node {
+        dim.spawn(kit::panel(Node {
             width: px(PANEL_W),
-            height: px(PANEL_H),
+            flex_direction: FlexDirection::Column,
+            padding: UiRect::axes(px(22.0), px(14.0)),
+            row_gap: px(5.0),
             ..default()
-        })
+        }))
         .with_children(|frame| {
-            if let (Some(bg), Some(border)) = (&glue.tooltip_bg, &glue.name_border) {
-                frame.spawn((
-                    tiled_bg_node(bg.clone(), NAME_EDGE, 1.0, FRAME_FILL),
-                    BackgroundColor(Color::srgb(0.03, 0.03, 0.04)),
-                    Node {
-                        position_type: PositionType::Absolute,
-                        left: px(10.0),
-                        right: px(5.0),
-                        top: px(4.0),
-                        bottom: px(9.0),
-                        ..default()
-                    },
-                ));
-                backdrop_border(frame, border, NAME_EDGE, FRAME_BORDER);
-            } else {
-                frame.spawn((BackgroundColor(FRAME_FILL), benilla_app::survivors_host::glue::widgets::overlay()));
-            }
-            outlined_text(
-                frame,
-                Node {
-                    position_type: PositionType::Absolute,
-                    top: px(16.0),
-                    width: Val::Percent(100.0),
-                    justify_content: JustifyContent::Center,
-                    ..default()
-                },
-                (),
-                (),
-                GlueText {
-                    text: "Trainer",
-                    size: 22.0,
-                    color: GOLD,
-                    wrap: false,
-                },
-                f,
-                1.0,
-            );
+            kit::heading(frame, fonts, "Trainer", 26.0);
+            // The bank, at the top right.
             frame
                 .spawn(Node {
                     position_type: PositionType::Absolute,
-                    top: px(52.0),
-                    width: Val::Percent(100.0),
-                    justify_content: JustifyContent::Center,
+                    right: px(22.0),
+                    top: px(20.0),
                     align_items: AlignItems::Center,
                     column_gap: px(4.0),
                     ..default()
                 })
                 .with_children(|row| {
-                    gold_line(row, art, 16.0);
-                    gold_text(row, f, 16.0);
+                    gold_line(row, 16.0);
+                    row.spawn((Label::Gold, kit::body(fonts, "", 16.0, kit::CREAM)));
                 });
 
             for (i, u) in UPGRADES.iter().enumerate() {
-                upgrade_row(frame, glue, art, f, i, u);
+                upgrade_row(frame, fonts, i, u);
             }
 
-            let foot = PANEL_H - 56.0;
-            for (left, action, caption) in [
-                (34.0, TrainerAction::Reset, "Reset"),
-                (PANEL_W - 34.0 - 146.0, TrainerAction::Close, "Close"),
-            ] {
-                frame
-                    .spawn(Node {
-                        position_type: PositionType::Absolute,
-                        left: px(left),
-                        top: px(foot),
-                        ..default()
-                    })
-                    .with_children(|b| {
-                        glue_button(
-                            b,
-                            glue,
-                            f,
-                            action,
-                            caption,
-                            146.0,
-                            30.0,
-                            GlueBtnKind::Small,
-                            1.0,
-                        );
-                    });
-            }
-            outlined_text(
-                frame,
-                Node {
-                    position_type: PositionType::Absolute,
-                    top: px(foot + 9.0),
+            frame
+                .spawn(Node {
                     width: Val::Percent(100.0),
-                    justify_content: JustifyContent::Center,
+                    justify_content: JustifyContent::SpaceBetween,
+                    align_items: AlignItems::Center,
+                    margin: UiRect::top(px(6.0)),
                     ..default()
-                },
-                (),
-                (),
-                GlueText {
-                    text: "Reset refunds all gold spent",
-                    size: 12.0,
-                    color: DIM,
-                    wrap: false,
-                },
-                f,
-                1.0,
-            );
+                })
+                .with_children(|foot| {
+                    let node = Node {
+                        width: px(120.0),
+                        height: px(30.0),
+                        ..default()
+                    };
+                    kit::button(
+                        foot,
+                        fonts,
+                        KitStyle::Normal,
+                        "Reset",
+                        None,
+                        node.clone(),
+                        TrainerAction::Reset,
+                    );
+                    foot.spawn(kit::body(
+                        fonts,
+                        "Reset refunds all gold spent",
+                        12.0,
+                        kit::MUTED,
+                    ));
+                    kit::button(
+                        foot,
+                        fonts,
+                        KitStyle::Normal,
+                        "Close",
+                        None,
+                        node,
+                        TrainerAction::Close,
+                    );
+                });
         });
     });
 }
 
-/// One upgrade's row: name, effect, rank pips, next price and the Buy button.
-fn upgrade_row(
-    frame: &mut ChildSpawnerCommands,
-    glue: &GlueArt,
-    art: &TrainerArt,
-    f: &Handle<Font>,
-    i: usize,
-    u: &Upgrade,
-) {
+/// One upgrade's row: icon, name and effect, rank pips, next price and the Buy button.
+fn upgrade_row(frame: &mut ChildSpawnerCommands, fonts: &kit::KitFonts, i: usize, u: &Upgrade) {
     let px = Val::Px;
-    let top = ROWS_TOP + i as f32 * ROW_PITCH;
-    outlined_text(
-        frame,
-        abs(1.0, 34.0, top + 2.0, 250.0, 17.0),
-        (),
-        (),
-        GlueText {
-            text: u.name,
-            size: 15.0,
-            color: GOLD,
-            wrap: false,
-        },
-        f,
-        1.0,
-    );
-    outlined_text(
-        frame,
-        abs(1.0, 34.0, top + 21.0, 250.0, 14.0),
-        (),
-        (),
-        GlueText {
-            text: u.effect,
-            size: 12.0,
-            color: Color::WHITE,
-            wrap: false,
-        },
-        f,
-        1.0,
-    );
     frame
-        .spawn(Node {
-            position_type: PositionType::Absolute,
-            left: px(PIPS_X),
-            top: px(top + 11.0),
-            column_gap: px(3.0),
-            ..default()
-        })
-        .with_children(|pips| {
-            for k in 0..u.max {
-                pips.spawn((
-                    Pip(i, k),
-                    BackgroundColor(PIP_EMPTY),
-                    BorderColor::all(PIP_EDGE),
-                    Node {
-                        width: px(13.0),
-                        height: px(13.0),
-                        border: UiRect::all(px(1.0)),
-                        ..default()
-                    },
-                ));
-            }
-        });
-    frame
-        .spawn(Node {
-            position_type: PositionType::Absolute,
-            left: px(PRICE_X),
-            top: px(top + 10.0),
-            width: px(90.0),
+        .spawn(kit::inset(Node {
+            width: Val::Percent(100.0),
+            height: px(ROW_H),
             align_items: AlignItems::Center,
-            column_gap: px(4.0),
+            column_gap: px(12.0),
+            padding: UiRect::horizontal(px(8.0)),
             ..default()
-        })
+        }))
         .with_children(|row| {
-            if let Some(icon) = &art.gold {
-                row.spawn((
-                    PriceIcon(i),
-                    ImageNode::new(icon.clone()),
-                    Node {
-                        width: px(14.0),
-                        height: px(14.0),
-                        ..default()
-                    },
-                ));
-            }
-            outlined_text(
+            // No art per upgrade: the first letter of its name in a small box.
+            row.spawn(kit::inset(Node {
+                width: px(28.0),
+                height: px(28.0),
+                flex_shrink: 0.0,
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                ..default()
+            }))
+            .with_children(|icon| {
+                icon.spawn(kit::title(fonts, u.name.chars().take(1).collect::<String>(), 18.0));
+            });
+            row.spawn(Node {
+                flex_direction: FlexDirection::Column,
+                flex_grow: 1.0,
+                flex_basis: px(0.0),
+                ..default()
+            })
+            .with_children(|col| {
+                col.spawn(kit::body(fonts, u.name, 15.0, kit::CREAM));
+                col.spawn(kit::body(fonts, u.effect, 11.0, kit::MUTED));
+            });
+            row.spawn(Node {
+                width: px(76.0),
+                flex_shrink: 0.0,
+                column_gap: px(3.0),
+                ..default()
+            })
+            .with_children(|pips| {
+                for k in 0..u.max {
+                    pips.spawn((
+                        Pip(i, k),
+                        BackgroundColor(PIP_EMPTY),
+                        BorderColor::all(PIP_EDGE),
+                        Node {
+                            width: px(12.0),
+                            height: px(12.0),
+                            border: UiRect::all(px(1.0)),
+                            border_radius: BorderRadius::all(px(2.0)),
+                            ..default()
+                        },
+                    ));
+                }
+            });
+            row.spawn(Node {
+                width: px(96.0),
+                flex_shrink: 0.0,
+                align_items: AlignItems::Center,
+                column_gap: px(4.0),
+                ..default()
+            })
+            .with_children(|price| {
+                price.spawn((PriceIcon(i), hud::coin_icon(14.0)));
+                price.spawn((Label::Price(i), kit::body(fonts, "", 14.0, kit::CREAM)));
+            });
+            kit::button(
                 row,
-                Node::default(),
-                (),
-                Label::Price(i),
-                GlueText {
-                    text: "",
-                    size: 14.0,
-                    color: Color::WHITE,
-                    wrap: false,
-                },
-                f,
-                1.0,
-            );
-        });
-    frame
-        .spawn(Node {
-            position_type: PositionType::Absolute,
-            left: px(BUY_X),
-            top: px(top + 4.0),
-            ..default()
-        })
-        .with_children(|b| {
-            glue_button(
-                b,
-                glue,
-                f,
-                TrainerAction::Buy(i),
+                fonts,
+                KitStyle::Normal,
                 "Buy",
-                80.0,
-                30.0,
-                GlueBtnKind::Small,
-                1.0,
+                None,
+                Node {
+                    width: px(66.0),
+                    height: px(28.0),
+                    flex_shrink: 0.0,
+                    ..default()
+                },
+                TrainerAction::Buy(i),
             );
         });
 }
@@ -653,6 +497,7 @@ fn show_panel(
 fn trainer_clicks(
     clicks: Res<GlueClicks>,
     actions: Query<(Entity, &TrainerAction)>,
+    kit_actions: Query<(&Interaction, &TrainerAction, &KitButton), Changed<Interaction>>,
     phase: Res<State<Phase>>,
     selection: Res<Selection>,
     mut profile: ResMut<Profile>,
@@ -661,15 +506,19 @@ fn trainer_clicks(
     if *phase.get() != Phase::Menu {
         return;
     }
-    let Some(action) = actions
+    let pressed = kit_actions
         .iter()
-        .find(|(e, _)| clicks.hit(*e))
-        .map(|(_, a)| *a)
-    else {
+        .find(|(i, _, b)| **i == Interaction::Pressed && !b.disabled)
+        .map(|(_, a, _)| *a);
+    let Some(action) = pressed.or_else(|| {
+        actions
+            .iter()
+            .find(|(e, _)| clicks.hit(*e))
+            .map(|(_, a)| *a)
+    }) else {
         return;
     };
     match action {
-        TrainerAction::Open => ui.open = true,
         TrainerAction::Close => ui.open = false,
         TrainerAction::Buy(i) => {
             let Some(u) = UPGRADES.get(i) else { return };
@@ -716,7 +565,24 @@ fn set_caption(
     button: Entity,
     want: &str,
     children: &Query<&Children>,
-    captions: &mut Query<&mut Text, With<GlueCaption>>,
+    captions: &mut Query<&mut Text, (With<GlueCaption>, Without<KitCaption>)>,
+) {
+    for d in children.iter_descendants(button) {
+        if let Ok(mut text) = captions.get_mut(d) {
+            if text.0 != want {
+                text.0 = want.to_string();
+            }
+            return;
+        }
+    }
+}
+
+/// Set a kit button's caption, which sits in a text under it.
+fn set_kit_caption(
+    button: Entity,
+    want: &str,
+    children: &Query<&Children>,
+    captions: &mut Query<&mut Text, (With<KitCaption>, Without<GlueCaption>)>,
 ) {
     for d in children.iter_descendants(button) {
         if let Ok(mut text) = captions.get_mut(d) {
@@ -732,13 +598,12 @@ fn set_caption(
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn refresh_rows(
     profile: Res<Profile>,
-    art: Res<TrainerArt>,
     mut pips: Query<(&Pip, &mut BackgroundColor)>,
-    mut labels: Query<(&Label, &mut Text, &mut TextColor), Without<GlueCaption>>,
+    mut labels: Query<(&Label, &mut Text, &mut TextColor), Without<KitCaption>>,
     mut icons: Query<(&PriceIcon, &mut Visibility)>,
-    mut buttons: Query<(Entity, &TrainerAction, &mut GlueDisabled)>,
+    mut buttons: Query<(Entity, &TrainerAction, &mut KitButton)>,
     children: Query<&Children>,
-    mut captions: Query<&mut Text, With<GlueCaption>>,
+    mut captions: Query<&mut Text, (With<KitCaption>, Without<GlueCaption>)>,
 ) {
     for (pip, mut color) in &mut pips {
         let Some(u) = UPGRADES.get(pip.0) else {
@@ -755,18 +620,12 @@ fn refresh_rows(
     }
     for (label, mut text, mut color) in &mut labels {
         let (want, tint) = match *label {
-            Label::Gold => {
-                let mut s = hud::grouped(profile.gold);
-                if art.gold.is_none() {
-                    s.push_str(" g");
-                }
-                (s, Color::WHITE)
-            }
+            Label::Gold => (hud::grouped(profile.gold), kit::CREAM),
             Label::Price(i) => match UPGRADES
                 .get(i)
                 .and_then(|u| next_price(&profile.trainer, u))
             {
-                Some(price) if profile.gold >= price => (hud::grouped(price), Color::WHITE),
+                Some(price) if profile.gold >= price => (hud::grouped(price), kit::CREAM),
                 Some(price) => (hud::grouped(price), SHORT),
                 None => ("Maxed".to_string(), MAXED),
             },
@@ -791,7 +650,7 @@ fn refresh_rows(
             *vis = want;
         }
     }
-    for (button, action, mut disabled) in &mut buttons {
+    for (button, action, mut state) in &mut buttons {
         let (off, caption) = match *action {
             TrainerAction::Buy(i) => {
                 match UPGRADES
@@ -805,10 +664,10 @@ fn refresh_rows(
             TrainerAction::Reset => (spent(&profile.trainer) == 0, "Reset"),
             _ => continue,
         };
-        if disabled.0 != off {
-            disabled.0 = off;
+        if state.disabled != off {
+            state.disabled = off;
         }
-        set_caption(button, caption, &children, &mut captions);
+        set_kit_caption(button, caption, &children, &mut captions);
     }
 }
 
@@ -820,9 +679,11 @@ fn refresh_unlock(
     profile: Res<Profile>,
     mut wrap: Query<&mut Node, With<UnlockWrap>>,
     mut buttons: Query<(Entity, &TrainerAction, &mut GlueDisabled)>,
+    mut kit_buttons: Query<(Entity, &TrainerAction, &mut KitButton)>,
     mut enter: Query<(&MenuAction, &mut GlueDisabled), Without<TrainerAction>>,
     children: Query<&Children>,
-    mut captions: Query<&mut Text, With<GlueCaption>>,
+    mut captions: Query<&mut Text, (With<GlueCaption>, Without<KitCaption>)>,
+    mut kit_captions: Query<&mut Text, (With<KitCaption>, Without<GlueCaption>)>,
 ) {
     let locked = selection
         .class
@@ -870,6 +731,15 @@ fn refresh_unlock(
             disabled.0 = off;
         }
         set_caption(button, &caption, &children, &mut captions);
+    }
+    for (button, action, mut state) in &mut kit_buttons {
+        if *action != TrainerAction::Unlock {
+            continue;
+        }
+        if state.disabled != off {
+            state.disabled = off;
+        }
+        set_kit_caption(button, &caption, &children, &mut kit_captions);
     }
 }
 

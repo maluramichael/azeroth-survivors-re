@@ -16,38 +16,19 @@ use bevy::prelude::*;
 use bevy::ui::{FocusPolicy, RelativeCursorPosition};
 
 use super::hud::{HudFont, MenuRoot, PauseRoot};
+use super::kit::{self, KitButton, KitCaption, KitStyle};
 use super::menu::MenuBuilt;
 use super::Phase;
 use benilla_app::survivors_host::cvars::Cvars;
-use benilla_app::survivors_host::glue::art::{GlueArt, GOLD, NAME_EDGE};
-use benilla_app::survivors_host::glue::backdrop::{backdrop_border, tiled_bg_node};
-use benilla_app::survivors_host::glue::widgets::{
-    abs, glue_button, outlined_text, GlueBtnKind, GlueCaption, GlueDisabled, GlueText,
-};
-use benilla_app::survivors_host::glue::{GlueClicks, GlueVisuals};
+use benilla_app::survivors_host::glue::GlueVisuals;
 
 const PANEL_W: f32 = 460.0;
-/// The browser build has no display row, so its window is shorter.
-const PANEL_H: f32 = if cfg!(target_arch = "wasm32") {
-    330.0
-} else {
-    430.0
-};
 /// Over the pause screen (430) and the results (440).
 const Z: i32 = 450;
-const ROWS_TOP: f32 = 88.0;
-const ROW_PITCH: f32 = 34.0;
-const TRACK_X: f32 = 160.0;
-const TRACK_W: f32 = 220.0;
 const TRACK_H: f32 = 18.0;
-const VALUE_X: f32 = 394.0;
 
-const FRAME_BORDER: Color = Color::srgb(0.8, 0.8, 0.8);
-const FRAME_FILL: Color = Color::srgba(0.09, 0.09, 0.09, 0.95);
-const GROOVE: Color = Color::srgb(0.06, 0.06, 0.06);
-const GROOVE_EDGE: Color = Color::srgb(0.5, 0.4, 0.2);
-const FILL: Color = Color::srgb(1.0, 0.78, 0.0);
-const THUMB: Color = Color::srgb(0.85, 0.85, 0.85);
+const GROOVE_EDGE: Color = Color::srgb(0.47, 0.37, 0.19);
+const FILL: Color = kit::TITLE;
 /// The pause screen's own button look, so the Options button there matches its neighbours.
 const PAUSE_BUTTON: Color = Color::srgba(0.18, 0.06, 0.04, 0.95);
 const PAUSE_BUTTON_HOT: Color = Color::srgba(0.36, 0.12, 0.06, 0.98);
@@ -115,7 +96,6 @@ impl Volume {
 #[derive(Component, Clone, Copy, PartialEq, Eq, Debug)]
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 enum OptionsAction {
-    Open,
     Close,
     /// The master enable, `MasterSoundEffects`.
     Mute,
@@ -192,7 +172,7 @@ fn build(
     mut commands: Commands,
     menus: Query<Entity, (With<MenuRoot>, With<MenuBuilt>, Without<OptionsBuilt>)>,
     pauses: Query<Entity, (With<PauseRoot>, Without<OptionsBuilt>)>,
-    glue: Res<GlueArt>,
+    fonts: Res<kit::KitFonts>,
     font: Res<HudFont>,
     mut ui: ResMut<OptionsUi>,
 ) {
@@ -236,38 +216,15 @@ fn build(
             .insert_children(2, &[button]);
     }
     let Ok(root) = menus.single() else { return };
-    // Under the Trainer button and the bank, below the class tower.
-    commands
-        .entity(root)
-        .insert(OptionsBuilt)
-        .with_children(|ui| {
-            ui.spawn(Node {
-                position_type: PositionType::Absolute,
-                left: Val::Px(58.0),
-                top: Val::Px(736.0),
-                ..default()
-            })
-            .with_children(|b| {
-                glue_button(
-                    b,
-                    &glue,
-                    f,
-                    OptionsAction::Open,
-                    "Options",
-                    146.0,
-                    30.0,
-                    GlueBtnKind::Small,
-                    1.0,
-                );
-            });
-        });
+    // The pick screen's Options tab lives in the top bar ([`super::menu`]); no button here.
+    commands.entity(root).insert(OptionsBuilt);
     if ui.root.is_none() {
-        ui.root = Some(panel(&mut commands, &glue, f));
+        ui.root = Some(panel(&mut commands, &fonts));
     }
 }
 
 /// The window: title, the four sliders and the mute button, the display row, and Close.
-fn panel(commands: &mut Commands, glue: &GlueArt, f: &Handle<Font>) -> Entity {
+fn panel(commands: &mut Commands, fonts: &kit::KitFonts) -> Entity {
     let px = Val::Px;
     commands
         .spawn((
@@ -287,75 +244,52 @@ fn panel(commands: &mut Commands, glue: &GlueArt, f: &Handle<Font>) -> Entity {
             },
         ))
         .with_children(|dim| {
-            dim.spawn(Node {
+            dim.spawn(kit::panel(Node {
                 width: px(PANEL_W),
-                height: px(PANEL_H),
+                flex_direction: FlexDirection::Column,
+                padding: UiRect::axes(px(26.0), px(16.0)),
+                row_gap: px(8.0),
                 ..default()
-            })
+            }))
             .with_children(|frame| {
-                if let (Some(bg), Some(border)) = (&glue.tooltip_bg, &glue.name_border) {
-                    frame.spawn((
-                        tiled_bg_node(bg.clone(), NAME_EDGE, 1.0, FRAME_FILL),
-                        BackgroundColor(Color::srgb(0.03, 0.03, 0.04)),
-                        Node {
-                            position_type: PositionType::Absolute,
-                            left: px(10.0),
-                            right: px(5.0),
-                            top: px(4.0),
-                            bottom: px(9.0),
-                            ..default()
-                        },
-                    ));
-                    backdrop_border(frame, border, NAME_EDGE, FRAME_BORDER);
-                } else {
-                    frame.spawn((BackgroundColor(FRAME_FILL), benilla_app::survivors_host::glue::widgets::overlay()));
-                }
-                outlined_text(
-                    frame,
-                    Node {
-                        position_type: PositionType::Absolute,
-                        top: px(16.0),
+                kit::heading(frame, fonts, "Options", 26.0);
+
+                frame.spawn(kit::label(fonts, "Sound"));
+                frame
+                    .spawn(kit::inset(Node {
+                        width: Val::Percent(100.0),
+                        flex_direction: FlexDirection::Column,
+                        row_gap: px(10.0),
+                        padding: UiRect::axes(px(14.0), px(12.0)),
+                        ..default()
+                    }))
+                    .with_children(|rows| {
+                        for v in Volume::ALL {
+                            slider_row(rows, fonts, v);
+                        }
+                    });
+                frame
+                    .spawn(Node {
                         width: Val::Percent(100.0),
                         justify_content: JustifyContent::Center,
                         ..default()
-                    },
-                    (),
-                    (),
-                    GlueText {
-                        text: "Options",
-                        size: 22.0,
-                        color: GOLD,
-                        wrap: false,
-                    },
-                    f,
-                    1.0,
-                );
-
-                heading(frame, f, "Sound", 58.0);
-                for (i, v) in Volume::ALL.into_iter().enumerate() {
-                    slider_row(frame, f, v, ROWS_TOP + i as f32 * ROW_PITCH);
-                }
-                let mute_top = ROWS_TOP + Volume::ALL.len() as f32 * ROW_PITCH + 4.0;
-                centered_button(
-                    frame,
-                    glue,
-                    f,
-                    OptionsAction::Mute,
-                    "Sound: On",
-                    190.0,
-                    mute_top,
-                );
+                    })
+                    .with_children(|b| {
+                        action_button(b, fonts, OptionsAction::Mute, "Sound: On", 190.0);
+                    });
 
                 #[cfg(not(target_arch = "wasm32"))]
                 {
-                    let top = mute_top + 52.0;
-                    heading(frame, f, "Display", top);
+                    frame.spawn((
+                        kit::label(fonts, "Display"),
+                        Node {
+                            margin: UiRect::top(px(6.0)),
+                            ..default()
+                        },
+                    ));
                     frame
                         .spawn(Node {
-                            position_type: PositionType::Absolute,
-                            left: px(34.0),
-                            top: px(top + 28.0),
-                            width: px(PANEL_W - 68.0),
+                            width: Val::Percent(100.0),
                             justify_content: JustifyContent::SpaceBetween,
                             ..default()
                         })
@@ -364,186 +298,143 @@ fn panel(commands: &mut Commands, glue: &GlueArt, f: &Handle<Font>) -> Entity {
                                 (OptionsAction::Windowed, "Windowed"),
                                 (OptionsAction::Fullscreen, "Fullscreen"),
                             ] {
-                                glue_button(
-                                    row,
-                                    glue,
-                                    f,
-                                    action,
-                                    caption,
-                                    190.0,
-                                    30.0,
-                                    GlueBtnKind::Small,
-                                    1.0,
-                                );
+                                action_button(row, fonts, action, caption, 190.0);
                             }
                         });
-                    outlined_text(
-                        frame,
-                        Node {
-                            position_type: PositionType::Absolute,
-                            top: px(top + 66.0),
+                    frame
+                        .spawn(Node {
                             width: Val::Percent(100.0),
                             justify_content: JustifyContent::Center,
                             ..default()
-                        },
-                        (),
-                        Label::Display,
-                        GlueText {
-                            text: "",
-                            size: 12.0,
-                            color: benilla_app::survivors_host::glue::art::DIM,
-                            wrap: false,
-                        },
-                        f,
-                        1.0,
-                    );
+                        })
+                        .with_children(|row| {
+                            row.spawn((Label::Display, kit::body(fonts, "", 12.0, kit::MUTED)));
+                        });
                 }
 
-                centered_button(
-                    frame,
-                    glue,
-                    f,
-                    OptionsAction::Close,
-                    "Close",
-                    146.0,
-                    PANEL_H - 56.0,
-                );
+                frame
+                    .spawn(Node {
+                        width: Val::Percent(100.0),
+                        justify_content: JustifyContent::Center,
+                        margin: UiRect::top(px(8.0)),
+                        ..default()
+                    })
+                    .with_children(|b| {
+                        action_button(b, fonts, OptionsAction::Close, "Close", 146.0);
+                    });
             });
         })
         .id()
 }
 
-/// A section heading at `top`.
-fn heading(frame: &mut ChildSpawnerCommands, f: &Handle<Font>, text: &str, top: f32) {
-    outlined_text(
-        frame,
-        abs(1.0, 34.0, top, 300.0, 18.0),
-        (),
-        (),
-        GlueText {
-            text,
-            size: 15.0,
-            color: GOLD,
-            wrap: false,
-        },
-        f,
-        1.0,
-    );
-}
-
-/// A glue button centred on the window at `top`.
-fn centered_button(
-    frame: &mut ChildSpawnerCommands,
-    glue: &GlueArt,
-    f: &Handle<Font>,
+/// A kit button of the window, `width` wide.
+fn action_button(
+    parent: &mut ChildSpawnerCommands,
+    fonts: &kit::KitFonts,
     action: OptionsAction,
     caption: &str,
     width: f32,
-    top: f32,
 ) {
-    frame
-        .spawn(Node {
-            position_type: PositionType::Absolute,
-            top: Val::Px(top),
-            width: Val::Percent(100.0),
-            justify_content: JustifyContent::Center,
+    kit::button(
+        parent,
+        fonts,
+        KitStyle::Normal,
+        caption,
+        None,
+        Node {
+            width: Val::Px(width),
+            height: Val::Px(30.0),
             ..default()
-        })
-        .with_children(|b| {
-            glue_button(
-                b,
-                glue,
-                f,
-                action,
-                caption,
-                width,
-                30.0,
-                GlueBtnKind::Small,
-                1.0,
-            );
-        });
+        },
+        action,
+    );
 }
 
 /// One slider's row: its name, a track with a fill and a thumb, and the percentage.
-fn slider_row(frame: &mut ChildSpawnerCommands, f: &Handle<Font>, v: Volume, top: f32) {
+fn slider_row(parent: &mut ChildSpawnerCommands, fonts: &kit::KitFonts, v: Volume) {
     let px = Val::Px;
-    outlined_text(
-        frame,
-        abs(1.0, 34.0, top + 1.0, 120.0, 17.0),
-        (),
-        (),
-        GlueText {
-            text: v.label(),
-            size: 14.0,
-            color: Color::WHITE,
-            wrap: false,
-        },
-        f,
-        1.0,
-    );
-    frame
-        .spawn((
-            Track(v),
-            Button,
-            RelativeCursorPosition::default(),
-            abs(1.0, TRACK_X, top, TRACK_W, TRACK_H),
-        ))
-        .with_children(|t| {
-            t.spawn((
-                BackgroundColor(GROOVE),
-                BorderColor::all(GROOVE_EDGE),
+    parent
+        .spawn(Node {
+            width: Val::Percent(100.0),
+            align_items: AlignItems::Center,
+            column_gap: px(14.0),
+            ..default()
+        })
+        .with_children(|row| {
+            row.spawn((
+                kit::body(fonts, v.label(), 14.0, kit::CREAM),
                 Node {
-                    position_type: PositionType::Absolute,
-                    left: px(0.0),
-                    right: px(0.0),
-                    top: px(6.0),
-                    height: px(6.0),
-                    border: UiRect::all(px(1.0)),
+                    width: px(76.0),
+                    flex_shrink: 0.0,
                     ..default()
                 },
             ));
-            t.spawn((
-                Fill(v),
-                BackgroundColor(FILL),
+            row.spawn((
+                Track(v),
+                Button,
+                RelativeCursorPosition::default(),
                 Node {
-                    position_type: PositionType::Absolute,
-                    left: px(0.0),
-                    top: px(7.0),
-                    height: px(4.0),
-                    width: Val::Percent(0.0),
+                    flex_grow: 1.0,
+                    flex_basis: px(0.0),
+                    height: px(TRACK_H),
                     ..default()
                 },
-            ));
-            t.spawn((
-                Thumb(v),
-                BackgroundColor(THUMB),
-                BorderColor::all(GROOVE_EDGE),
+            ))
+            .with_children(|t| {
+                t.spawn((
+                    BackgroundColor(kit::INSET_FILL),
+                    BorderColor::all(kit::INSET_EDGE),
+                    Node {
+                        position_type: PositionType::Absolute,
+                        left: px(0.0),
+                        right: px(0.0),
+                        top: px(5.0),
+                        height: px(8.0),
+                        border: UiRect::all(px(1.0)),
+                        border_radius: BorderRadius::all(px(3.0)),
+                        ..default()
+                    },
+                ));
+                t.spawn((
+                    Fill(v),
+                    BackgroundColor(FILL),
+                    Node {
+                        position_type: PositionType::Absolute,
+                        left: px(1.0),
+                        top: px(6.0),
+                        height: px(6.0),
+                        width: Val::Percent(0.0),
+                        border_radius: BorderRadius::all(px(2.0)),
+                        ..default()
+                    },
+                ));
+                t.spawn((
+                    Thumb(v),
+                    BackgroundColor(kit::CREAM),
+                    BorderColor::all(GROOVE_EDGE),
+                    Node {
+                        position_type: PositionType::Absolute,
+                        left: Val::Percent(0.0),
+                        top: px(1.0),
+                        width: px(8.0),
+                        height: px(16.0),
+                        margin: UiRect::left(px(-4.0)),
+                        border: UiRect::all(px(1.0)),
+                        border_radius: BorderRadius::all(px(2.0)),
+                        ..default()
+                    },
+                ));
+            });
+            row.spawn((
+                Label::Value(v),
+                kit::body(fonts, "", 14.0, kit::CREAM),
                 Node {
-                    position_type: PositionType::Absolute,
-                    left: Val::Percent(0.0),
-                    top: px(1.0),
-                    width: px(8.0),
-                    height: px(16.0),
-                    margin: UiRect::left(px(-4.0)),
-                    border: UiRect::all(px(1.0)),
+                    width: px(48.0),
+                    flex_shrink: 0.0,
                     ..default()
                 },
             ));
         });
-    outlined_text(
-        frame,
-        abs(1.0, VALUE_X, top + 1.0, 50.0, 17.0),
-        (),
-        Label::Value(v),
-        GlueText {
-            text: "",
-            size: 14.0,
-            color: Color::WHITE,
-            wrap: false,
-        },
-        f,
-        1.0,
-    );
 }
 
 /// The pause screen's Options button: hover colour, and open on the press as its neighbours act.
@@ -571,9 +462,8 @@ fn pause_button(
 
 /// The window's buttons, and Esc and the phase closing it.
 fn option_clicks(
-    clicks: Res<GlueClicks>,
     keys: Res<ButtonInput<KeyCode>>,
-    actions: Query<(Entity, &OptionsAction, &GlueDisabled)>,
+    actions: Query<(&Interaction, &OptionsAction, &KitButton), Changed<Interaction>>,
     phase: Res<State<Phase>>,
     mut cvars: ResMut<Cvars>,
     mut ui: ResMut<OptionsUi>,
@@ -584,17 +474,12 @@ fn option_clicks(
     }
     let Some((action, off)) = actions
         .iter()
-        .find(|(e, _, _)| clicks.hit(*e))
-        .map(|(_, a, d)| (*a, d.0))
+        .find(|(i, _, _)| **i == Interaction::Pressed)
+        .map(|(_, a, b)| (*a, b.disabled || b.selected))
     else {
         return;
     };
     match action {
-        OptionsAction::Open => {
-            if *phase.get() == Phase::Menu {
-                ui.open = true;
-            }
-        }
         OptionsAction::Close => ui.open = false,
         OptionsAction::Mute => {
             let on = sound_on(&cvars);
@@ -637,10 +522,10 @@ fn refresh(
     mut panel: Query<&mut Node, (With<OptionsPanel>, Without<Fill>, Without<Thumb>)>,
     mut fills: Query<(&Fill, &mut Node), Without<Thumb>>,
     mut thumbs: Query<(&Thumb, &mut Node), Without<Fill>>,
-    mut labels: Query<(&Label, &mut Text), Without<GlueCaption>>,
-    mut buttons: Query<(Entity, &OptionsAction, &mut GlueDisabled)>,
+    mut labels: Query<(&Label, &mut Text), Without<KitCaption>>,
+    mut buttons: Query<(Entity, &OptionsAction, &mut KitButton)>,
     children: Query<&Children>,
-    mut captions: Query<&mut Text, With<GlueCaption>>,
+    mut captions: Query<&mut Text, With<KitCaption>>,
 ) {
     let display = if ui.open {
         Display::Flex
@@ -678,9 +563,11 @@ fn refresh(
     }
     let fullscreen = fullscreen_now(&cvars);
     let launch_owned = benilla_app::survivors_host::video::windowed_env();
-    for (button, action, mut disabled) in &mut buttons {
-        let (off, caption) = match *action {
+    for (button, action, mut state) in &mut buttons {
+        // (disabled, selected, caption): the display button of the current mode shows as picked.
+        let (off, picked, caption) = match *action {
             OptionsAction::Mute => (
+                false,
                 false,
                 Some(if sound_on(&cvars) {
                     "Sound: On"
@@ -688,12 +575,15 @@ fn refresh(
                     "Sound: Off"
                 }),
             ),
-            OptionsAction::Windowed => (launch_owned || !fullscreen, None),
-            OptionsAction::Fullscreen => (launch_owned || fullscreen, None),
-            OptionsAction::Open | OptionsAction::Close => continue,
+            OptionsAction::Windowed => (launch_owned, !fullscreen, None),
+            OptionsAction::Fullscreen => (launch_owned, fullscreen, None),
+            OptionsAction::Close => continue,
         };
-        if disabled.0 != off {
-            disabled.0 = off;
+        if state.disabled != off {
+            state.disabled = off;
+        }
+        if state.selected != picked {
+            state.selected = picked;
         }
         let Some(want) = caption else { continue };
         for d in children.iter_descendants(button) {

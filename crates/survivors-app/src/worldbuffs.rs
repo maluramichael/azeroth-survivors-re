@@ -170,7 +170,20 @@ pub(super) fn plugin(app: &mut App) {
     app.init_resource::<Buffs>()
         .add_systems(Update, drive.run_if(in_state(Phase::Playing)))
         .add_systems(OnEnter(Phase::Menu), teardown)
-        .add_systems(OnEnter(Phase::GameOver), teardown);
+        .add_systems(OnEnter(Phase::GameOver), teardown)
+        .add_systems(OnEnter(Phase::LevelUp), show_panel::<false>)
+        .add_systems(OnExit(Phase::LevelUp), show_panel::<true>);
+}
+
+/// The level-up screen's title sits where the panel does: the panel hides under the cards.
+fn show_panel<const SHOWN: bool>(buffs: Res<Buffs>, mut vis: Query<&mut Visibility>) {
+    if let Some(mut v) = buffs.root.and_then(|root| vis.get_mut(root).ok()) {
+        *v = if SHOWN {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        };
+    }
 }
 
 /// Back at the menu or the results: the panel goes and the next run starts its offers over.
