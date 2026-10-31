@@ -230,6 +230,21 @@ pub(super) fn text_px(v: f32, viewport: Vec2) -> f32 {
     round_px(f64::from(v) * f64::from(viewport.x).hypot(f64::from(viewport.y)))
 }
 
+/// The size a number is rasterized at for a drawn height of `px`, which the quads are then scaled
+/// to. Deviation: the reference stretches a raster of at most 32 px. This rasterizes every whole
+/// pixel up to 32, then steps a quarter octave (38, 45, 54, 64, 76, 91, 108) up to 128: the crit
+/// pop on a large window passes every size from 35 to 160 px, and a raster per pixel size fills
+/// the glyph sheet within seconds when many units crit at once.
+pub(super) fn raster_px(px: f32) -> f32 {
+    const FLOOR: f32 = 32.0;
+    const CAP: f32 = 128.0;
+    if px <= FLOOR {
+        return px;
+    }
+    let step = (px / FLOOR).log2() * 4.0;
+    (FLOOR * 2f32.powf(step.ceil() / 4.0)).round().min(CAP)
+}
+
 /// The shadow offset, `0xce8804` (`{0.002, 0.002}`, init `0x6c7c20`): a viewport fraction per
 /// axis, rounded at draw (`0x5c8710`).
 const SHADOW_OFFSET_FRAC: f32 = 0.002;
@@ -310,6 +325,21 @@ pub(super) fn argb(c: u32) -> [f32; 4] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn raster_px_steps_past_32_and_caps_at_128() {
+        assert_eq!(raster_px(23.0), 23.0);
+        assert_eq!(raster_px(32.0), 32.0);
+        assert_eq!(raster_px(33.0), 38.0);
+        assert_eq!(raster_px(40.0), 45.0);
+        assert_eq!(raster_px(64.0), 64.0);
+        assert_eq!(raster_px(100.0), 108.0);
+        assert_eq!(raster_px(160.0), 128.0);
+        // Above 32 a raster is never smaller than what it draws, up to the cap.
+        for px in 33..=128 {
+            assert!(raster_px(px as f32) >= px as f32, "{px}");
+        }
+    }
 
     /// The claimed box (`0x6c81a0`) at 1024×768: 39.1 px tall for the 23 px number, 58.7 px for the
     /// 35 px crit, and 1.25x the ink plus pen seed wide.

@@ -46,8 +46,8 @@ mod law;
 #[cfg(test)]
 pub(crate) use law::COLOR_SPELL_GOLD;
 use law::{
-    argb, claimed_box_px, fade_alpha, melee_text, scale_value, shadow_offset_px, text_px,
-    CATEGORIES,
+    argb, claimed_box_px, fade_alpha, melee_text, raster_px, scale_value, shadow_offset_px,
+    text_px, CATEGORIES,
 };
 pub(crate) use law::{
     damage_color, melee_styled, miss_word, spell_text, DamageSource, DamageTextGates,
@@ -241,8 +241,9 @@ pub(crate) fn float_combat_text(
         // Constant with distance: the worldtext path has no depth term.
         let size_value = scale_value(t.category, life);
         let target_px = text_px(size_value, viewport);
-        // Deviation: the reference stretches a raster of at most 32 px; each whole-pixel size is
-        // rasterized here, so the crit pop stays crisp.
+        // Deviation: the reference stretches a raster of at most 32 px; this rasterizes at a
+        // stepped size ([`raster_px`]) and scales the quads to the target about the centre.
+        let raster = raster_px(target_px);
         let mut e = atlas.lock();
         let mut glyphs = layout_text_quads(
             &mut e,
@@ -257,7 +258,7 @@ pub(crate) fn float_combat_text(
             FontSpec {
                 // The bound face, not a hardcoded Friz: an addon's assignment is what draws.
                 path: font.as_ref().and_then(|f| f.0.as_deref()),
-                height: Some(target_px),
+                height: Some(raster),
                 outline: Outline::None,
                 alpha_gradient: None,
             },
@@ -265,6 +266,15 @@ pub(crate) fn float_combat_text(
             crate::ui_text::TextSeat::Exact,
         );
         drop(e);
+        if raster != target_px {
+            let k = target_px / raster;
+            for q in &mut glyphs {
+                q.rect = Rect {
+                    min: screen + (q.rect.min - screen) * k,
+                    max: screen + (q.rect.max - screen) * k,
+                };
+            }
+        }
         let (alpha_text, alpha_shadow) = fade_alpha(cat, elapsed_ms);
         let mut bounds: Option<Rect> = None;
         for q in &mut glyphs {
