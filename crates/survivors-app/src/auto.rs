@@ -41,7 +41,7 @@ pub(super) struct Auto {
 }
 
 /// The hub's windows the tour opens, in order, and the screenshot each gives.
-const TOUR: [&str; 5] = ["achievements", "collection", "loot", "trainer", "options"];
+const TOUR: [&str; 6] = ["achievements", "collection", "loot", "trainer", "options", "coop"];
 
 impl Auto {
     /// One screenshot named for this screen, the first time it shows.
@@ -307,6 +307,8 @@ type Windows<'w> = (
     ResMut<'w, super::loottables::LootUi>,
     ResMut<'w, super::trainer::TrainerUi>,
     ResMut<'w, super::options::OptionsUi>,
+    // Present only in a build with co-op.
+    Option<ResMut<'w, super::CoopUi>>,
 );
 
 /// `WOW_SURVIVORS_WINDOWS`: at the menu, open each of [`TOUR`]'s windows alone, photograph it
@@ -343,6 +345,9 @@ pub(super) fn tour(
         w.2.open = on == Some(2);
         w.3.open = on == Some(3);
         w.4.open = on == Some(4);
+        if let Some(coop) = w.5.as_mut() {
+            coop.open = on == Some(5);
+        }
     };
     open(&mut windows, Some(step));
     if *wait > 2.5 {
