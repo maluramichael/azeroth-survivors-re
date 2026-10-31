@@ -70,6 +70,12 @@ pub(super) struct UnitSpec<'a> {
 
 /// Spawn a unit the attach builds a body for; the caller adds its own components.
 pub(super) fn spawn_unit(commands: &mut Commands, spec: &UnitSpec, pos: Vec3, yaw: f32) -> Entity {
+    commands.spawn(unit_bundle(spec, pos, yaw)).id()
+}
+
+/// What makes an entity a unit the attach builds a body for: [`spawn_unit`]'s components, to put
+/// on an entity that exists already (a co-op guest's replicated hero).
+pub(super) fn unit_bundle(spec: &UnitSpec, pos: Vec3, yaw: f32) -> impl Bundle {
     let guid = HIGH_CREATURE | spec.serial;
     let mut pairs: Vec<(u16, u32)> = vec![
         (0, guid as u32),
@@ -94,22 +100,20 @@ pub(super) fn spawn_unit(commands: &mut Commands, spec: &UnitSpec, pos: Vec3, ya
         ));
         pairs.push((FIELD_VIRTUAL_ITEM_INFO + 2 * slot + 1, u32::from(sheath)));
     }
-    commands
-        .spawn((
-            Guid(guid),
-            NetEntity {
-                kind: benilla_protocol::EntityKind::Unit,
-                display_id: Some(spec.display),
-                scale: spec.scale,
-            },
-            ObjectStore(ObjectFields::from_pairs(&pairs)),
-            benilla_app::survivors_host::creature_anim::MovementState::default(),
-            benilla_app::survivors_host::net::ScriptedFacing,
-            Transform::from_translation(pos).with_rotation(Quat::from_rotation_y(yaw)),
-            Visibility::default(),
-            RunEntity,
-        ))
-        .id()
+    (
+        Guid(guid),
+        NetEntity {
+            kind: benilla_protocol::EntityKind::Unit,
+            display_id: Some(spec.display),
+            scale: spec.scale,
+        },
+        ObjectStore(ObjectFields::from_pairs(&pairs)),
+        benilla_app::survivors_host::creature_anim::MovementState::default(),
+        benilla_app::survivors_host::net::ScriptedFacing,
+        Transform::from_translation(pos).with_rotation(Quat::from_rotation_y(yaw)),
+        Visibility::default(),
+        RunEntity,
+    )
 }
 
 /// Spawn a generic GameObject showing `GameObjectDisplayInfo` row `display`.

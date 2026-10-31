@@ -3,6 +3,7 @@
 //! where it walks. Design: `docs/superpowers/specs/2026-10-31-coop-direct-ip-design.md`.
 
 mod net;
+mod wire;
 
 use bevy::prelude::*;
 use bevy_replicon::prelude::*;
@@ -17,4 +18,5 @@ pub(super) fn plugin(app: &mut App) {
         }),
         RepliconRenetPlugins,
     ));
+    wire::protocol(app);
 }
