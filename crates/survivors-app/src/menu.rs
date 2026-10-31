@@ -731,6 +731,7 @@ pub(super) fn menu_clicks(
     profile: Res<super::profile::Profile>,
     mut rng: ResMut<Rng>,
     mut next: ResMut<NextState<Phase>>,
+    role: Res<super::NetRole>,
 ) {
     if *phase.get() != Phase::Menu {
         return;
@@ -758,6 +759,8 @@ pub(super) fn menu_clicks(
                 selection.version += 1;
             }
         }
+        // A co-op guest enters the host's run when the host starts it ([`super::coop`]).
+        MenuAction::Enter if *role == super::NetRole::Client => {}
         MenuAction::Enter => {
             if start_run(&mut run, &mut selection, &profile) {
                 next.set(Phase::Playing);

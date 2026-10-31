@@ -196,11 +196,13 @@ pub(super) fn spawn_hero(
 
 /// Marks the puppet a co-op host keeps for a guest. It is a body like the hero's but carries no
 /// [`Hero`], so none of the systems that expect exactly one hero see it.
+#[cfg_attr(not(all(feature = "coop", not(target_arch = "wasm32"))), allow(dead_code))]
 #[derive(Component)]
 pub(super) struct Peer {
     pub player: u8,
 }
 
+#[cfg_attr(not(all(feature = "coop", not(target_arch = "wasm32"))), allow(dead_code))]
 /// What a hero of this class and look is built from, as [`spawn_hero`] builds it.
 pub(super) fn hero_spec(
     class: &'static ClassDef,
@@ -226,6 +228,7 @@ pub(super) fn hero_spec(
 
 /// A co-op guest's puppet on the host: the guest's hero body in the class trainer's look, without
 /// [`Hero`] and [`Marks`].
+#[cfg_attr(not(all(feature = "coop", not(target_arch = "wasm32"))), allow(dead_code))]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn spawn_peer(
     commands: &mut Commands,

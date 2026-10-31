@@ -93,6 +93,10 @@ impl Lobby {
     }
 }
 
+/// How far apart the party's heroes start, per player number, from the battleground's centre:
+/// every hero is set down there, and two heroes on one spot look like one.
+pub(super) const ASIDE_YARDS: f32 = 3.0;
+
 /// Whether a guest's `given` password opens a party locked with `password` (none: always).
 pub(super) fn admits(password: &str, given: &str) -> bool {
     password.is_empty() || password == given
@@ -116,6 +120,9 @@ pub(super) struct Session {
     pub join_password: String,
     /// The window's status line: what happened last, in words.
     pub status: String,
+    /// A guest's return to the menu was the host's doing ([`wire::EndRun`]); any other return
+    /// leaves the party.
+    pub host_sent_menu: bool,
 }
 
 /// A guest the host has seated.
@@ -147,7 +154,7 @@ pub(super) fn host_now(world: &mut World) -> Result<String, String> {
     session.player = Some(0);
     session.link = Link::Hosting { port };
     let at = net::lan_ip().map_or_else(|| "this machine".to_string(), |ip| ip.to_string());
-    info!("survivors: co-op: hosting on UDP port {port}");
+    info!("survivors: co-op: hosting on {at}:{port} (UDP)");
     Ok(format!("Hosting on {at}:{port}. Friends join with that address."))
 }
 

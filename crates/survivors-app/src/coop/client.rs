@@ -7,7 +7,7 @@ use benilla_app::survivors_host::creature_anim::MovementState;
 use bevy::prelude::*;
 use bevy_replicon::prelude::{ClientState, ClientSystems, Remote};
 
-use super::Session;
+use super::{Session, ASIDE_YARDS};
 use super::smooth;
 use super::wire::{EndRun, Hello, Look, MoveInput, NetHero, NetPos, Refused, StartRun, Welcome};
 use crate::chatlog::ChatLine;
@@ -37,6 +37,10 @@ pub(super) fn plugin(app: &mut App) {
     )
     // After the hero's own walk, before replicon packs the messages.
     .add_systems(
+        OnEnter(Phase::Menu),
+        left_on_own.run_if(resource_equals(NetRole::Client)),
+    )
+    .add_systems(
         PostUpdate,
         send_moves
             .before(ClientSystems::Send)
@@ -44,13 +48,18 @@ pub(super) fn plugin(app: &mut App) {
     );
 }
 
-/// How far apart the party's heroes start, per player number: every hero is set down at the
-/// battleground's centre, and two heroes on one spot look like one.
-const ASIDE_YARDS: f32 = 3.0;
-
 /// Where player `player`'s hero starts, relative to the centre the host's hero stands on.
 fn aside(player: u8) -> Vec3 {
     Vec3::X * ASIDE_YARDS * f32::from(player)
+}
+
+/// Back at the menu without the host's word (the pause menu's Main Menu): this guest left the
+/// host's run, and with it the party, since the host does not start a run twice.
+fn left_on_own(mut commands: Commands, mut session: ResMut<Session>, mut chat: MessageWriter<ChatLine>) {
+    if std::mem::take(&mut session.host_sent_menu) || session.link != super::Link::Joined {
+        return;
+    }
+    say_and_leave(&mut commands, &mut chat, "You left the host's run, and with it the party.");
 }
 
 /// Marks this guest's run hero once it has been set down beside the host's.
@@ -96,11 +105,16 @@ pub(super) fn leave(world: &mut World) {
     }
 }
 
-/// The link ending: refused, never reached or lost. Said in the chat, then [`leave`].
+/// The link ending: refused, never reached or lost. Said in the chat and on the co-op window's
+/// status line (the chat is not drawn at the menu), then [`leave`].
 fn say_and_leave(commands: &mut Commands, chat: &mut MessageWriter<ChatLine>, text: &str) {
     info!("survivors: co-op: {text}");
     chat.write(ChatLine::system(text));
-    commands.queue(leave);
+    let status = text.to_string();
+    commands.queue(move |world: &mut World| {
+        world.resource_mut::<Session>().status = status;
+        leave(world);
+    });
 }
 
 /// Watches the link: a client that was connecting or connected and is now disconnected has lost
@@ -120,7 +134,7 @@ fn watch_link(
             let text = if seen.1 {
                 "Lost the host."
             } else {
-                "Could not reach the host."
+                "Could not reach the host. Check the address, and that the host's firewall lets UDP port 37373 in."
             };
             *seen = (false, false);
             say_and_leave(&mut commands, &mut chat, text);
@@ -130,20 +144,21 @@ fn watch_link(
 }
 
 /// Once connected, and once the menu has a hero picked, say hello: who this player is and what its
-/// hero looks like. Sent once per connection.
+/// hero looks like. Said again whenever the pick changes, so the host shows the hero this guest
+/// plays.
 fn greet(
     state: Res<State<ClientState>>,
     selection: Res<Selection>,
     session: Res<Session>,
     heroes: Query<(), With<Hero>>,
-    mut greeted: Local<bool>,
+    mut said: Local<Option<Hello>>,
     mut hello: MessageWriter<Hello>,
 ) {
     if *state.get() != ClientState::Connected {
-        *greeted = false;
+        *said = None;
         return;
     }
-    if *greeted || heroes.is_empty() {
+    if heroes.is_empty() {
         return;
     }
     let (Some(class), Some(&(display, race, sex))) = (
@@ -152,20 +167,23 @@ fn greet(
     ) else {
         return;
     };
-    *greeted = true;
     let name = if session.name.trim().is_empty() {
         class.name.to_string()
     } else {
         session.name.clone()
     };
-    hello.write(Hello {
+    let now = Hello {
         name,
         class_id: class.id,
         display,
         race,
         sex,
         password: session.join_password.clone(),
-    });
+    };
+    if said.as_ref() != Some(&now) {
+        hello.write(now.clone());
+        *said = Some(now);
+    }
 }
 
 /// What the host says: a seat, a refusal, the run beginning or ending.
@@ -193,16 +211,22 @@ fn receive(
     for w in welcomes.read() {
         session.player = Some(w.player);
         session.link = super::Link::Joined;
+        session.status = format!(
+            "In the party as player {}. The run starts when the host starts it.",
+            w.player
+        );
         info!("survivors: co-op: seated as player {}", w.player);
     }
-    for s in starts.read() {
-        *pending = Some(s.map);
-    }
+    // The end first: a run ended and a new one begun within one tick keeps the new one.
     if ends.read().last().is_some() {
         *pending = None;
         if *phase.get() != Phase::Menu {
+            session.host_sent_menu = true;
             next.set(Phase::Menu);
         }
+    }
+    for s in starts.read() {
+        *pending = Some(s.map);
     }
     // The run begins as `MenuAction::Enter` begins it, once the menu's world is up.
     let Some(map) = *pending else { return };
@@ -218,9 +242,9 @@ fn receive(
     if hud::start_run(&mut run, &mut selection, &profile) {
         next.set(Phase::Playing);
     } else {
-        chat.write(ChatLine::system(
-            "The host's run could not start here: pick a class and a zone you have unlocked.",
-        ));
+        let text = "The host's run could not start here: pick a class and a zone you have unlocked.";
+        session.status = text.to_string();
+        chat.write(ChatLine::system(text));
     }
 }
 

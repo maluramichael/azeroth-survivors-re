@@ -47,7 +47,9 @@ pub(super) fn host(
     let bound = socket.local_addr()?;
     let setup = ServerSetupConfig {
         current_time: now(),
-        max_clients: MAX_CLIENTS,
+        // One more than the seats: a guest over the limit is let in long enough to be told the
+        // party is full, instead of never hearing back.
+        max_clients: MAX_CLIENTS + 1,
         protocol_id: PROTOCOL_ID,
         // Unsecured: the address list is not checked, so the bound one serves.
         socket_addresses: vec![vec![bound]],

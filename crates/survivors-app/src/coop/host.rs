@@ -26,6 +26,8 @@ const RATE: f32 = 20.0;
 const SLACK: f32 = 20.0;
 /// The fastest walk a guest may report, yards per second (mounts and charges included).
 const MAX_PACE: f32 = 50.0;
+/// How far above or below the arena's centre a guest may report its hero, in yards.
+const MAX_RISE: f32 = 200.0;
 /// A name is cut to this many characters.
 const NAME_LEN: usize = 24;
 
@@ -105,6 +107,7 @@ pub(super) fn valid_move(m: &MoveInput, arena_center: Vec3, leash: f32) -> bool 
         && m.pace.is_finite()
         && (0.0..=MAX_PACE).contains(&m.pace)
         && Vec2::new(at.x - arena_center.x, at.z - arena_center.z).length() <= leash + SLACK
+        && (at.y - arena_center.y).abs() <= MAX_RISE
 }
 
 /// The facing of a body that turns about the vertical only, as the heroes do.
@@ -139,10 +142,10 @@ fn spawn_puppet(commands: &mut Commands, run: &mut Run, guest: &Guest, class: &'
     ));
 }
 
-/// Where a guest's puppet appears: beside the host's hero, a couple of yards apart per seat.
-fn spot(hero: Option<&Transform>, map: &data::MapDef, player: u8) -> Vec3 {
-    let base = hero.map_or_else(|| hero::arena(map), |t| t.translation);
-    base + Vec3::X * 2.0 * f32::from(player)
+/// Where a guest's puppet appears until its first move: where the guest's own hero is set down,
+/// [`super::ASIDE_YARDS`] per seat from the battleground's centre.
+fn spot(_hero: Option<&Transform>, map: &data::MapDef, player: u8) -> Vec3 {
+    hero::arena(map) + Vec3::X * super::ASIDE_YARDS * f32::from(player)
 }
 
 fn class_of(id: u8) -> Option<&'static ClassDef> {
@@ -160,6 +163,7 @@ fn greet(
     phase: Res<State<Phase>>,
     mut run: ResMut<Run>,
     hero: Query<&Transform, With<Hero>>,
+    puppets: Query<(Entity, &Peer, &Transform)>,
     mut welcome: MessageWriter<ToClients<Welcome>>,
     mut refuse: MessageWriter<ToClients<Refused>>,
     mut start: MessageWriter<ToClients<StartRun>>,
@@ -170,14 +174,26 @@ fn greet(
             continue;
         };
         let to = SendTargets::Single(hello.client_id);
-        // A hello sent again (until welcomed) gets its welcome again and no second seat.
-        if let Some(seated) = session.guests.iter().find(|g| g.client == client) {
-            welcome.write(ToClients {
-                targets: to,
-                message: Welcome {
-                    player: seated.player,
-                },
-            });
+        // A seated guest says hello again when its pick changes: the new look replaces the old,
+        // and in a run its puppet is built again.
+        if let Some(seated) = session.guests.iter_mut().find(|g| g.client == client) {
+            let mut hello = hello.message.clone();
+            if let Some(class) = class_of(hello.class_id) {
+                hello.name = clean_name(&hello.name, class);
+                seated.hello = hello;
+                let player = seated.player;
+                if matches!(phase.get(), Phase::Playing | Phase::LevelUp | Phase::Paused) {
+                    let mut at = spot(None, selection.stage_def(), player);
+                    for (e, peer, tf) in &puppets {
+                        if peer.player == player {
+                            at = tf.translation;
+                            commands.entity(e).try_despawn();
+                        }
+                    }
+                    let guest = session.guests.iter().find(|g| g.client == client).expect("seated");
+                    spawn_puppet(&mut commands, &mut run, guest, class, at);
+                }
+            }
             continue;
         }
         let Some(class) = class_of(hello.message.class_id) else {
@@ -442,6 +458,10 @@ mod tests {
         assert!(!bad(&|m| m.at = [leash + 20.5, 5.0, 0.0]));
         assert!(!bad(&|m| m.at = [0.0, 5.0, -(leash + 30.0)]));
         assert!(bad(&|m| m.at = [leash + 19.0, 5.0, 0.0]));
+        // A finite but absurd height would saturate the replicated centimetres.
+        assert!(!bad(&|m| m.at = [0.0, 1.0e7, 0.0]));
+        assert!(!bad(&|m| m.at = [0.0, -400.0, 0.0]));
+        assert!(bad(&|m| m.at = [0.0, 60.0, 0.0]));
     }
 
     #[test]
