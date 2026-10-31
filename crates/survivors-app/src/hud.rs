@@ -1219,15 +1219,23 @@ pub(super) fn keys(
     trainer: Res<super::trainer::TrainerUi>,
     options: Res<super::options::OptionsUi>,
     talents: Res<super::talents::TalentsUi>,
+    windows: (
+        Res<super::collection::CollectionUi>,
+        Res<super::loottables::LootUi>,
+        Res<super::achievements::AchievementsUi>,
+    ),
     mut next: ResMut<NextState<Phase>>,
 ) {
     match phase.get() {
         Phase::Menu => {
-            // Enter World by key, but not from behind the open trainer, options or talents.
+            // Enter World by key, but not from behind an open window.
             if keys.just_pressed(KeyCode::Enter)
                 && !trainer.open
                 && !options.open
                 && !talents.open
+                && !windows.0.open
+                && !windows.1.open
+                && !windows.2.open
                 && start_run(&mut run, &mut selection, &profile)
             {
                 next.set(Phase::Playing);

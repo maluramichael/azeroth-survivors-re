@@ -3,7 +3,8 @@
 //! gem away from the crowd and logs the run every ten seconds; `WOW_SURVIVORS_SHOTS=<dir>` also
 //! saves a screenshot every few seconds, which needs no window focus. A `:idle`, `:all` or `:late`
 //! suffix on the class name changes the run, as the fields below say. `WOW_SURVIVORS_MAP=<index or
-//! name>` picks the battleground.
+//! name>` picks the battleground. `WOW_SURVIVORS_WINDOWS=1` first opens the hub's windows one by
+//! one and photographs each ([`tour`]).
 
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{save_to_disk, Screenshot};
@@ -35,7 +36,12 @@ pub(super) struct Auto {
     dir: Vec3,
     /// The screens already captured once: the menu, the first level-ups, the results.
     seen: Vec<String>,
+    /// `WOW_SURVIVORS_WINDOWS`: the next step of [`TOUR`], until it is done.
+    tour: Option<usize>,
 }
+
+/// The hub's windows the tour opens, in order, and the screenshot each gives.
+const TOUR: [&str; 5] = ["achievements", "collection", "loot", "trainer", "options"];
 
 impl Auto {
     /// One screenshot named for this screen, the first time it shows.
@@ -98,6 +104,7 @@ pub(super) fn from_env() -> Option<Auto> {
         log_t: 0.0,
         dir: Vec3::ZERO,
         seen: Vec::new(),
+        tour: benilla_app::survivors_host::webenv::var("WOW_SURVIVORS_WINDOWS").map(|_| 0),
     })
 }
 
@@ -184,6 +191,9 @@ pub(super) fn drive(
                 selection.version += 1;
                 auto.wait = 0.0;
             } else if heroes.is_empty() || loading.covering() {
+                auto.wait = 0.0;
+            } else if auto.tour.is_some_and(|t| t < TOUR.len()) {
+                // [`tour`] is photographing the hub's windows.
                 auto.wait = 0.0;
             } else if talents.open {
                 // `WOW_SURVIVORS_TALENTS` opened the talent window: photograph it, then close it.
@@ -282,6 +292,63 @@ pub(super) fn drive(
             commands
                 .spawn(Screenshot::primary_window())
                 .observe(save_to_disk(path));
+        }
+    }
+}
+
+/// The open flags of the hub's windows, for [`tour`].
+type Windows<'w> = (
+    ResMut<'w, super::achievements::AchievementsUi>,
+    ResMut<'w, super::collection::CollectionUi>,
+    ResMut<'w, super::loottables::LootUi>,
+    ResMut<'w, super::trainer::TrainerUi>,
+    ResMut<'w, super::options::OptionsUi>,
+);
+
+/// `WOW_SURVIVORS_WINDOWS`: at the menu, open each of [`TOUR`]'s windows alone, photograph it
+/// after it settles and go on. The book gets some pieces first, so the shot is not all question
+/// marks; an automated run's profile is never saved.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn tour(
+    mut commands: Commands,
+    time: Res<Time<Real>>,
+    mut auto: ResMut<Auto>,
+    phase: Res<State<Phase>>,
+    loading: Res<benilla_app::survivors_host::loading_screen::LoadingScreen>,
+    heroes: Query<(), With<Hero>>,
+    mut profile: ResMut<super::profile::Profile>,
+    mut windows: Windows,
+    mut wait: Local<f32>,
+) {
+    let Some(step) = auto.tour.filter(|&t| t < TOUR.len()) else {
+        return;
+    };
+    if *phase.get() != Phase::Menu || heroes.is_empty() || loading.covering() {
+        *wait = 0.0;
+        return;
+    }
+    if step == 0 && *wait == 0.0 {
+        for tpl in super::items::table::TEMPLATES.iter().step_by(3) {
+            profile.collection.insert(tpl.name.to_string());
+        }
+    }
+    *wait += time.delta_secs();
+    let open = |w: &mut Windows, on: Option<usize>| {
+        w.0.open = on == Some(0);
+        w.1.open = on == Some(1);
+        w.2.open = on == Some(2);
+        w.3.open = on == Some(3);
+        w.4.open = on == Some(4);
+    };
+    open(&mut windows, Some(step));
+    if *wait > 2.5 {
+        auto.capture_once(&mut commands, format!("win-{}", TOUR[step]));
+    }
+    if *wait > 3.0 {
+        *wait = 0.0;
+        auto.tour = Some(step + 1);
+        if step + 1 == TOUR.len() {
+            open(&mut windows, None);
         }
     }
 }
