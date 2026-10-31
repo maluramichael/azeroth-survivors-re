@@ -137,6 +137,9 @@ fn set(sel: &mut Selection, all: &[Vec<(u32, u8, u8)>], class: usize, look: usiz
 enum MenuTab {
     Talents,
     Trainer,
+    Collection,
+    Loot,
+    Achievements,
     Options,
 }
 
@@ -323,6 +326,9 @@ fn top_bar(ui: &mut ChildSpawnerCommands, fonts: &KitFonts) {
             for (tab, caption) in [
                 (MenuTab::Talents, "Talents"),
                 (MenuTab::Trainer, "Trainer"),
+                (MenuTab::Collection, "Collection"),
+                (MenuTab::Loot, "Loot Tables"),
+                (MenuTab::Achievements, "Achievements"),
                 (MenuTab::Options, "Options"),
             ] {
                 kit::button(
@@ -332,7 +338,7 @@ fn top_bar(ui: &mut ChildSpawnerCommands, fonts: &KitFonts) {
                     caption,
                     None,
                     Node {
-                        width: px(112.0),
+                        min_width: px(100.0),
                         height: px(28.0),
                         ..default()
                     },
@@ -877,6 +883,9 @@ fn tab_clicks(
     mut talents: ResMut<super::talents::TalentsUi>,
     mut trainer: ResMut<super::trainer::TrainerUi>,
     mut options: ResMut<super::options::OptionsUi>,
+    mut collection: ResMut<super::collection::CollectionUi>,
+    mut loot: ResMut<super::loottables::LootUi>,
+    mut achievements: ResMut<super::achievements::AchievementsUi>,
 ) {
     let Some(tab) = tabs
         .iter()
@@ -889,6 +898,9 @@ fn tab_clicks(
         MenuTab::Talents => talents.open = true,
         MenuTab::Trainer => trainer.open = true,
         MenuTab::Options => options.open = true,
+        MenuTab::Collection => collection.open = true,
+        MenuTab::Loot => loot.open = true,
+        MenuTab::Achievements => achievements.open = true,
     }
 }
 

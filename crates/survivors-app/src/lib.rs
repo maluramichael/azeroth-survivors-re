@@ -5,12 +5,14 @@
 //! controller and FrameXML off (`CaptureMode`).
 
 mod abilities;
+mod achievements;
 mod auto;
 mod barrier;
 mod cards;
 mod charpanel;
 mod chests;
 mod chatlog;
+mod collection;
 mod data;
 mod difficulty;
 mod dmgmeter;
@@ -25,6 +27,7 @@ mod hero;
 mod hud;
 mod items;
 mod kit;
+mod loottables;
 mod menu;
 mod minimap;
 mod mobility;
@@ -57,6 +60,7 @@ impl Plugin for SurvivorsPlugin {
         // Present before `OnEnter(InWorld)`, where the UI lifecycle decides not to load FrameXML.
         app.insert_resource(benilla_app::survivors_host::run_mode::CaptureMode)
             .add_plugins((grade::plugin, kit::plugin, dmgmeter::plugin))
+            .add_plugins((collection::plugin, loottables::plugin, achievements::plugin))
             .add_plugins((
                 trainer::plugin,
                 plates::plugin,

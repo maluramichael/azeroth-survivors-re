@@ -24,17 +24,17 @@ use super::units::flat;
 use super::{data, Phase, Rng, Run, RunEntity};
 
 /// Chance a normal kill drops an item, an elite's, and how many items lie on the ground at once.
-const GRUNT_CHANCE: f32 = 0.012;
-const ELITE_CHANCE: f32 = 0.6;
+pub(super) const GRUNT_CHANCE: f32 = 0.012;
+pub(super) const ELITE_CHANCE: f32 = 0.6;
 const MAX_DROPS: usize = 30;
 /// Seconds an item waits on the ground, and how near the hero must walk to take it.
 const DROP_LIFE: f32 = 90.0;
 const PICKUP_RADIUS: f32 = 1.8;
 /// Quality weights, Poor to Epic.
-const WEIGHTS_GRUNT: [f32; 5] = [45.0, 35.0, 15.0, 4.5, 0.5];
-const WEIGHTS_ELITE: [f32; 5] = [0.0, 25.0, 45.0, 25.0, 5.0];
-const WEIGHTS_BOSS: [f32; 5] = [0.0, 0.0, 25.0, 55.0, 20.0];
-const WEIGHTS_FINALE: [f32; 5] = [0.0, 0.0, 0.0, 40.0, 60.0];
+pub(super) const WEIGHTS_GRUNT: [f32; 5] = [45.0, 35.0, 15.0, 4.5, 0.5];
+pub(super) const WEIGHTS_ELITE: [f32; 5] = [0.0, 25.0, 45.0, 25.0, 5.0];
+pub(super) const WEIGHTS_BOSS: [f32; 5] = [0.0, 0.0, 25.0, 55.0, 20.0];
+pub(super) const WEIGHTS_FINALE: [f32; 5] = [0.0, 0.0, 0.0, 40.0, 60.0];
 /// How much of an item's points its first stat takes; the second gets the rest.
 const FIRST_SHARE: f32 = 0.65;
 /// Items found late in the run are up to this much stronger.
@@ -91,7 +91,7 @@ pub(super) enum Quality {
 }
 
 impl Quality {
-    const ALL: [Quality; 5] = [
+    pub(super) const ALL: [Quality; 5] = [
         Quality::Poor,
         Quality::Common,
         Quality::Uncommon,
@@ -100,7 +100,7 @@ impl Quality {
     ];
 
     /// The item-quality colours of the 1.12 client.
-    fn color(self) -> Color {
+    pub(super) fn color(self) -> Color {
         let (r, g, b) = match self {
             Quality::Poor => (157, 157, 157),
             Quality::Common => (255, 255, 255),
@@ -152,7 +152,7 @@ pub(super) enum Slot {
 }
 
 impl Slot {
-    const ALL: [Slot; 12] = [
+    pub(super) const ALL: [Slot; 12] = [
         Slot::Head,
         Slot::Neck,
         Slot::Shoulder,
@@ -167,7 +167,7 @@ impl Slot {
         Slot::Weapon,
     ];
 
-    fn label(self) -> &'static str {
+    pub(super) fn label(self) -> &'static str {
         match self {
             Slot::Head => "Head",
             Slot::Neck => "Neck",
@@ -186,7 +186,7 @@ impl Slot {
 
     /// The slot's `Interface\Icons` texture. Names from memory of the 1.12 art, not checked
     /// against the archive; a missing one leaves the square blank.
-    fn icon(self) -> &'static str {
+    pub(super) fn icon(self) -> &'static str {
         match self {
             Slot::Head => "Interface\\Icons\\INV_Helmet_01.blp",
             Slot::Neck => "Interface\\Icons\\INV_Jewelry_Necklace_01.blp",
@@ -292,14 +292,14 @@ impl Item {
 }
 
 /// An item the dice can roll: its name and slot, its quality and the two stats it favours.
-struct Tpl {
-    slot: Slot,
-    quality: Quality,
-    name: &'static str,
+pub(super) struct Tpl {
+    pub(super) slot: Slot,
+    pub(super) quality: Quality,
+    pub(super) name: &'static str,
     stats: [Stat; 2],
 }
 
-mod table {
+pub(super) mod table {
     use super::Quality::*;
     use super::Slot::*;
     use super::Stat::*;

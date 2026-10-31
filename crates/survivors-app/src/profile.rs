@@ -9,7 +9,7 @@
 //! survivable. `WOW_SURVIVORS_UNLOCK_ALL=1` opens every class and zone for testing, without saving
 //! that; an automated run (`WOW_SURVIVORS_AUTO`) opens everything and saves nothing.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -99,6 +99,15 @@ pub(super) struct Profile {
     pub talents: BTreeMap<String, u8>,
     /// The pick screen's difficulty, kept across runs.
     pub difficulty: Difficulty,
+    /// Every item template ever picked up, by name ([`super::collection`]).
+    pub collection: BTreeSet<String>,
+    /// Earned achievements, by key, with the day each was earned (days since 1970)
+    /// ([`super::achievements`]).
+    pub achievements: BTreeMap<String, u32>,
+    /// Lifetime counters the achievements read (kills, gold, bosses, runs won per zone...).
+    pub counters: BTreeMap<String, u64>,
+    /// Reward points spent on perks: rank by perk key ([`super::achievements`]).
+    pub perks: BTreeMap<String, u8>,
     /// What the last run paid out.
     #[serde(skip)]
     pub last_award: Option<Award>,
@@ -122,6 +131,10 @@ impl Default for Profile {
             trainer: BTreeMap::new(),
             talents: BTreeMap::new(),
             difficulty: Difficulty::default(),
+            collection: BTreeSet::new(),
+            achievements: BTreeMap::new(),
+            counters: BTreeMap::new(),
+            perks: BTreeMap::new(),
             last_award: None,
             unlock_all: false,
             ephemeral: false,
