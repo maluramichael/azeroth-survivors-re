@@ -161,6 +161,10 @@ fn lines(run: &Run, char_level: u32, spells: Option<&benilla_app::survivors_host
         ),
         right_color: VALUE,
     }];
+    // The race's run-long bonus ([`super::races`]), already inside the numbers below.
+    if let Some(racial) = super::races::trait_text(run.race) {
+        out.push(Line::stat("Racial", racial));
+    }
 
     out.push(Line::gap());
     out.push(Line::head("General"));

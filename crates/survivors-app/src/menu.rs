@@ -12,7 +12,7 @@ use bevy::prelude::*;
 use super::hud::{self, looks_for, rgb, start_run, MenuRoot};
 use super::kit::{self, KitButton, KitFonts, KitStyle};
 use super::profile::{xp_to_next, zone_min_level, Profile, MAX_LEVEL};
-use super::{data, Phase, Rng, Run, Selection};
+use super::{data, races, Phase, Rng, Run, Selection};
 use benilla_app::survivors_host::char_select::race_name;
 use benilla_app::survivors_host::glue::art::{class_tc, race_tc, tc_rect, GlueArt};
 use benilla_app::survivors_host::glue::GlueVisuals;
@@ -193,6 +193,8 @@ enum StatValue {
     Health,
     Start,
     Zones,
+    /// The picked race's racial trait.
+    Racial,
 }
 
 /// A zone row's fill and edge: picked, and hovered.
@@ -507,6 +509,17 @@ fn class_panel(ui: &mut ChildSpawnerCommands, fonts: &KitFonts, art: &GlueArt) {
                 ..default()
             },
             StatValue::Start,
+        );
+        kit::stat_box(
+            panel,
+            fonts,
+            "Racial",
+            "",
+            Node {
+                width: Val::Percent(100.0),
+                ..default()
+            },
+            StatValue::Racial,
         );
 
         // Randomize sits at the foot of the panel.
@@ -980,6 +993,10 @@ fn refresh_stats(
     mut title: Query<(&mut Text, &mut TextColor), (With<ClassTitle>, Without<StatValue>)>,
 ) {
     let class = selection.class_def();
+    let race = selection
+        .look
+        .and_then(|i| selection.looks.get(i))
+        .map_or(0, |&(_, r, _)| r);
     if let Ok((mut text, mut color)) = title.single_mut() {
         let want = class.map_or("", |c| c.name);
         if text.0 != want {
@@ -1009,6 +1026,7 @@ fn refresh_stats(
             StatValue::Health => {
                 let mut run = Run {
                     class: def,
+                    race,
                     ..Run::default()
                 };
                 if let Some(p) = profile {
@@ -1021,6 +1039,7 @@ fn refresh_stats(
                 let ability = data::ability(def.start);
                 hud::spell_name(spells.as_deref(), ability.spell, def.start)
             }
+            StatValue::Racial => races::trait_text(race).unwrap_or_default(),
             StatValue::Zones => {
                 let total = data::MAPS.len();
                 let open = profile.map_or(total, |p| {
