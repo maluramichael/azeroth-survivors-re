@@ -7,8 +7,8 @@ use bevy::prelude::*;
 use bevy::ui::RelativeCursorPosition;
 
 use super::data::{self, Kind};
-use super::fill::FillMaterial;
-use super::hud::{self, Choice, HudFont, Offer, SpellIcon};
+use super::hud::{self, Choice, Offer, SpellIcon};
+use super::kit::{self, KitFonts};
 use super::{Phase, Rng, Run};
 
 /// WoW's item-quality colours (`ITEM_QUALITY_COLORS`).
@@ -18,8 +18,8 @@ pub(super) const RARE: Color = Color::srgb(0.0, 0.439, 0.867);
 pub(super) const EPIC: Color = Color::srgb(0.639, 0.208, 0.933);
 pub(super) const LEGENDARY: Color = Color::srgb(1.0, 0.502, 0.0);
 
-const CARD_W: f32 = 236.0;
-const CARD_H: f32 = 330.0;
+const CARD_W: f32 = 250.0;
+const CARD_H: f32 = 370.0;
 /// Seconds between one card landing and the next.
 const DEAL_STAGGER: f32 = 0.09;
 const DEAL_SECS: f32 = 0.38;
@@ -163,230 +163,427 @@ pub(super) struct PendingPick(Option<(usize, f32)>);
 
 const PICK_SECS: f32 = 0.28;
 
+/// Upper case with a space between the letters, the closest thing to letter-spacing the text
+/// has: "UNCOMMON" becomes "U N C O M M O N".
+fn spaced(s: &str) -> String {
+    s.to_uppercase()
+        .chars()
+        .map(String::from)
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn font_at(font: &Handle<Font>, size: f32) -> TextFont {
+    TextFont {
+        font: font.clone(),
+        font_size: size,
+        ..default()
+    }
+}
+
+/// A centred, wrapping line of kit text as wide as its parent.
+fn wrapped(font: &Handle<Font>, s: impl Into<String>, size: f32, color: Color) -> impl Bundle {
+    (
+        kit::text(font, s, size, color),
+        TextLayout::new_with_justify(Justify::Center),
+        Node {
+            width: Val::Percent(100.0),
+            ..default()
+        },
+    )
+}
+
+/// One effect line of a card: "Damage 20 » 26" shows the new value in the bonus green, any other
+/// line is plain cream.
+fn effect_line(parent: &mut ChildSpawnerCommands, font: &Handle<Font>, line: &str) {
+    const SIZE: f32 = 15.0;
+    let Some((before, after)) = line.split_once(" » ") else {
+        parent.spawn(wrapped(font, line, SIZE, kit::CREAM));
+        return;
+    };
+    parent
+        .spawn((
+            Text::new(format!("{before} » ")),
+            font_at(font, SIZE),
+            TextColor(kit::CREAM),
+            TextShadow {
+                offset: Vec2::splat(1.0),
+                color: Color::srgba(0.0, 0.0, 0.0, 0.9),
+            },
+            TextLayout::new_with_justify(Justify::Center),
+            Node {
+                width: Val::Percent(100.0),
+                ..default()
+            },
+        ))
+        .with_children(|t| {
+            t.spawn((
+                TextSpan::new(after),
+                font_at(font, SIZE),
+                TextColor(kit::BONUS),
+            ));
+        });
+}
+
 /// The cards, rebuilt for each offer.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn deal_cards(
     mut commands: Commands,
     offer: Res<Offer>,
     run: Res<Run>,
     spells: Option<Res<benilla_app::survivors_host::ui_action::Spells>>,
-    font: Res<HudFont>,
-    rows: Query<Entity, With<hud::OfferRow>>,
-    mut fills: ResMut<Assets<FillMaterial>>,
+    fonts: Res<KitFonts>,
+    rows: Query<(Entity, &ChildOf), With<hud::OfferRow>>,
+    mut siblings: Query<(&ChildOf, &mut Node, &Text, Has<hud::LevelUpSub>), Without<hud::OfferRow>>,
 ) {
     if !offer.is_changed() {
         return;
     }
-    let Ok(row) = rows.single() else { return };
+    let Ok((row, row_parent)) = rows.single() else {
+        return;
+    };
+    // The overlay's own plain title and subtitle give way to the header built here.
+    for (parent, mut node, text, is_sub) in &mut siblings {
+        if parent.parent() == row_parent.parent() && (is_sub || text.0 == "LEVEL UP") {
+            node.display = Display::None;
+        }
+    }
     commands.entity(row).despawn_related::<Children>();
-    let f = &font.0;
+    commands.entity(row).insert(Node {
+        flex_direction: FlexDirection::Column,
+        align_items: AlignItems::Center,
+        row_gap: Val::Px(14.0),
+        margin: UiRect::new(Val::ZERO, Val::ZERO, Val::Px(4.0), Val::Px(4.0)),
+        ..default()
+    });
+    let kf = &*fonts;
+    let f = &kf.body;
+    // The level this offer is for: several can wait behind one another.
+    let level = run
+        .level
+        .saturating_sub(run.pending_levels.saturating_sub(1));
+    let owned: Vec<u32> = run.abilities.iter().map(|o| o.def.spell).collect();
     commands.entity(row).with_children(|row| {
-        for (i, &choice) in offer.choices().iter().enumerate() {
-            let card = hud::describe_card(choice, &run, spells.as_deref());
-            let rarity = rarity(choice, &run);
-            let rc = rarity.color();
-            // An evolution wears the Legendary orange under its own name.
-            let label = if matches!(choice, Choice::Evolve(_)) {
-                "Evolution"
-            } else {
-                rarity.label()
-            };
-            row.spawn((
-                Card {
-                    index: i,
-                    t: -(i as f32) * DEAL_STAGGER,
-                    hover: 0.0,
-                    tilt: Vec2::ZERO,
-                    picked: None,
-                    rarity,
-                },
-                Button,
-                Interaction::default(),
-                RelativeCursorPosition::default(),
+        // The header: a gold pill, the Morpheus title and a line of help.
+        row.spawn(Node {
+            flex_direction: FlexDirection::Column,
+            align_items: AlignItems::Center,
+            row_gap: Val::Px(4.0),
+            ..default()
+        })
+        .with_children(|h| {
+            h.spawn((
                 Node {
-                    width: Val::Px(CARD_W),
-                    height: Val::Px(CARD_H),
-                    flex_direction: FlexDirection::Column,
-                    align_items: AlignItems::Center,
-                    padding: UiRect::new(
-                        Val::Px(16.0),
-                        Val::Px(16.0),
-                        Val::Px(18.0),
-                        Val::Px(14.0),
-                    ),
-                    row_gap: Val::Px(6.0),
-                    border: UiRect::all(Val::Px(2.0)),
-                    border_radius: BorderRadius::all(Val::Px(10.0)),
+                    padding: UiRect::axes(Val::Px(16.0), Val::Px(3.0)),
+                    border: UiRect::all(Val::Px(1.0)),
+                    border_radius: BorderRadius::all(Val::Px(12.0)),
                     ..default()
                 },
-                BorderColor::all(rc),
-                BoxShadow::new(
-                    rc.with_alpha(0.0),
-                    Val::Px(0.0),
-                    Val::Px(0.0),
-                    Val::Px(0.0),
-                    Val::Px(26.0),
-                ),
-                UiTransform {
-                    translation: Val2::px(0.0, 260.0),
-                    scale: Vec2::splat(0.6),
-                    rotation: Rot2::degrees(-14.0),
-                },
-                Visibility::Hidden,
+                BackgroundColor(Color::srgba(0.05, 0.04, 0.025, 0.9)),
+                BorderColor::all(kit::TITLE.with_alpha(0.75)),
             ))
-            .with_children(|c| {
-                // A dark face lit from the top in the rarity's colour, inside the border.
-                let inner_h = CARD_H - 4.0;
-                c.spawn((
-                    Node {
-                        position_type: PositionType::Absolute,
-                        left: Val::Px(0.0),
-                        right: Val::Px(0.0),
-                        top: Val::Px(0.0),
-                        bottom: Val::Px(0.0),
-                        ..default()
-                    },
-                    MaterialNode(
-                        fills.add(
-                            FillMaterial::vertical(
-                                rc.mix(&Color::BLACK, 0.55).with_alpha(0.98),
-                                Color::srgba(0.05, 0.04, 0.035, 0.97),
-                                0.42,
-                                Color::srgba(0.02, 0.015, 0.01, 0.98),
-                                8.0 / inner_h,
-                            )
-                            .with_glow(
-                                rc.with_alpha(0.45),
-                                Vec2::new(0.5, 60.0 / inner_h),
-                                Vec2::new((CARD_W - 4.0) / 2.0 / inner_h, 90.0 / inner_h),
-                            ),
-                        ),
+            .with_children(|p| {
+                p.spawn(kit::body(kf, format!("LEVEL {level}"), 13.0, kit::TITLE));
+            });
+            h.spawn((
+                Text::new("Level Up!"),
+                font_at(&kf.title, 64.0),
+                TextColor(kit::TITLE),
+                TextShadow {
+                    offset: Vec2::splat(3.0),
+                    color: Color::srgba(0.0, 0.0, 0.0, 0.9),
+                },
+                TextLayout::new_with_justify(Justify::Center),
+            ));
+            h.spawn(kit::body(
+                kf,
+                "Choose a power. Its rarity sets how strong it is.",
+                16.0,
+                kit::CREAM,
+            ));
+        });
+
+        // The cards.
+        row.spawn(Node {
+            column_gap: Val::Px(22.0),
+            // Room for a hovered card's lift.
+            margin: UiRect::new(Val::ZERO, Val::ZERO, Val::Px(14.0), Val::Px(4.0)),
+            ..default()
+        })
+        .with_children(|cards| {
+            for (i, &choice) in offer.choices().iter().enumerate() {
+                let card = hud::describe_card(choice, &run, spells.as_deref());
+                let rarity = rarity(choice, &run);
+                let rc = rarity.color();
+                let (chip, chip_color) = match choice {
+                    Choice::NewAbility(_) | Choice::NewPassive(_) => (
+                        "NEW".to_string(),
+                        if rarity == Rarity::Common {
+                            kit::MUTED
+                        } else {
+                            kit::BONUS
+                        },
                     ),
-                    bevy::ui::FocusPolicy::Pass,
-                ));
-                // The key and the rarity on one line along the top.
-                c.spawn(Node {
-                    width: Val::Percent(100.0),
-                    justify_content: JustifyContent::SpaceBetween,
-                    ..default()
-                })
-                .with_children(|top| {
-                    top.spawn(hud::text_bundle(
-                        f,
-                        format!("{}", i + 1),
-                        15.0,
-                        hud::DIM_GREY,
-                    ));
-                    top.spawn(hud::text_bundle(f, label, 13.0, rc));
-                });
-                // The icon in a gold-rimmed socket.
-                c.spawn((
-                    Node {
-                        width: Val::Px(74.0),
-                        height: Val::Px(74.0),
-                        margin: UiRect::vertical(Val::Px(6.0)),
-                        border: UiRect::all(Val::Px(2.0)),
-                        border_radius: BorderRadius::all(Val::Px(6.0)),
-                        ..default()
-                    },
-                    BorderColor::all(rc.mix(&hud::GOLD_TONE, 0.4)),
-                    BoxShadow::new(
-                        rc.with_alpha(0.55),
-                        Val::Px(0.0),
-                        Val::Px(0.0),
-                        Val::Px(2.0),
-                        Val::Px(14.0),
+                    Choice::Upgrade(k) => (format!("RANK {}", run.abilities[k].level + 1), rc),
+                    Choice::UpPassive(k) => (format!("RANK {}", run.passives[k].1 + 1), rc),
+                    Choice::Evolve(_) => ("EVOLVE".to_string(), kit::QUALITY[5]),
+                    Choice::Heal => ("RESTORE".to_string(), kit::MUTED),
+                };
+                let footer = match choice {
+                    Choice::NewAbility(_) => format!(
+                        "Takes a spell slot, {}/{}",
+                        run.abilities.len() + 1,
+                        data::MAX_ABILITIES
                     ),
-                ))
-                .with_children(|s| {
-                    s.spawn((
+                    Choice::NewPassive(_) => format!(
+                        "Takes a passive slot, {}/{}",
+                        run.passives.len() + 1,
+                        data::MAX_PASSIVES
+                    ),
+                    Choice::Upgrade(_) => "Improves a spell you know".to_string(),
+                    Choice::UpPassive(_) => "Improves a passive you know".to_string(),
+                    Choice::Evolve(_) => "Replaces a maxed spell".to_string(),
+                    Choice::Heal => "Restores all health".to_string(),
+                };
+                let dark = Color::srgb(0.04, 0.035, 0.03);
+                cards
+                    .spawn((
+                        Card {
+                            index: i,
+                            t: -(i as f32) * DEAL_STAGGER,
+                            hover: 0.0,
+                            tilt: Vec2::ZERO,
+                            picked: None,
+                            rarity,
+                        },
+                        Button,
+                        Interaction::default(),
+                        RelativeCursorPosition::default(),
                         Node {
+                            width: Val::Px(CARD_W),
+                            height: Val::Px(CARD_H),
+                            flex_direction: FlexDirection::Column,
+                            align_items: AlignItems::Center,
+                            padding: UiRect::new(
+                                Val::Px(14.0),
+                                Val::Px(14.0),
+                                Val::Px(12.0),
+                                Val::Px(10.0),
+                            ),
+                            row_gap: Val::Px(6.0),
+                            border: UiRect::all(Val::Px(2.0)),
+                            border_radius: BorderRadius::all(Val::Px(10.0)),
+                            ..default()
+                        },
+                        // Near-black, lit from the top in the rarity's colour.
+                        BackgroundGradient::from(LinearGradient::to_bottom(vec![
+                            ColorStop::percent(dark.mix(&rc, 0.18).with_alpha(0.97), 0.0),
+                            ColorStop::percent(dark.with_alpha(0.97), 100.0),
+                        ])),
+                        BorderColor::all(rc),
+                        BoxShadow::new(
+                            rc.with_alpha(0.0),
+                            Val::Px(0.0),
+                            Val::Px(0.0),
+                            Val::Px(0.0),
+                            Val::Px(18.0),
+                        ),
+                        UiTransform {
+                            translation: Val2::px(0.0, 260.0),
+                            scale: Vec2::splat(0.6),
+                            rotation: Rot2::degrees(-14.0),
+                        },
+                        Visibility::Hidden,
+                    ))
+                    .with_children(|c| {
+                        // The key and the kind of pick on one line along the top.
+                        c.spawn(Node {
                             width: Val::Percent(100.0),
-                            height: Val::Percent(100.0),
-                            border_radius: BorderRadius::all(Val::Px(4.0)),
+                            justify_content: JustifyContent::SpaceBetween,
+                            align_items: AlignItems::Center,
                             ..default()
-                        },
-                        ImageNode {
-                            color: Color::srgba(0.0, 0.0, 0.0, 0.6),
-                            ..default()
-                        },
-                        SpellIcon(card.spell),
-                    ));
-                });
-                c.spawn(hud::centered_bundle(
-                    f,
-                    card.name,
-                    21.0,
-                    rc.mix(&Color::WHITE, 0.25),
-                ));
-                c.spawn(hud::centered_bundle(f, card.tag, 14.0, card.tag_color));
-                // The pips: rank now, and the one this pick fills.
-                if let Some((have, max)) = card.ranks {
-                    c.spawn(Node {
-                        column_gap: Val::Px(4.0),
-                        margin: UiRect::vertical(Val::Px(2.0)),
-                        ..default()
-                    })
-                    .with_children(|pips| {
-                        for r in 0..max {
-                            let color = if r < have {
-                                hud::GOLD_TONE
-                            } else if r == have {
-                                rc
-                            } else {
-                                Color::srgba(1.0, 1.0, 1.0, 0.12)
-                            };
-                            pips.spawn((
+                        })
+                        .with_children(|top| {
+                            top.spawn((
                                 Node {
-                                    width: Val::Px(14.0),
-                                    height: Val::Px(6.0),
+                                    width: Val::Px(22.0),
+                                    height: Val::Px(22.0),
+                                    justify_content: JustifyContent::Center,
+                                    align_items: AlignItems::Center,
+                                    border: UiRect::all(Val::Px(1.0)),
+                                    border_radius: BorderRadius::all(Val::Px(11.0)),
+                                    ..default()
+                                },
+                                BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.65)),
+                                BorderColor::all(kit::INSET_EDGE),
+                            ))
+                            .with_children(|k| {
+                                k.spawn(kit::body(kf, format!("{}", i + 1), 13.0, kit::CREAM));
+                            });
+                            top.spawn((
+                                Node {
+                                    padding: UiRect::axes(Val::Px(8.0), Val::Px(2.0)),
+                                    border: UiRect::all(Val::Px(1.0)),
+                                    border_radius: BorderRadius::all(Val::Px(9.0)),
+                                    ..default()
+                                },
+                                BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.55)),
+                                BorderColor::all(chip_color.with_alpha(0.85)),
+                            ))
+                            .with_children(|ch| {
+                                ch.spawn(kit::body(kf, chip, 11.0, chip_color));
+                            });
+                        });
+                        // The icon in a dark socket.
+                        c.spawn((
+                            Node {
+                                width: Val::Px(72.0),
+                                height: Val::Px(72.0),
+                                margin: UiRect::vertical(Val::Px(2.0)),
+                                border: UiRect::all(Val::Px(2.0)),
+                                border_radius: BorderRadius::all(Val::Px(6.0)),
+                                ..default()
+                            },
+                            BorderColor::all(Color::srgb(0.02, 0.02, 0.02)),
+                            BoxShadow::new(
+                                Color::srgba(0.0, 0.0, 0.0, 0.6),
+                                Val::Px(0.0),
+                                Val::Px(3.0),
+                                Val::Px(0.0),
+                                Val::Px(8.0),
+                            ),
+                        ))
+                        .with_children(|s| {
+                            s.spawn((
+                                Node {
+                                    width: Val::Percent(100.0),
+                                    height: Val::Percent(100.0),
+                                    border_radius: BorderRadius::all(Val::Px(4.0)),
+                                    ..default()
+                                },
+                                ImageNode {
+                                    color: Color::srgba(0.0, 0.0, 0.0, 0.6),
+                                    ..default()
+                                },
+                                SpellIcon(card.spell),
+                            ));
+                        });
+                        c.spawn(wrapped(f, spaced(rarity.label()), 12.0, rc));
+                        c.spawn(wrapped(f, card.name, 22.0, rc));
+                        c.spawn(wrapped(f, card.tag, 13.0, kit::MUTED));
+                        c.spawn((
+                            Node {
+                                width: Val::Percent(80.0),
+                                height: Val::Px(1.0),
+                                margin: UiRect::vertical(Val::Px(2.0)),
+                                ..default()
+                            },
+                            BackgroundGradient::from(LinearGradient::to_right(vec![
+                                ColorStop::percent(rc.with_alpha(0.0), 0.0),
+                                ColorStop::percent(rc.with_alpha(0.8), 50.0),
+                                ColorStop::percent(rc.with_alpha(0.0), 100.0),
+                            ])),
+                        ));
+                        // The effect lines take the room left over.
+                        c.spawn(Node {
+                            width: Val::Percent(100.0),
+                            flex_grow: 1.0,
+                            flex_direction: FlexDirection::Column,
+                            align_items: AlignItems::Center,
+                            row_gap: Val::Px(3.0),
+                            ..default()
+                        })
+                        .with_children(|d| {
+                            for line in card.desc.lines().filter(|l| !l.trim().is_empty()) {
+                                effect_line(d, f, line);
+                            }
+                        });
+                        // The footer, pinned to the bottom above a faint rule.
+                        c.spawn(Node {
+                            width: Val::Percent(100.0),
+                            flex_direction: FlexDirection::Column,
+                            align_items: AlignItems::Center,
+                            row_gap: Val::Px(6.0),
+                            ..default()
+                        })
+                        .with_children(|b| {
+                            b.spawn((
+                                Node {
+                                    width: Val::Percent(100.0),
+                                    height: Val::Px(1.0),
+                                    ..default()
+                                },
+                                BackgroundColor(Color::srgba(1.0, 1.0, 1.0, 0.08)),
+                            ));
+                            b.spawn(wrapped(f, footer, 12.0, kit::MUTED));
+                        });
+                        // The landing shine, a bright band that crosses once.
+                        c.spawn((
+                            CardShine(i),
+                            Node {
+                                position_type: PositionType::Absolute,
+                                top: Val::Px(-40.0),
+                                bottom: Val::Px(-40.0),
+                                width: Val::Px(70.0),
+                                left: Val::Px(-120.0),
+                                ..default()
+                            },
+                            BackgroundGradient::from(LinearGradient::to_right(vec![
+                                ColorStop::percent(Color::srgba(1.0, 1.0, 1.0, 0.0), 0.0),
+                                ColorStop::percent(Color::srgba(1.0, 0.97, 0.85, 0.28), 50.0),
+                                ColorStop::percent(Color::srgba(1.0, 1.0, 1.0, 0.0), 100.0),
+                            ])),
+                            UiTransform::from_rotation(Rot2::degrees(18.0)),
+                            bevy::ui::FocusPolicy::Pass,
+                        ));
+                    });
+            }
+        });
+
+        // The hero's spell slots: the ones taken show their icon, the free ones stay dark.
+        row.spawn(Node {
+            align_items: AlignItems::Center,
+            column_gap: Val::Px(6.0),
+            ..default()
+        })
+        .with_children(|r| {
+            r.spawn((
+                kit::label(kf, "Spells"),
+                Node {
+                    margin: UiRect::right(Val::Px(6.0)),
+                    ..default()
+                },
+            ));
+            for slot in 0..data::MAX_ABILITIES {
+                let node = Node {
+                    width: Val::Px(28.0),
+                    height: Val::Px(28.0),
+                    ..default()
+                };
+                match owned.get(slot) {
+                    Some(&spell) => {
+                        r.spawn(kit::inset(node)).with_children(|s| {
+                            s.spawn((
+                                Node {
+                                    width: Val::Percent(100.0),
+                                    height: Val::Percent(100.0),
                                     border_radius: BorderRadius::all(Val::Px(2.0)),
                                     ..default()
                                 },
-                                BackgroundColor(color),
+                                ImageNode {
+                                    color: Color::srgba(0.0, 0.0, 0.0, 0.6),
+                                    ..default()
+                                },
+                                SpellIcon(spell),
                             ));
-                        }
-                    });
+                        });
+                    }
+                    None => {
+                        r.spawn(kit::inset(node));
+                    }
                 }
-                c.spawn((
-                    Node {
-                        width: Val::Percent(80.0),
-                        height: Val::Px(1.0),
-                        margin: UiRect::vertical(Val::Px(4.0)),
-                        ..default()
-                    },
-                    BackgroundGradient::from(LinearGradient::to_right(vec![
-                        ColorStop::percent(rc.with_alpha(0.0), 0.0),
-                        ColorStop::percent(rc.with_alpha(0.8), 50.0),
-                        ColorStop::percent(rc.with_alpha(0.0), 100.0),
-                    ])),
-                ));
-                c.spawn(hud::centered_bundle(
-                    f,
-                    card.desc,
-                    14.0,
-                    Color::srgb(0.92, 0.9, 0.84),
-                ));
-                // The landing shine, a bright band that crosses once.
-                c.spawn((
-                    CardShine(i),
-                    Node {
-                        position_type: PositionType::Absolute,
-                        top: Val::Px(-40.0),
-                        bottom: Val::Px(-40.0),
-                        width: Val::Px(70.0),
-                        left: Val::Px(-120.0),
-                        ..default()
-                    },
-                    BackgroundGradient::from(LinearGradient::to_right(vec![
-                        ColorStop::percent(Color::srgba(1.0, 1.0, 1.0, 0.0), 0.0),
-                        ColorStop::percent(Color::srgba(1.0, 0.97, 0.85, 0.28), 50.0),
-                        ColorStop::percent(Color::srgba(1.0, 1.0, 1.0, 0.0), 100.0),
-                    ])),
-                    UiTransform::from_rotation(Rot2::degrees(18.0)),
-                    bevy::ui::FocusPolicy::Pass,
-                ));
-            });
-        }
+            }
+        });
     });
 }
 
@@ -476,17 +673,17 @@ pub(super) fn animate_cards(
         let bob = (now * 2.2 + card.index as f32 * 1.3).sin() * 1.5 * (1.0 - h);
         tf.translation = Val2::px(
             0.0,
-            (1.0 - e) * 260.0 - 18.0 * h + card.tilt.y * 8.0 + bob + pick_y,
+            (1.0 - e) * 260.0 - 8.0 * h + card.tilt.y * 8.0 + bob + pick_y,
         );
         let s = (0.6 + 0.4 * e) * (1.0 + 0.06 * h) * pick_scale;
         tf.scale = Vec2::new(s * squash, s * (1.0 + card.tilt.y.abs() * 0.02));
         tf.rotation = Rot2::degrees((1.0 - e) * -14.0 + lean);
         let rc = card.rarity.color();
         if let Some(sh) = shadow.0.first_mut() {
-            sh.color = rc.with_alpha((0.25 + 0.6 * h) * (1.0 - pick_fade));
-            sh.blur_radius = Val::Px(18.0 + 22.0 * h);
-            sh.spread_radius = Val::Px(2.0 + 4.0 * h);
-            sh.y_offset = Val::Px(6.0 + 10.0 * h);
+            sh.color = rc.with_alpha((0.35 + 0.45 * h) * (1.0 - pick_fade));
+            sh.blur_radius = Val::Px(18.0 + 16.0 * h);
+            sh.spread_radius = Val::Px(2.0 * h);
+            sh.y_offset = Val::Px(0.0);
         }
         if pick_fade >= 1.0 {
             *vis = Visibility::Hidden;
