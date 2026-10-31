@@ -108,6 +108,8 @@ pub(super) struct Profile {
     pub counters: BTreeMap<String, u64>,
     /// Reward points spent on perks: rank by perk key ([`super::achievements`]).
     pub perks: BTreeMap<String, u8>,
+    /// Best run per zone and class, by [`super::records::key`] ([`super::records`]).
+    pub records: BTreeMap<String, super::records::Best>,
     /// What the last run paid out.
     #[serde(skip)]
     pub last_award: Option<Award>,
@@ -135,6 +137,7 @@ impl Default for Profile {
             achievements: BTreeMap::new(),
             counters: BTreeMap::new(),
             perks: BTreeMap::new(),
+            records: BTreeMap::new(),
             last_award: None,
             unlock_all: false,
             ephemeral: false,

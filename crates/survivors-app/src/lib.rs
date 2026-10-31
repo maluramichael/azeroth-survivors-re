@@ -16,6 +16,7 @@ mod collection;
 mod data;
 mod difficulty;
 mod dmgmeter;
+mod enrage;
 mod enemies;
 mod evolutions;
 mod fill;
@@ -36,10 +37,14 @@ mod nav;
 mod options;
 mod pickups;
 mod plates;
+mod prefs;
 mod talents;
 mod profile;
 mod quests;
+mod races;
+mod records;
 mod trainer;
+mod surge;
 mod units;
 mod worldbuffs;
 
@@ -61,6 +66,7 @@ impl Plugin for SurvivorsPlugin {
         app.insert_resource(benilla_app::survivors_host::run_mode::CaptureMode)
             .add_plugins((grade::plugin, kit::plugin, dmgmeter::plugin))
             .add_plugins((collection::plugin, loottables::plugin, achievements::plugin))
+            .add_plugins((races::plugin, records::plugin, surge::plugin, enrage::plugin, prefs::plugin))
             .add_plugins((
                 trainer::plugin,
                 plates::plugin,
@@ -179,7 +185,8 @@ impl Plugin for SurvivorsPlugin {
             .add_systems(OnEnter(Phase::LevelUp), (pause, hud::roll_offer))
             .add_systems(OnEnter(Phase::Paused), pause)
             .add_systems(OnEnter(Phase::GameOver), (unpause, profile::award_run))
-            .add_systems(OnEnter(Phase::Menu), (unpause, reset_run));
+            .add_systems(OnEnter(Phase::Menu), (unpause, reset_run))
+            .add_systems(OnExit(Phase::Menu), seed_rng);
         if let Some(auto) = auto::from_env() {
             app.insert_resource(auto)
                 .add_systems(
@@ -415,7 +422,8 @@ impl Run {
         s.magnet *= m.magnet;
         s.armor += m.armor;
         s.regen += m.regen;
-        for mods in [&self.gear, &self.buffs, &self.talents] {
+        let race = races::mods(self.race);
+        for mods in [&self.gear, &self.buffs, &self.talents, &race] {
             mods.apply(&mut s);
         }
         s
@@ -459,6 +467,16 @@ impl Rng {
     }
     pub fn index(&mut self, len: usize) -> usize {
         (self.next_u64() % len.max(1) as u64) as usize
+    }
+}
+
+/// `WOW_SURVIVORS_SEED=<n>`: every run starts from the same dice, so a run can be played again.
+/// Frame timing still varies, so two runs drift apart once the clock matters.
+fn seed_rng(mut rng: ResMut<Rng>) {
+    if let Some(seed) = benilla_app::survivors_host::webenv::var("WOW_SURVIVORS_SEED")
+        .and_then(|s| s.trim().parse::<u64>().ok())
+    {
+        *rng = Rng(seed | 1);
     }
 }
 
