@@ -439,6 +439,19 @@ WebSocket, UPnP.
 4. `Look` aus `UnitSpec` ableiten und in `units::spawn_unit` anhängen.
 5. Danach Stufe 1 wie oben.
 
+## Entscheidungen (2026-10-31)
+
+- **Netz**: Variante A, `bevy_replicon` + `bevy_replicon_renet2`. Michael nimmt in Kauf, dass
+  replicon bei jedem Bevy-Upgrade mitgezogen wird.
+- **Level-up**: keine Pause. Das Spiel läuft weiter; wer gerade seine Karten wählt, ist dabei
+  unverwundbar und wird von den Gegnern ignoriert (sie verfolgen ihn nicht und schlagen nicht zu).
+  Das ersetzt 3a und 3b in Stufe 3. Solo bleibt der Level-up wie heute (Pause), bis Stufe 3 die
+  Regel für beide Fälle festlegt.
+- **Zeitpunkt**: jetzt, als nächste Runde auf `features`, ohne parallele Feature-Runde.
+- Noch offen, mit Vorschlag als Standard bis Michael anders entscheidet: gemeinsame XP-Leiste (2),
+  LAN plus Tailscale und Portweiterleitung ohne UPnP (3), Profil-Mitbringsel gekappt (5), Host geht
+  beendet den Lauf (6), Koop auf `features` ohne Upstream-PR (8).
+
 ## Offene Fragen an Michael
 
 1. **Level-up**: erst die Pause für alle mit 20-Sekunden-Zeitlimit (3a, billig), oder gleich ohne
