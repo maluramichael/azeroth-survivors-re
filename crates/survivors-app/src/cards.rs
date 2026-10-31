@@ -532,25 +532,41 @@ pub(super) fn deal_cards(
                             ));
                             b.spawn(wrapped(f, footer, 12.0, kit::MUTED));
                         });
-                        // The landing shine, a bright band that crosses once.
+                        // The landing shine, a bright band that crosses once. Clipped to the
+                        // card, or it comes to rest beside it.
                         c.spawn((
-                            CardShine(i),
                             Node {
                                 position_type: PositionType::Absolute,
-                                top: Val::Px(-40.0),
-                                bottom: Val::Px(-40.0),
-                                width: Val::Px(70.0),
-                                left: Val::Px(-120.0),
+                                left: Val::Px(0.0),
+                                right: Val::Px(0.0),
+                                top: Val::Px(0.0),
+                                bottom: Val::Px(0.0),
+                                overflow: Overflow::clip(),
+                                border_radius: BorderRadius::all(Val::Px(8.0)),
                                 ..default()
                             },
-                            BackgroundGradient::from(LinearGradient::to_right(vec![
-                                ColorStop::percent(Color::srgba(1.0, 1.0, 1.0, 0.0), 0.0),
-                                ColorStop::percent(Color::srgba(1.0, 0.97, 0.85, 0.28), 50.0),
-                                ColorStop::percent(Color::srgba(1.0, 1.0, 1.0, 0.0), 100.0),
-                            ])),
-                            UiTransform::from_rotation(Rot2::degrees(18.0)),
                             bevy::ui::FocusPolicy::Pass,
-                        ));
+                        ))
+                        .with_children(|clip| {
+                            clip.spawn((
+                                CardShine(i),
+                                Node {
+                                    position_type: PositionType::Absolute,
+                                    top: Val::Px(-40.0),
+                                    bottom: Val::Px(-40.0),
+                                    width: Val::Px(70.0),
+                                    left: Val::Px(-120.0),
+                                    ..default()
+                                },
+                                BackgroundGradient::from(LinearGradient::to_right(vec![
+                                    ColorStop::percent(Color::srgba(1.0, 1.0, 1.0, 0.0), 0.0),
+                                    ColorStop::percent(Color::srgba(1.0, 0.97, 0.85, 0.28), 50.0),
+                                    ColorStop::percent(Color::srgba(1.0, 1.0, 1.0, 0.0), 100.0),
+                                ])),
+                                UiTransform::from_rotation(Rot2::degrees(18.0)),
+                                bevy::ui::FocusPolicy::Pass,
+                            ));
+                        });
                     });
             }
         });

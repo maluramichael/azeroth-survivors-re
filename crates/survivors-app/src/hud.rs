@@ -1300,7 +1300,7 @@ pub(super) fn describe_card(
                 spell: def.spell,
                 name: spell_name(spells, def.spell, def.key),
                 tag: "New spell".into(),
-                desc: format!("{}.", ability_body(def, &c)),
+                desc: ability_body(def, &c),
             }
         }
         Choice::Upgrade(k) => {

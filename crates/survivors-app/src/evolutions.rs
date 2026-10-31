@@ -205,7 +205,7 @@ fn build(commands: &mut Commands, ui: &mut BookUi, fonts: &kit::KitFonts) {
     ui.rows = rows;
 }
 
-/// The class's recipes: found ones whole, the rest with the talent hidden.
+/// The class's recipes: found ones under their name, the rest as the recipe alone, muted.
 fn lines(
     run: &Run,
     book: &Spellbook,
@@ -216,25 +216,19 @@ fn lines(
         .map(|e| {
             let from = data::ability(e.from);
             let from = hud::spell_name(spells, from.spell, from.key);
+            let passive = data::PASSIVES
+                .iter()
+                .find(|p| p.key == e.passive)
+                .map_or(e.passive, |p| p.name);
+            let recipe = format!(
+                "{from} (rank {}) + {passive} (rank {})",
+                data::MAX_ABILITY_LEVEL,
+                e.rank
+            );
             if book.knows(e.into) {
-                let passive = data::PASSIVES
-                    .iter()
-                    .find(|p| p.key == e.passive)
-                    .map_or(e.passive, |p| p.name);
-                (
-                    format!(
-                        "{}: {from} (rank {}) + {passive} (rank {})",
-                        e.name,
-                        data::MAX_ABILITY_LEVEL,
-                        e.rank
-                    ),
-                    FOUND,
-                )
+                (format!("{}: {recipe}", e.name), FOUND)
             } else {
-                (
-                    format!("???: {from} (rank {}) + ???", data::MAX_ABILITY_LEVEL),
-                    HINT,
-                )
+                (recipe, HINT)
             }
         })
         .collect()
