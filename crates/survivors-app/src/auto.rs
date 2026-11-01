@@ -215,6 +215,7 @@ pub(super) fn drive(
     heroes: Query<(), With<Hero>>,
     enemies: Query<&Enemy>,
     role: Res<super::NetRole>,
+    mut options: ResMut<super::options::OptionsUi>,
 ) {
     let dt = time.delta_secs();
     auto.wait += dt;
@@ -292,10 +293,18 @@ pub(super) fn drive(
             auto.wait = 0.0;
         }
         Phase::Paused => {
-            if auto.wait > 1.0 {
+            // The pause screen, then the Options window's Graphics tab over the live run.
+            if auto.wait > 1.0 && auto.wait < 2.0 {
                 auto.capture_once(&mut commands, "pause".into());
-            }
-            if auto.wait > 2.0 {
+            } else if auto.wait >= 2.0 && auto.wait < 3.5 {
+                options.open = true;
+                options.tab = super::options::OptionsTab::Graphics;
+                if auto.wait > 3.0 {
+                    auto.capture_once(&mut commands, "options-graphics".into());
+                }
+            } else if auto.wait >= 3.5 {
+                options.open = false;
+                options.tab = super::options::OptionsTab::default();
                 next.set(Phase::Playing);
                 auto.wait = 0.0;
             }

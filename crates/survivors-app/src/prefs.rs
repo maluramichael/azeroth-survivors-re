@@ -1,5 +1,6 @@
 //! The player's own settings beside the CVars: how the camera turns and whether it shakes, the
-//! frame-rate cap and the frame-rate readout, kept in `survivors-prefs.toml` next to the profile. [`Shake`] is the camera's shake for the moment,
+//! frame-rate cap and the frame-rate readout, the picture settings (anti-aliasing, the grade, hit
+//! flashes and death fades), kept in `survivors-prefs.toml` next to the profile. [`Shake`] is the camera's shake for the moment,
 //! raised by hits and read by [`super::hero::place_camera`].
 
 use bevy::prelude::*;
@@ -24,6 +25,26 @@ pub(crate) struct Prefs {
     pub dynamic_scale: bool,
     /// The corner label with the frame rate.
     pub show_fps: bool,
+    /// Post-process edge smoothing on the world camera ([`super::antialias`]).
+    pub anti_alias: AntiAlias,
+    /// The survivors grade (sharpening, vibrance, contrast; [`super::grade`]).
+    pub grade: bool,
+    /// The grade's CAS sharpness, 0..1.
+    pub sharpness: f32,
+    /// A struck enemy flashes ([`super::vfx`]).
+    pub hit_flash: bool,
+    /// The dead fade and sink instead of vanishing ([`super::vfx`]).
+    pub death_fade: bool,
+}
+
+/// The post-process anti-aliasing on the world camera. MSAA is separate: the engine's
+/// `gxMultisample` CVar.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) enum AntiAlias {
+    #[default]
+    Off,
+    Fxaa,
+    Smaa,
 }
 
 impl Default for Prefs {
@@ -35,6 +56,11 @@ impl Default for Prefs {
             frame_cap: 0,
             dynamic_scale: false,
             show_fps: false,
+            anti_alias: AntiAlias::Off,
+            grade: true,
+            sharpness: 0.4,
+            hit_flash: true,
+            death_fade: true,
         }
     }
 }
@@ -104,5 +130,22 @@ mod tests {
         assert!(prefs.invert_pitch && !prefs.camera_shake);
         assert_eq!(prefs.frame_cap, 0, "no cap unless asked");
         assert!(!prefs.dynamic_scale && !prefs.show_fps);
+        assert_eq!(prefs.anti_alias, AntiAlias::Off);
+        assert!(prefs.grade && prefs.hit_flash && prefs.death_fade);
+    }
+
+    #[test]
+    fn the_picture_settings_survive_a_save_and_a_load() {
+        let prefs = Prefs {
+            anti_alias: AntiAlias::Smaa,
+            grade: false,
+            sharpness: 0.7,
+            hit_flash: false,
+            death_fade: false,
+            ..Prefs::default()
+        };
+        let text = toml::to_string(&prefs).unwrap();
+        let back: Prefs = toml::from_str(&text).unwrap();
+        assert_eq!(back, prefs);
     }
 }
