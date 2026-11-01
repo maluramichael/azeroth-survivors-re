@@ -6,10 +6,12 @@
 //!   ([`stance`], read by [`super::enemies::move_enemies`]) and, every cooldown, sends a
 //!   [`Missile`] at where the hero stands right then. The missile flies straight on, so a hero
 //!   who keeps moving outruns it, and hurts any hero it passes within [`MISSILE_HIT`] yards.
-//! - **Boss abilities.** Every boss but the reaper acts every seven to ten seconds: a
-//!   [`Telegraph`] (a red circle that fills for a moment on the ground under a hero, then strikes
-//!   whoever still stands in it) or a volley of missiles in a ring. The bosses take turns by
-//!   place on the zone's schedule ([`plan_for`]); the finale does both.
+//! - **Boss abilities.** Every boss but the reaper and the ones with a script of their own
+//!   ([`super::bosses`]) acts every seven to ten seconds: a [`Telegraph`] (a red circle that fills
+//!   for a moment on the ground under a hero, then strikes whoever still stands in it) or a volley
+//!   of missiles in a ring. The bosses take turns by place on the zone's schedule ([`plan_for`]);
+//!   the finale does both. A telegraph is any [`Shape`]: the scripts lay cones, lines and rings
+//!   with it too, and let a blow leave a burning pool behind.
 //! - **Elite affixes.** An elite rolls one [`Affix`]: Swift (faster), Shielded (a shield that
 //!   takes the first blows) or Volatile (a telegraphed blast where it dies). The plate names it.
 //!
@@ -26,6 +28,7 @@ use bevy::light::NotShadowCaster;
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
 
+use super::bosses::Shape;
 use super::data::{Ranged, School};
 use super::enemies::{self, Dying, Elite, Enemy};
 use super::finale::{Finale, Reaper};
@@ -77,6 +80,7 @@ pub(super) fn sim_systems() -> ScheduleConfigs<ScheduleSystem> {
 pub(super) struct Dodger<'w, 's> {
     missiles: Query<'w, 's, (Entity, &'static Transform, &'static Missile), Without<Hero>>,
     circles: Query<'w, 's, &'static Telegraph>,
+    pools: Query<'w, 's, &'static super::bosses::Pool>,
 }
 
 #[cfg(test)]
@@ -92,10 +96,19 @@ impl Dodger<'_, '_> {
             return dir;
         }
         let mut push = Vec3::ZERO;
+        // Out of every shape the way its own geometry says (sideways of a cone or a line),
+        // with a yard to spare, and out of a burning pool at once.
         for t in &self.circles {
-            let off = flat(at - t.center);
-            if t.flash.is_none() && t.t >= Self::REACTION && off.length() < t.radius + 1.0 {
-                push += off.normalize_or(Vec3::X) * 3.0;
+            if t.flash.is_none()
+                && t.t >= Self::REACTION
+                && t.shape.grown(1.0).contains(t.origin, t.yaw, at)
+            {
+                push += t.shape.escape(t.origin, t.yaw, at) * 3.0;
+            }
+        }
+        for p in &self.pools {
+            if p.shape.grown(1.0).contains(p.origin, p.yaw, at) {
+                push += p.shape.escape(p.origin, p.yaw, at) * 3.0;
             }
         }
         for (ent, tf, m) in &self.missiles {
@@ -253,7 +266,7 @@ pub(super) fn stance(range: Option<f32>, dist: f32) -> Stance {
 
 /// How near a missile flying from `a` to `b` comes to `p`, on the ground plane. The whole step is
 /// tested, so a fast missile cannot tunnel through a hero between two frames.
-fn pass_distance(a: Vec3, b: Vec3, p: Vec3) -> f32 {
+pub(super) fn pass_distance(a: Vec3, b: Vec3, p: Vec3) -> f32 {
     let (a, b, p) = (flat(a), flat(b), flat(p));
     let ab = b - a;
     let len2 = ab.length_squared();
@@ -348,25 +361,31 @@ struct Shield {
 
 /// A missile in flight.
 #[derive(Component)]
-struct Missile {
+pub(super) struct Missile {
     /// Unit vector on the ground plane.
-    dir: Vec3,
-    speed: f32,
+    pub dir: Vec3,
+    pub speed: f32,
     /// Yards it has left to fly.
-    left: f32,
-    damage: f32,
+    pub left: f32,
+    pub damage: f32,
     /// The spell whose impact plays on the hero it hits (0: none).
-    spell: u32,
+    pub spell: u32,
 }
 
-/// A circle on the ground that fills and then strikes.
+/// A shape on the ground that fills and then strikes: a circle, a cone, a line or a ring.
 #[derive(Component)]
 struct Telegraph {
-    center: Vec3,
-    radius: f32,
+    shape: Shape,
+    /// Where the shape lies: its middle, or for a cone and a line the foot it points from.
+    origin: Vec3,
+    /// The way a cone or a line points ([`super::units::yaw_toward`]).
+    yaw: f32,
     secs: f32,
     t: f32,
     damage: f32,
+    /// What the blow leaves burning on the ground: damage per second and seconds
+    /// ([`super::bosses::Pool`]).
+    pool: Option<(f32, f32)>,
     /// Set once it has gone off: seconds of flash left.
     flash: Option<f32>,
 }
@@ -385,13 +404,22 @@ enum Beat {
 }
 
 impl Telegraph {
-    fn new(center: Vec3, radius: f32, secs: f32, damage: f32) -> Self {
+    fn new(
+        shape: Shape,
+        origin: Vec3,
+        yaw: f32,
+        secs: f32,
+        damage: f32,
+        pool: Option<(f32, f32)>,
+    ) -> Self {
         Self {
-            center,
-            radius,
+            shape,
+            origin,
+            yaw,
             secs,
             t: 0.0,
             damage,
+            pool,
             flash: None,
         }
     }
@@ -418,18 +446,18 @@ impl Telegraph {
 // --- Heroes ---
 
 /// A hero a threat may hit.
-struct Body {
-    e: Entity,
-    pos: Vec3,
-    local: bool,
+pub(super) struct Body {
+    pub e: Entity,
+    pub pos: Vec3,
+    pub local: bool,
     /// Under Fade: only bosses still see it.
-    vanished: bool,
+    pub vanished: bool,
 }
 
 /// The standing heroes and what a blow does to one: this machine's and every co-op puppet, as
 /// the horde's melee finds them ([`enemies::move_enemies`]).
 #[derive(SystemParam)]
-struct Heroes<'w, 's> {
+pub(super) struct Heroes<'w, 's> {
     local: Query<
         'w,
         's,
@@ -447,8 +475,13 @@ struct Heroes<'w, 's> {
 }
 
 impl Heroes<'_, '_> {
+    /// The run, for a script that spawns into it.
+    pub fn run(&mut self) -> &mut Run {
+        &mut self.run
+    }
+
     /// The heroes on their feet, this machine's first.
-    fn standing(&self) -> Vec<Body> {
+    pub fn standing(&self) -> Vec<Body> {
         let mut out = Vec::new();
         if let Ok((e, tf)) = self.local.single() {
             if self.run.dead_t.is_none() {
@@ -476,7 +509,7 @@ impl Heroes<'_, '_> {
 
     /// A blow of `raw` on `body`, through armor and shield like a bite: the number over its head
     /// and, for this machine's hero, the camera's shake. Returns what got through.
-    fn strike(&mut self, body: &Body, raw: f32, fx: &mut Fx) -> f32 {
+    pub fn strike(&mut self, body: &Body, raw: f32, fx: &mut Fx) -> f32 {
         let victim = if body.local {
             Some(&mut self.run.me)
         } else {
@@ -499,7 +532,7 @@ impl Heroes<'_, '_> {
 }
 
 /// The hero nearest `from` on the ground plane; one under Fade only if `sees_vanished`.
-fn nearest(bodies: &[Body], from: Vec3, sees_vanished: bool) -> Option<&Body> {
+pub(super) fn nearest(bodies: &[Body], from: Vec3, sees_vanished: bool) -> Option<&Body> {
     bodies
         .iter()
         .filter(|b| sees_vanished || !b.vanished)
@@ -559,7 +592,7 @@ impl From<School> for Glow {
 /// of materials per glow, and one blended material the telegraphs wear (their vertex colours
 /// carry the colour and the fill).
 #[derive(Resource, Default)]
-struct Art {
+pub(super) struct Art {
     missile: Option<(Handle<Mesh>, Handle<Mesh>)>,
     glows: [Option<(Handle<StandardMaterial>, Handle<StandardMaterial>)>; Glow::COUNT],
     blend: Option<Handle<StandardMaterial>>,
@@ -666,23 +699,50 @@ fn missile_at(from: Vec3, dir: Vec3, _missile: &Missile) -> Transform {
 }
 
 /// One sample of the ground under `p`, or `fallback` while the terrain has not streamed in.
-fn ground_y(world: &WorldPoint, p: Vec3, fallback: f32) -> f32 {
+pub(super) fn ground_y(world: &WorldPoint, p: Vec3, fallback: f32) -> f32 {
     world
         .terrain_height_under(Vec3::new(p.x, fallback, p.z))
         .unwrap_or(fallback)
 }
 
-/// The telegraph's fill: concentric rings from the centre out to `radius`, every ring `COLS`
-/// columns round, each vertex at its ground height plus `FILL_LIFT`. `heights` holds one
-/// per vertex, ring by ring. Positions are relative to the centre's x and z, in the world's y.
-fn fill_mesh(radius: f32, heights: &[f32]) -> Mesh {
+/// Where lattice vertex (`k`-th ring, `i`-th column) of `shape` lies, relative to its origin, in the
+/// frame where the shape points along -Z. Every shape is the same lattice of `BANDS + 1` rings by
+/// `COLS + 1` columns, so one fill, one set of colours and one way to grow it serve them all:
+///
+/// - a circle: rings of growing radius, columns round the circle;
+/// - a ring: the same between its inner and outer radius;
+/// - a cone: rings of growing radius, columns across the angle;
+/// - a line: rings of growing distance, columns across its width.
+fn lattice(shape: Shape, k: usize, i: usize) -> Vec3 {
+    let along = k as f32 / BANDS as f32;
+    let across = i as f32 / COLS as f32;
+    match shape {
+        Shape::Circle { radius } => {
+            let (s, c) = (across * TAU).sin_cos();
+            Vec3::new(c, 0.0, s) * (radius * along)
+        }
+        Shape::Donut { inner, outer } => {
+            let (s, c) = (across * TAU).sin_cos();
+            Vec3::new(c, 0.0, s) * (inner + (outer - inner) * along)
+        }
+        Shape::Cone { radius, half_angle } => {
+            let (s, c) = ((across * 2.0 - 1.0) * half_angle).sin_cos();
+            Vec3::new(s, 0.0, -c) * (radius * along)
+        }
+        Shape::Line { length, width } => Vec3::new((across - 0.5) * width, 0.0, -length * along),
+    }
+}
+
+/// The telegraph's fill: the shape's lattice, each vertex at its ground height plus `FILL_LIFT`.
+/// `heights` holds one per vertex, ring by ring. Positions are relative to the origin's x and z
+/// (and turned by the shape's yaw, which the entity's transform carries), in the world's y.
+fn fill_mesh(shape: Shape, heights: &[f32]) -> Mesh {
     let per = COLS + 1;
     let mut pos: Vec<[f32; 3]> = Vec::with_capacity((BANDS + 1) * per);
     for k in 0..=BANDS {
-        let r = radius * k as f32 / BANDS as f32;
         for i in 0..=COLS {
-            let a = i as f32 / COLS as f32 * TAU;
-            pos.push([a.cos() * r, heights[k * per + i] + FILL_LIFT, a.sin() * r]);
+            let p = lattice(shape, k, i);
+            pos.push([p.x, heights[k * per + i] + FILL_LIFT, p.z]);
         }
     }
     let n = pos.len();
@@ -709,23 +769,51 @@ fn fill_mesh(radius: f32, heights: &[f32]) -> Mesh {
     mesh
 }
 
-/// The telegraph's edge: a ribbon `EDGE_WIDTH` wide just inside `radius`, on the ground heights
-/// of the fill's outer ring (`outer`, one per column).
-fn edge_mesh(radius: f32, outer: &[f32]) -> Mesh {
-    let mut pos: Vec<[f32; 3]> = Vec::with_capacity((COLS + 1) * 2);
-    for (i, h) in outer.iter().enumerate() {
-        let a = i as f32 / COLS as f32 * TAU;
-        let (s, c) = a.sin_cos();
-        let y = h + EDGE_LIFT;
-        pos.push([c * (radius - EDGE_WIDTH), y, s * (radius - EDGE_WIDTH)]);
-        pos.push([c * radius, y, s * radius]);
+/// The lattice runs (as `(ring, column)` vertices) that outline `shape`: the outer rim for all of
+/// them, the inner rim of a ring, the sides of a cone and a line, and a line's foot.
+fn outline(shape: Shape) -> Vec<Vec<(usize, usize)>> {
+    let ring = |k: usize| (0..=COLS).map(|i| (k, i)).collect::<Vec<_>>();
+    let side = |i: usize| (0..=BANDS).map(|k| (k, i)).collect::<Vec<_>>();
+    match shape {
+        Shape::Circle { .. } => vec![ring(BANDS)],
+        Shape::Donut { .. } => vec![ring(0), ring(BANDS)],
+        Shape::Cone { .. } => vec![ring(BANDS), side(0), side(COLS)],
+        Shape::Line { .. } => vec![ring(BANDS), ring(0), side(0), side(COLS)],
+    }
+}
+
+/// The telegraph's edge: a ribbon `EDGE_WIDTH` wide along the shape's outline, on the shape's side
+/// of it, at the ground heights of the fill (`heights`, ring by ring like [`fill_mesh`]'s).
+fn edge_mesh(shape: Shape, heights: &[f32]) -> Mesh {
+    let per = COLS + 1;
+    let at = |(k, i): (usize, usize)| lattice(shape, k, i) + Vec3::Y * (heights[k * per + i] + EDGE_LIFT);
+    let mut pos: Vec<[f32; 3]> = Vec::new();
+    let mut idx: Vec<u32> = Vec::new();
+    for run in outline(shape) {
+        for pair in run.windows(2) {
+            let (a, b) = (at(pair[0]), at(pair[1]));
+            let seg = flat(b - a);
+            // A ring's inner rim shrinks to a point at a circle's middle.
+            if seg.length() < 1e-3 {
+                continue;
+            }
+            let n = Vec3::new(-seg.z, 0.0, seg.x).normalize();
+            // The ribbon lies on the side where the shape is.
+            let mid = flat(a + b) * 0.5;
+            let inward = if shape.contains(Vec3::ZERO, 0.0, mid + n * 0.5) {
+                n
+            } else {
+                -n
+            };
+            let step = inward * EDGE_WIDTH;
+            let base = pos.len() as u32;
+            for p in [a, b, a + step, b + step] {
+                pos.push(p.to_array());
+            }
+            idx.extend_from_slice(&[base, base + 1, base + 3, base, base + 3, base + 2]);
+        }
     }
     let n = pos.len();
-    let mut idx = Vec::with_capacity(COLS * 6);
-    for i in 0..COLS as u32 {
-        let (a, b, c, d) = (2 * i, 2 * i + 1, 2 * i + 2, 2 * i + 3);
-        idx.extend_from_slice(&[a, c, d, a, d, b]);
-    }
     let mut mesh = Mesh::new(
         PrimitiveTopology::TriangleList,
         RenderAssetUsages::default(),
@@ -733,10 +821,7 @@ fn edge_mesh(radius: f32, outer: &[f32]) -> Mesh {
     mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, pos);
     mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, vec![[0.0f32, 1.0, 0.0]; n]);
     mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, vec![[0.0f32; 2]; n]);
-    mesh.insert_attribute(
-        Mesh::ATTRIBUTE_COLOR,
-        vec![EDGE; n],
-    );
+    mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, vec![EDGE; n]);
     mesh.insert_indices(Indices::U32(idx));
     mesh
 }
@@ -762,50 +847,141 @@ fn fill_colors(progress: f32, flash: Option<f32>) -> impl Iterator<Item = [f32; 
     })
 }
 
-/// Put a telegraph of `radius` yards on the ground at `center`; it strikes after `secs`.
+/// Put a telegraph of `shape` on the ground at `origin` (for a cone or a line, pointing along
+/// `yaw`); it strikes after `secs`. A blow of `damage` hurts every hero inside it, and with `pool`
+/// (damage per second, seconds) leaves a burning pool there ([`super::bosses::Pool`]).
 #[allow(clippy::too_many_arguments)]
-fn spawn_telegraph(
+pub(super) fn spawn_telegraph(
     commands: &mut Commands,
     art: &mut Art,
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
     world: &WorldPoint,
-    center: Vec3,
-    radius: f32,
+    shape: Shape,
+    origin: Vec3,
+    yaw: f32,
     secs: f32,
     damage: f32,
+    pool: Option<(f32, f32)>,
 ) {
     let per = COLS + 1;
-    let mut heights = vec![center.y; (BANDS + 1) * per];
-    for k in 1..=BANDS {
-        let r = radius * k as f32 / BANDS as f32;
+    let turn = Quat::from_rotation_y(yaw);
+    let mut heights = vec![origin.y; (BANDS + 1) * per];
+    for k in 0..=BANDS {
         for i in 0..=COLS {
-            let a = i as f32 / COLS as f32 * TAU;
-            let p = center + Vec3::new(a.cos() * r, 0.0, a.sin() * r);
-            heights[k * per + i] = ground_y(world, p, center.y);
+            let local = lattice(shape, k, i);
+            // The first ring of a circle or a cone is one point: sampled once.
+            heights[k * per + i] = if k == 0 && i > 0 && local == lattice(shape, 0, 0) {
+                heights[0]
+            } else {
+                ground_y(world, origin + turn * local, origin.y)
+            };
         }
     }
-    let ground = ground_y(world, center, center.y);
-    heights[..per].fill(ground);
-    let outer = heights[BANDS * per..].to_vec();
     let material = art.blend(materials);
     commands
         .spawn((
-            Telegraph::new(center, radius, secs, damage),
-            Mesh3d(meshes.add(fill_mesh(radius, &heights))),
+            Telegraph::new(shape, origin, yaw, secs, damage, pool),
+            Mesh3d(meshes.add(fill_mesh(shape, &heights))),
             MeshMaterial3d(material.clone()),
             // The hero is looking at it, and shadows on a ground marker only muddy it.
             NotShadowCaster,
-            Transform::from_xyz(center.x, 0.0, center.z),
+            Transform::from_xyz(origin.x, 0.0, origin.z).with_rotation(turn),
             Visibility::default(),
             RunEntity,
         ))
         .with_child((
-            Mesh3d(meshes.add(edge_mesh(radius, &outer))),
+            Mesh3d(meshes.add(edge_mesh(shape, &heights))),
             MeshMaterial3d(material),
             NotShadowCaster,
             Transform::default(),
         ));
+}
+
+/// What a boss script paints with: the shared meshes and materials, and the world to find the
+/// ground in ([`super::bosses`]).
+#[derive(SystemParam)]
+pub(super) struct Canvas<'w, 's> {
+    art: ResMut<'w, Art>,
+    meshes: ResMut<'w, Assets<Mesh>>,
+    materials: ResMut<'w, Assets<StandardMaterial>>,
+    world: WorldPoint<'w, 's>,
+}
+
+impl Canvas<'_, '_> {
+    /// A telegraph ([`spawn_telegraph`]).
+    #[allow(clippy::too_many_arguments)]
+    pub fn telegraph(
+        &mut self,
+        commands: &mut Commands,
+        shape: Shape,
+        origin: Vec3,
+        yaw: f32,
+        secs: f32,
+        damage: f32,
+        pool: Option<(f32, f32)>,
+    ) {
+        spawn_telegraph(
+            commands,
+            &mut self.art,
+            &mut self.meshes,
+            &mut self.materials,
+            &self.world,
+            shape,
+            origin,
+            yaw,
+            secs,
+            damage,
+            pool,
+        );
+    }
+
+    /// One missile of `school` from `from` along each of `dirs` (unit vectors on the ground plane),
+    /// flying `speed` yards a second for `range` yards, each a blow of `damage`; `spell` plays its
+    /// impact on the hero it hits (0: none).
+    #[allow(clippy::too_many_arguments)]
+    pub fn missiles(
+        &mut self,
+        commands: &mut Commands,
+        school: School,
+        from: Vec3,
+        dirs: &[Vec3],
+        speed: f32,
+        range: f32,
+        damage: f32,
+        spell: u32,
+    ) {
+        for &dir in dirs {
+            launch(
+                commands,
+                &mut self.art,
+                &mut self.meshes,
+                &mut self.materials,
+                school.into(),
+                from,
+                dir,
+                Missile {
+                    dir,
+                    speed,
+                    left: range,
+                    damage,
+                    spell,
+                },
+            );
+        }
+    }
+
+    /// A spot `r` yards from `center` at angle `a` where a creature may stand ([`enemies::spawn_spot`]).
+    pub fn spot(
+        &self,
+        nav: &super::nav::NavGrid,
+        probe: &super::nav::SpawnProbe,
+        center: Vec3,
+        a: f32,
+        r: f32,
+    ) -> Option<Vec3> {
+        enemies::spawn_spot(nav, probe, &self.world, center, a, r)
+    }
 }
 
 // --- Systems ---
@@ -1020,10 +1196,14 @@ fn boss_moves(
                 &mut meshes,
                 &mut materials,
                 &world,
+                Shape::Circle {
+                    radius: rng.range(CIRCLE_RADIUS.0, CIRCLE_RADIUS.1),
+                },
                 target.pos,
-                rng.range(CIRCLE_RADIUS.0, CIRCLE_RADIUS.1),
+                0.0,
                 CIRCLE_SECS,
                 damage * CIRCLE_DAMAGE,
+                None,
             );
         }
     }
@@ -1069,7 +1249,8 @@ fn fly_missiles(
     }
 }
 
-/// Telegraphs fill, strike every hero still inside, flash and go.
+/// Telegraphs fill, strike every hero still inside, flash and go. A blow with a pool leaves it
+/// burning where it landed.
 fn tick_telegraphs(
     mut commands: Commands,
     time: Res<Time>,
@@ -1092,10 +1273,17 @@ fn tick_telegraphs(
             }
             Beat::Charge(p) => fill_colors(p, None).collect(),
             Beat::Strike => {
-                for body in &bodies {
-                    if flat(body.pos - t.center).length() <= t.radius {
-                        heroes.strike(body, t.damage, &mut fx);
+                // A warning that only marks the way (a charge's line) has no blow of its own.
+                if t.damage > 0.0 {
+                    for body in &bodies {
+                        if t.shape.contains(t.origin, t.yaw, body.pos) {
+                            heroes.strike(body, t.damage, &mut fx);
+                        }
                     }
+                }
+                if let Some((dps, secs)) = t.pool {
+                    let serial = heroes.run.guid();
+                    super::bosses::Pool::lay(&mut commands, serial, t.shape, t.origin, t.yaw, dps, secs);
                 }
                 fill_colors(1.0, Some(1.0)).collect()
             }
@@ -1140,10 +1328,14 @@ fn volatile_burst(
             &mut meshes,
             &mut materials,
             &world,
+            Shape::Circle {
+                radius: BLAST_RADIUS,
+            },
             tf.translation,
-            BLAST_RADIUS,
+            0.0,
             BLAST_SECS,
             e.damage * BLAST_DAMAGE,
+            None,
         );
     }
 }
@@ -1272,7 +1464,7 @@ mod tests {
 
     #[test]
     fn a_telegraph_fills_then_strikes_once_then_flashes_and_goes() {
-        let mut t = Telegraph::new(Vec3::ZERO, 5.0, 1.5, 10.0);
+        let mut t = Telegraph::new(Shape::Circle { radius: 5.0 }, Vec3::ZERO, 0.0, 1.5, 10.0, None);
         let dt = 0.05;
         let mut beats = Vec::new();
         let mut at = 0.0;
@@ -1329,14 +1521,81 @@ mod tests {
         assert_eq!(ring(&empty, 1), FILL_OFF);
     }
 
+    /// One of each shape the scripts lay.
+    fn every_shape() -> [Shape; 4] {
+        [
+            Shape::Circle { radius: 5.0 },
+            Shape::Cone {
+                radius: 9.0,
+                half_angle: 0.6,
+            },
+            Shape::Line {
+                length: 20.0,
+                width: 4.0,
+            },
+            Shape::Donut {
+                inner: 4.0,
+                outer: 12.0,
+            },
+        ]
+    }
+
     #[test]
     fn the_meshes_have_a_vertex_for_every_colour() {
         let per = COLS + 1;
         let heights = vec![0.0; (BANDS + 1) * per];
-        let fill = fill_mesh(5.0, &heights);
-        assert_eq!(fill.count_vertices(), (BANDS + 1) * per);
-        let edge = edge_mesh(5.0, &heights[BANDS * per..]);
-        assert_eq!(edge.count_vertices(), per * 2);
+        for shape in every_shape() {
+            let fill = fill_mesh(shape, &heights);
+            assert_eq!(fill.count_vertices(), (BANDS + 1) * per, "{shape:?}");
+            let colors = fill_colors(0.5, None).count();
+            assert_eq!(colors, fill.count_vertices(), "{shape:?}");
+        }
+        // A circle's edge is one ribbon round the rim; the other shapes outline their sides too.
+        let edge = |shape| edge_mesh(shape, &heights).count_vertices();
+        let [circle, cone, line, ring] = every_shape();
+        assert_eq!(edge(circle), COLS * 4);
+        assert_eq!(edge(ring), COLS * 4 * 2);
+        assert_eq!(edge(line), (COLS * 4 + BANDS * 4) * 2);
+        // A cone outlines its rim and both sides.
+        assert_eq!(edge(cone), (COLS + BANDS * 2) * 4);
+    }
+
+    #[test]
+    fn the_lattice_follows_the_shape_it_draws() {
+        let reach = |shape: Shape| {
+            (0..=BANDS)
+                .flat_map(|k| (0..=COLS).map(move |i| (k, i)))
+                .map(|(k, i)| lattice(shape, k, i))
+                .collect::<Vec<_>>()
+        };
+        for shape in every_shape() {
+            let points = reach(shape);
+            // Every vertex of the fill lies in the shape (a hair of rounding allowed) ...
+            let wide = match shape {
+                Shape::Cone { radius, half_angle } => Shape::Cone {
+                    radius: radius + 0.01,
+                    half_angle: half_angle + 0.01,
+                },
+                other => other.grown(0.01),
+            };
+            assert!(
+                points.iter().all(|p| wide.contains(Vec3::ZERO, 0.0, *p)),
+                "{shape:?}"
+            );
+            // ... and the last ring reaches as far as the shape does.
+            let far = points
+                .iter()
+                .map(|p| p.length())
+                .fold(0.0f32, f32::max);
+            assert!((far - shape.reach()).abs() < 0.2, "{shape:?}: {far}");
+        }
+        // A line points along -Z and starts at its foot.
+        let line = Shape::Line {
+            length: 20.0,
+            width: 4.0,
+        };
+        assert_eq!(lattice(line, 0, COLS / 2), Vec3::ZERO);
+        assert!((lattice(line, BANDS, COLS / 2) - Vec3::new(0.0, 0.0, -20.0)).length() < 1e-4);
     }
 
     #[test]

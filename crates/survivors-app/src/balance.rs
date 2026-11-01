@@ -246,6 +246,7 @@ fn sim_app(setup: Setup) -> App {
         .add_message::<benilla_app::survivors_host::creature_anim::SwingMessage>()
         .add_message::<benilla_app::survivors_host::combat_text::CombatTextSpawn>()
         .add_message::<benilla_app::survivors_host::net::FieldChanged>()
+        .add_message::<benilla_app::survivors_host::sound::GlueSound>()
         .add_systems(
             Update,
             (
@@ -276,6 +277,9 @@ fn sim_app(setup: Setup) -> App {
                     enrage::enrage_bosses,
                     threats::sim_systems()
                         .run_if(|| std::env::var_os("SIM_NO_THREATS").is_none()),
+                    super::bosses::sim_systems()
+                        .run_if(|| std::env::var_os("SIM_NO_THREATS").is_none()),
+                    super::rares::sim_systems(),
                     (finale::summon, finale::hunt, finale::finale_slain).chain(),
                     tally,
                 )
