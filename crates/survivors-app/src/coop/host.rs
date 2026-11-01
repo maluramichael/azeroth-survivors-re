@@ -132,6 +132,23 @@ pub(super) fn valid_move(m: &MoveInput, arena_center: Vec3, leash: f32) -> bool 
         && (at.y - arena_center.y).abs() <= MAX_RISE
 }
 
+/// How far above or below the host's hero a guest may report itself while the bounds are open, in
+/// yards: the road climbs and falls more than an arena does.
+const MAX_OPEN_RISE: f32 = 600.0;
+
+/// [`valid_move`] for open bounds (a route's road): the same sanity, but the place is judged
+/// against the host's hero, at most [`OPEN_REACH`] yards from it on the ground plane.
+pub(super) fn valid_open_move(m: &MoveInput, host: Vec3) -> bool {
+    let at = Vec3::from_array(m.at);
+    at.is_finite()
+        && host.is_finite()
+        && m.yaw.is_finite()
+        && m.pace.is_finite()
+        && (0.0..=MAX_PACE).contains(&m.pace)
+        && Vec2::new(at.x - host.x, at.z - host.z).length() <= OPEN_REACH
+        && (at.y - host.y).abs() <= MAX_OPEN_RISE
+}
+
 /// The facing of a body that turns about the vertical only, as the heroes do.
 fn yaw_of(rotation: Quat) -> f32 {
     rotation.to_euler(EulerRot::YXZ).0
@@ -178,9 +195,19 @@ fn spawn_puppet(commands: &mut Commands, run: &mut Run, guest: &Guest, class: &'
 }
 
 /// Where a guest's puppet appears until its first move: where the guest's own hero is set down,
-/// [`super::ASIDE_YARDS`] per seat from the battleground's centre.
-fn spot(_hero: Option<&Transform>, map: &data::MapDef, player: u8) -> Vec3 {
-    hero::arena(map) + Vec3::X * super::ASIDE_YARDS * f32::from(player)
+/// [`super::ASIDE_YARDS`] per seat from the battleground's centre, or from the host's hero when a
+/// route's run is under way (`on_road`: the start is far behind by then).
+fn spot(hero: Option<&Transform>, map: &data::MapDef, player: u8, on_road: bool) -> Vec3 {
+    let aside = Vec3::X * super::ASIDE_YARDS * f32::from(player);
+    match hero {
+        Some(tf) if on_road => tf.translation + aside,
+        _ => hero::arena(map) + aside,
+    }
+}
+
+/// Whether a run is under way on a route, past its start: a guest coming now stands by the host.
+fn on_road(selection: &Selection, route: &crate::route::RouteRun) -> bool {
+    route.placed && crate::route::route_of(selection.stage).is_some()
 }
 
 fn class_of(id: u8) -> Option<&'static ClassDef> {
@@ -197,6 +224,7 @@ fn greet(
     selection: Res<Selection>,
     phase: Res<State<Phase>>,
     mut run: ResMut<Run>,
+    route: Res<crate::route::RouteRun>,
     hero: Query<&Transform, With<Hero>>,
     puppets: Query<(Entity, &Peer, &Transform)>,
     mut welcome: MessageWriter<ToClients<Welcome>>,
@@ -218,7 +246,12 @@ fn greet(
                 seated.hello = hello;
                 let player = seated.player;
                 if matches!(phase.get(), Phase::Playing | Phase::LevelUp | Phase::Paused) {
-                    let mut at = spot(None, selection.stage_def(), player);
+                    let mut at = spot(
+                        hero.single().ok(),
+                        selection.stage_def(),
+                        player,
+                        on_road(&selection, &route),
+                    );
                     for (e, peer, tf) in &puppets {
                         if peer.player == player {
                             at = tf.translation;
@@ -284,7 +317,12 @@ fn greet(
                 },
             });
             let guest = session.guests.last().expect("just pushed");
-            let at = spot(hero.single().ok(), selection.stage_def(), player);
+            let at = spot(
+                hero.single().ok(),
+                selection.stage_def(),
+                player,
+                on_road(&selection, &route),
+            );
             spawn_puppet(&mut commands, &mut run, guest, class, at);
         }
     }
@@ -296,6 +334,7 @@ fn begin_run(
     session: Res<Session>,
     selection: Res<Selection>,
     mut run: ResMut<Run>,
+    route: Res<crate::route::RouteRun>,
     hero: Query<&Transform, With<Hero>>,
     mut start: MessageWriter<ToClients<StartRun>>,
 ) {
@@ -309,7 +348,12 @@ fn begin_run(
         let Some(class) = class_of(guest.hello.class_id) else {
             continue;
         };
-        let at = spot(hero.single().ok(), selection.stage_def(), guest.player);
+        let at = spot(
+            hero.single().ok(),
+            selection.stage_def(),
+            guest.player,
+            on_road(&selection, &route),
+        );
         spawn_puppet(&mut commands, &mut run, guest, class, at);
     }
 }
@@ -565,6 +609,7 @@ fn mirror_state(
     mut puppets: Query<(&HeroState, &mut NetVitals, &mut NetBuild), (With<Peer>, Without<Hero>)>,
     mut shared: Query<(&mut NetRun, &mut NetQuests)>,
     quests: Res<crate::quests::QuestLog>,
+    route: Res<crate::route::RouteRun>,
 ) {
     for (en, rare, enraged, mut net) in &mut enemies {
         let now = net_enemy(net.def, en, net.elite, rare, enraged);
@@ -595,6 +640,10 @@ fn mirror_state(
             level: run.level,
             xp: run.xp,
             banner: run.party_banner.clone(),
+            route_next: u16::try_from(route.next).unwrap_or(u16::MAX),
+            route_stop: u8::try_from(route.stop).unwrap_or(u8::MAX),
+            route_arrived: route.arrived,
+            route_frac: run.route_frac,
         });
     }
 }
@@ -684,8 +733,8 @@ fn run_over(run: Res<Run>, mut over: MessageWriter<ToClients<RunOver>>) {
 /// road), yards.
 const OPEN_REACH: f32 = 1500.0;
 
-/// A guest's walk moves its puppet, if the report is sane ([`valid_move`]): inside the bounds,
-/// or near the host's hero while they are open.
+/// A guest's walk moves its puppet, if the report is sane: inside the bounds
+/// ([`valid_move`]), or near the host's hero while they are open ([`valid_open_move`]).
 fn apply_moves(
     mut moves: MessageReader<FromClient<MoveInput>>,
     session: Res<Session>,
@@ -693,17 +742,19 @@ fn apply_moves(
     host: Query<&Transform, (With<Hero>, Without<Peer>)>,
     mut puppets: Query<(&Peer, &mut Transform, &mut MovementState, &mut HeroState)>,
 ) {
-    let (centre, leash) = if bounds.fenced {
-        (bounds.centre, bounds.leash)
-    } else {
-        let at = host.single().map_or(bounds.centre, |t| t.translation);
-        (at, OPEN_REACH - SLACK)
-    };
+    // While open, the place is judged against the host's hero; with none standing (it is being
+    // built) the middle of the leg stands in.
+    let anchor = host.single().map_or(bounds.centre, |t| t.translation);
     for m in moves.read() {
         let ClientId::Client(client) = m.client_id else {
             continue;
         };
-        if !valid_move(&m.message, centre, leash) {
+        let sane = if bounds.fenced {
+            valid_move(&m.message, bounds.centre, bounds.leash)
+        } else {
+            valid_open_move(&m.message, anchor)
+        };
+        if !sane {
             continue;
         }
         let Some(guest) = session.guests.iter().find(|g| g.client == client) else {
@@ -922,6 +973,50 @@ mod tests {
         assert!(!bad(&|m| m.at = [0.0, 1.0e7, 0.0]));
         assert!(!bad(&|m| m.at = [0.0, -400.0, 0.0]));
         assert!(bad(&|m| m.at = [0.0, 60.0, 0.0]));
+    }
+
+    #[test]
+    fn an_open_bound_takes_a_guest_near_the_host_and_drops_one_far_off() {
+        let host = Vec3::new(-4000.0, 120.0, 900.0);
+        let near = |dx: f32, dy: f32, dz: f32| {
+            let mut m = sane();
+            m.at = [host.x + dx, host.y + dy, host.z + dz];
+            valid_open_move(&m, host)
+        };
+        // Beside the host, and a long way down the road from it.
+        assert!(near(3.0, 0.0, 0.0));
+        assert!(near(900.0, 40.0, -900.0 * 0.5));
+        assert!(near(OPEN_REACH - 1.0, 0.0, 0.0));
+        // Past the reach, on the ground plane only: height does not count toward it.
+        assert!(!near(OPEN_REACH + 1.0, 0.0, 0.0));
+        assert!(!near(1100.0, 0.0, 1100.0));
+        assert!(near(0.0, 300.0, 0.0));
+        assert!(!near(0.0, 1.0e7, 0.0));
+        assert!(!near(0.0, -MAX_OPEN_RISE - 1.0, 0.0));
+        // The report must still be sane.
+        let mut m = sane();
+        m.at = host.to_array();
+        assert!(valid_open_move(&m, host));
+        m.pace = f32::NAN;
+        assert!(!valid_open_move(&m, host));
+        m.pace = 7.0;
+        m.at[0] = f32::NAN;
+        assert!(!valid_open_move(&m, host));
+        m.at = host.to_array();
+        assert!(!valid_open_move(&m, Vec3::NAN));
+    }
+
+    #[test]
+    fn a_guest_coming_to_a_run_on_the_road_is_set_down_by_the_host() {
+        let map = &data::MAPS[0];
+        let host = Transform::from_translation(Vec3::new(-800.0, 30.0, 1500.0));
+        let aside = Vec3::X * super::super::ASIDE_YARDS * 2.0;
+        // On the road: beside the host's hero, seat by seat.
+        assert_eq!(spot(Some(&host), map, 2, true), host.translation + aside);
+        // Not on a route, or before its start: at the battleground's centre as always.
+        assert_eq!(spot(Some(&host), map, 2, false), hero::arena(map) + aside);
+        // With no hero to stand by, the centre as well.
+        assert_eq!(spot(None, map, 2, true), hero::arena(map) + aside);
     }
 
     #[test]

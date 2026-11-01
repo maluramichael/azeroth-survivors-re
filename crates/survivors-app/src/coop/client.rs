@@ -126,6 +126,18 @@ fn step_aside(
     }
 }
 
+/// How far from the host's hero a guest's run hero may stand before it is set down beside it, in
+/// yards. The shared start is a few yards ([`ASIDE_YARDS`] per seat); a guest coming into a run on
+/// a route is kilometres off.
+const LANDING_REACH: f32 = 60.0;
+
+/// Where a guest's run hero is set down once the host's hero is known: beside it, if `own` is
+/// farther off than [`LANDING_REACH`] on the ground plane; `None` when it already stands near.
+fn landing(own: Vec3, host: Vec3, player: u8) -> Option<Vec3> {
+    let off = Vec2::new(own.x - host.x, own.z - host.z);
+    (off.length() > LANDING_REACH).then(|| host + aside(player))
+}
+
 /// Leave the session: the link goes, every replicated entity goes, and this machine is a solo
 /// player at its menu again.
 pub(super) fn leave(world: &mut World) {
@@ -793,21 +805,56 @@ fn same_lists(hero: &crate::HeroState, build: &NetBuild) -> bool {
 }
 
 /// The party's clock, kills, level and experience are the host's; a new banner shows here too.
+#[allow(clippy::too_many_arguments)]
 fn sync_run(
     mut run: ResMut<Run>,
     phase: Res<State<Phase>>,
     mut next: ResMut<NextState<Phase>>,
     shared: Query<(Ref<NetRun>, Ref<NetQuests>)>,
     mut quests: ResMut<crate::quests::QuestLog>,
+    selection: Res<Selection>,
+    session: Res<Session>,
+    mut route: ResMut<crate::route::RouteRun>,
+    mut bounds: ResMut<crate::route::Bounds>,
+    host: Query<(&NetHero, &NetPos), With<Remote>>,
+    mut hero: Query<&mut Transform, (With<Hero>, With<SteppedAside>)>,
     mut shown: Local<Option<u32>>,
+    mut landed: Local<bool>,
 ) {
     if *phase.get() == Phase::Menu {
         *shown = None;
+        *landed = false;
         return;
     }
     let Ok((net, lines)) = shared.single() else { return };
     if lines.is_changed() || quests.shown != lines.0 {
         quests.shown = lines.0.clone();
+    }
+    // The host's place on the route, and the bounds that follow from it here at once, so a hero
+    // set down beside the host is not pulled back to the start by the old ones.
+    let on_route = crate::route::RouteRun {
+        next: usize::from(net.route_next),
+        stop: usize::from(net.route_stop),
+        arrived: net.route_arrived,
+        placed: net.route_stop > 0,
+    };
+    if *route != on_route {
+        *route = on_route;
+    }
+    let want = crate::route::bounds_for(selection.stage, &route);
+    if *bounds != want {
+        *bounds = want;
+    }
+    // Once per run, as soon as the host's hero and this one are both there: a guest that comes
+    // into a run on a route is set down beside the host, not at the start.
+    if !*landed {
+        let host_at = host.iter().find(|(h, _)| h.player == 0).map(|(_, p)| p.pos());
+        if let (Some(host_at), Some(player), Ok(mut tf)) = (host_at, session.player, hero.single_mut()) {
+            if let Some(at) = landing(tf.translation, host_at, player) {
+                tf.translation = at;
+            }
+            *landed = true;
+        }
     }
     if !net.is_changed() {
         return;
@@ -817,6 +864,7 @@ fn sync_run(
     run.kills = net.kills;
     run.level = net.level;
     run.xp = net.xp;
+    run.route_frac = net.route_frac;
     // The first word only marks where the numbering stands: a banner from before this guest
     // came in is old news.
     let (seq, text) = &net.banner;
@@ -946,6 +994,21 @@ fn smooth_bodies(
 #[cfg(test)]
 mod aside_tests {
     use super::*;
+
+    #[test]
+    fn a_late_guest_on_a_route_lands_beside_the_host() {
+        let host = Vec3::new(-2400.0, 35.0, 3100.0);
+        // Still at the start, kilometres off: beside the host, seat by seat.
+        let start = Vec3::new(-100.0, 20.0, 50.0);
+        assert_eq!(landing(start, host, 0), Some(host));
+        assert_eq!(landing(start, host, 2), Some(host + aside(2)));
+        // Already beside it (the shared start, or a guest that walked up): stays where it is.
+        assert_eq!(landing(host + aside(1), host, 1), None);
+        assert_eq!(landing(host + Vec3::new(40.0, 5.0, 40.0), host, 1), None);
+        // The height does not count toward the distance.
+        assert_eq!(landing(host + Vec3::Y * 500.0, host, 1), None);
+        assert!(landing(host + Vec3::X * 61.0, host, 1).is_some());
+    }
 
     #[test]
     fn guests_stand_apart_from_the_host() {

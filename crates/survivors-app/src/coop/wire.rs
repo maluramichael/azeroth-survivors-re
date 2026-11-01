@@ -120,6 +120,13 @@ pub(crate) struct NetRun {
     pub xp: f32,
     /// The last party-wide banner and its number ([`crate::Run::announce`]).
     pub banner: (u32, String),
+    /// Where the run stands on its route ([`crate::route::RouteRun`]): the next point, the
+    /// stations reached, whether the end ring stands, and the share walked
+    /// ([`crate::Run::route_frac`]). All zero off a route.
+    pub route_next: u16,
+    pub route_stop: u8,
+    pub route_arrived: bool,
+    pub route_frac: f32,
 }
 
 /// A boss's ground telegraph, as a guest draws it: the host replicates the datum, every machine
@@ -626,6 +633,30 @@ mod tests {
             assert_eq!(got, sent);
             assert_eq!(Shape::from(got.shape), shape);
         }
+    }
+
+    #[test]
+    fn net_run_carries_the_route() {
+        use bevy_replicon::postcard;
+        let sent = NetRun {
+            elapsed: 93.5,
+            kills: 412,
+            level: 9,
+            xp: 17.0,
+            banner: (3, "Elwynn Forest".into()),
+            route_next: 7,
+            route_stop: 2,
+            route_arrived: true,
+            route_frac: 0.625,
+        };
+        let mut buf = [0u8; 128];
+        let bytes = postcard::to_slice(&sent, &mut buf).expect("serialises");
+        let got: NetRun = postcard::from_bytes(bytes).expect("reads back");
+        assert_eq!(got, sent);
+        // Off a route the route fields are all zero.
+        let plain = NetRun::default();
+        assert_eq!((plain.route_next, plain.route_stop, plain.route_arrived), (0, 0, false));
+        assert_eq!(plain.route_frac, 0.0);
     }
 
     #[test]
