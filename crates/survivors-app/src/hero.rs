@@ -146,17 +146,29 @@ pub(super) fn arena(map: &data::MapDef) -> Vec3 {
 }
 
 /// The world is the battleground being stood in ([`Selection::stage`]): entering one on another
-/// continent worldports, which raises the loading screen until the new ground is in.
+/// continent worldports, which raises the loading screen until the new ground is in. The Undying
+/// Run keeps the stream window's outer ring wide, so a hero that runs faster than the doodads and
+/// WMOs of the next tile load does not hit the "focus not resident" backstop mid-run.
 pub(super) fn follow_map(
     selection: Res<Selection>,
     current: Option<ResMut<benilla_world::world_map::CurrentMap>>,
+    lookahead: Option<ResMut<benilla_world::terrain_stream::StreamLookahead>>,
 ) {
-    let Some(mut current) = current else {
-        return;
-    };
-    let want = selection.stage_def().map;
-    if current.0 != want {
-        current.0 = want;
+    if let Some(mut current) = current {
+        let want = selection.stage_def().map;
+        if current.0 != want {
+            current.0 = want;
+        }
+    }
+    if let Some(mut lookahead) = lookahead {
+        let floor = if super::route::route_of(selection.stage).is_some() {
+            super::route::ROUTE_STREAM_CHUNKS
+        } else {
+            0
+        };
+        if lookahead.outer_floor_chunks != floor {
+            lookahead.outer_floor_chunks = floor;
+        }
     }
 }
 
