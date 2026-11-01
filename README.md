@@ -19,6 +19,7 @@ The `features` branch is upstream plus everything below. Newest first.
 
 | Feature | What it does | Screenshot |
 | --- | --- | --- |
+| More launcher flags | `--auto`, `--zone` and `--shots` start a hands-off test run with screenshots; `--no-grade`, `--dpi`, `--no-vsync`, `--farclip`, `--clutter`, `--no-sound` and `--home` cover the display and other settings that were environment variables only. The dev commands that only print a list (`WOW_CAPTURE=list`, `WOW_PROBE=list`) now run without a data folder. |  |
 | Co-op, stage three | Every player picks their own level-up cards while the world keeps running (whoever is choosing is spared, a hand left open 20 seconds picks itself), brings their whole profile, and keeps their own chests, gear and gold; quests are the party's. A fallen hero lies until a friend stands beside them for three seconds; the run is lost when everyone is down. Party frames on the left show each other hero's class, name, level, health and spells, and the results list the whole party. | <img src="docs/screenshots/fork-coop-party.jpg" width="480" alt="A guest's mage with the party frames of the host's warlock and a second guest's priest on the left"> |
 | Co-op, stage two | The host runs the fight for everyone: guests see the horde with its nameplates, the pickups, ground spells, totems, every cast, swing and damage number. Enemies chase and hit the nearest hero, guests included, and a guest's spells are cast on the host and kill there. More heroes bring more and tougher enemies. When the host falls, every guest sees the results and stays in the party for the next run. Guest cards, revive and shared loot come in stage three. | <img src="docs/screenshots/fork-coop-horde.jpg" width="480" alt="The guest's mage in the host's run, the host's curses and the guest's spells landing on the horde"> |
 | Co-op window | A Co-op tab on the hub: LAN games finds parties on the local network and joins one with a click; Host opens a party (name, password, public or private, 2 to 4 players) and shows the address friends join with; Join by IP takes an address. Left a guest's LAN list, right the host. | <img src="docs/screenshots/fork-coop-window.jpg" width="480" alt="The co-op window: the LAN list finding Michael's party, and the host tab with its address"> |
@@ -143,7 +144,12 @@ cargo run --release -p warcraft-survivors -- --data /path/to/WoW --size 1280x720
 `WOW_DATA`) the game uses the checkout's `wow-data`, where `make fetch-data` puts the client.
 `--windowed` (`-w`) opens a 1600×900 window instead of borderless fullscreen, and `--size WxH`
 sets the window size. Without a data folder the game stops at launch and lists where it looked.
-`--help` lists every flag.
+
+For testing, `--auto <class>[:idle|:all|:late]` plays a run by itself, `--zone <name or index>`
+picks its battleground and `--shots <dir>` saves its screenshots. Display and other settings:
+`--no-grade`, `--dpi <scale>`, `--no-vsync`, `--farclip <yards>`, `--clutter <density>`,
+`--no-sound` and `--home <dir>`. Each flag only sets the `WOW_*` variable the game already reads,
+so the variables keep working. `--help` lists every flag.
 
 ## Controls
 

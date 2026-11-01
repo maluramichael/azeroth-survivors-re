@@ -40,10 +40,71 @@ struct Cli {
     /// The name the party sees. Sets `WOW_SURVIVORS_NAME`.
     #[arg(long, value_name = "NAME")]
     name: Option<String>,
+
+    /// Play a run by itself, for testing: a class name (`mage`), optionally with `:idle` (stand
+    /// still), `:all` (the whole spell pool) or `:late` (all of it maxed, two thirds in). Nothing
+    /// is saved. Sets `WOW_SURVIVORS_AUTO`.
+    #[arg(long, value_name = "CLASS[:MODE]", help_heading = "Testing")]
+    auto: Option<String>,
+
+    /// The battleground `--auto` plays, by name or index (`barrens`, `3`). Sets
+    /// `WOW_SURVIVORS_MAP`.
+    #[arg(long, value_name = "ZONE", requires = "auto", help_heading = "Testing")]
+    zone: Option<String>,
+
+    /// Save the `--auto` run's screenshots into `DIR`: the menu, the first level-ups, the pause
+    /// menu, the results and one every few seconds. Sets `WOW_SURVIVORS_SHOTS`.
+    #[arg(long, value_name = "DIR", requires = "auto", help_heading = "Testing")]
+    shots: Option<PathBuf>,
+
+    /// Start with the colour grade (sharpening, vibrance, warmth) off; `G` toggles it in play.
+    /// Sets `WOW_GRADE=0`.
+    #[arg(long, help_heading = "Display")]
+    no_grade: bool,
+
+    /// Render at this display scale instead of the window's (`1`, `2`); `--size` then counts
+    /// physical pixels. Sets `WOW_DPI`.
+    #[arg(long, value_name = "SCALE", value_parser = positive, help_heading = "Display")]
+    dpi: Option<f32>,
+
+    /// Present without vsync. Sets `WOW_NOVSYNC=1`.
+    #[arg(long, help_heading = "Display")]
+    no_vsync: bool,
+
+    /// View distance in yards, 177 to 777 (default 350). Sets `WOW_FARCLIP`.
+    #[arg(long, value_name = "YARDS", value_parser = positive, help_heading = "Display")]
+    farclip: Option<f32>,
+
+    /// Ground clutter density, 0 for none (default 2). Sets `WOW_CLUTTER_DENSITY`.
+    #[arg(long, value_name = "DENSITY", value_parser = not_negative, help_heading = "Display")]
+    clutter: Option<f32>,
+
+    /// Open no sound device at all. Sets `WOW_NOSOUND=1`.
+    #[arg(long)]
+    no_sound: bool,
+
+    /// Keep settings, profiles and saved state in `DIR` instead of the default folder. Sets
+    /// `BENILLA_HOME`.
+    #[arg(long, value_name = "DIR")]
+    home: Option<PathBuf>,
 }
 
 /// The windowed size when `--windowed` comes without `--size`: the client's own default.
 const DEFAULT_SIZE: (u32, u32) = (1600, 900);
+
+fn positive(s: &str) -> Result<f32, String> {
+    match s.parse::<f32>() {
+        Ok(v) if v.is_finite() && v > 0.0 => Ok(v),
+        _ => Err(format!("expected a number above zero, got `{s}`")),
+    }
+}
+
+fn not_negative(s: &str) -> Result<f32, String> {
+    match s.parse::<f32>() {
+        Ok(v) if v.is_finite() && v >= 0.0 => Ok(v),
+        _ => Err(format!("expected a number of zero or more, got `{s}`")),
+    }
+}
 
 fn parse_size(s: &str) -> Result<(u32, u32), String> {
     let (w, h) = s
@@ -62,9 +123,7 @@ fn parse_size(s: &str) -> Result<(u32, u32), String> {
 /// `benilla_app`'s launch.
 fn prints_and_exits() -> bool {
     let is_list = |name| std::env::var(name).as_deref() == Ok("list");
-    std::env::var("WOW_HOVER_LOG_REPORT").is_ok()
-        || is_list("WOW_CAPTURE")
-        || is_list("WOW_PROBE")
+    std::env::var("WOW_HOVER_LOG_REPORT").is_ok() || is_list("WOW_CAPTURE") || is_list("WOW_PROBE")
 }
 
 fn main() -> AppExit {
@@ -83,10 +142,22 @@ fn main() -> AppExit {
     if let Some((w, h)) = cli.size.or(cli.windowed.then_some(DEFAULT_SIZE)) {
         std::env::set_var("WOW_WIN", format!("{w}x{h}"));
     }
+    let flag = |on: bool, value: &str| on.then(|| value.to_string());
+    let path = |p: Option<PathBuf>| p.map(|p| p.to_string_lossy().into_owned());
     for (var, value) in [
         ("WOW_SURVIVORS_HOST", cli.host),
         ("WOW_SURVIVORS_JOIN", cli.join),
         ("WOW_SURVIVORS_NAME", cli.name),
+        ("WOW_SURVIVORS_AUTO", cli.auto),
+        ("WOW_SURVIVORS_MAP", cli.zone),
+        ("WOW_SURVIVORS_SHOTS", path(cli.shots)),
+        ("WOW_GRADE", flag(cli.no_grade, "0")),
+        ("WOW_DPI", cli.dpi.map(|v| v.to_string())),
+        ("WOW_NOVSYNC", flag(cli.no_vsync, "1")),
+        ("WOW_FARCLIP", cli.farclip.map(|v| v.to_string())),
+        ("WOW_CLUTTER_DENSITY", cli.clutter.map(|v| v.to_string())),
+        ("WOW_NOSOUND", flag(cli.no_sound, "1")),
+        ("BENILLA_HOME", path(cli.home)),
     ] {
         if let Some(value) = value {
             std::env::set_var(var, value);
