@@ -12,6 +12,10 @@ use super::chatlog::ChatLine;
 use super::data::{self, EnemyDef};
 use super::hero::{self, Hero, Peer, HERO_RADIUS};
 use super::nav::{NavGrid, SpawnProbe};
+use super::route::{
+    heading, leg_zone, route_of, RouteRun, AHEAD_CONE, AHEAD_SHARE, ROAD_HEAL_AHEAD, ROAD_HEAL_CAP,
+    ROAD_HEAL_EVERY,
+};
 use super::threats::{self, Stance};
 use super::units::{self, flat, yaw_toward, Fx, Marks, UnitSpec, COLOR_HURT};
 use super::{HeroState, Phase, Rng, Run, Selection};
@@ -225,7 +229,8 @@ pub(super) fn spawn_enemy(
     boss: bool,
     elite: bool,
 ) -> Entity {
-    let scale = data::hp_scale(run.elapsed);
+    // The pace is the clock off a route and the further of clock and road on one.
+    let scale = data::hp_scale(run.pace());
     let serial = run.guid();
     let size = if elite { ELITE_SCALE } else { 1.0 };
     let e = units::spawn_unit(
@@ -260,7 +265,7 @@ pub(super) fn spawn_enemy(
             max_hp: hp,
             speed: def.speed * run.difficulty.enemy_speed_mult(),
             damage: def.damage
-                * data::damage_scale(run.elapsed)
+                * data::damage_scale(run.pace())
                 * run.difficulty.enemy_damage_mult()
                 * if elite { ELITE_DAMAGE } else { 1.0 },
             radius: radius_for(def) * size,
@@ -370,8 +375,63 @@ pub(super) fn spawn_spot(
     })
 }
 
+/// The angle a spawn takes round the hero. With `ahead` (the heading to the next point of a
+/// route) [`AHEAD_SHARE`] of the spawns lean toward it, within [`AHEAD_CONE`] radians, so the
+/// horde meets the hero on the road; the rest, and every spawn without a heading, come from
+/// anywhere round it.
+pub(super) fn spawn_angle(rng: &mut Rng, ahead: Option<f32>) -> f32 {
+    if let Some(a) = ahead {
+        if rng.f32() < AHEAD_SHARE {
+            return a + rng.range(-AHEAD_CONE, AHEAD_CONE);
+        }
+    }
+    rng.range(0.0, std::f32::consts::TAU)
+}
+
+/// The pool of a route's roster (absolute indices into its `enemies`) at `pace`: the zone's own
+/// ladder of tiers, [`data::wave_pool`] on the segment, so a zone starts with its first tiers.
+pub(super) fn zone_pool(pace: f32, seg: &data::Segment) -> [usize; 3] {
+    let last = seg.enemies.len().saturating_sub(1);
+    data::wave_pool(pace, seg.enemies.len()).map(|i| seg.enemies.start + i.min(last))
+}
+
+/// The pool the horde draws from at a hero standing at `at`: on a route the pool of the zone the
+/// hero is in ([`leg_zone`]), else the pool of the pace on the whole roster.
+fn pool_at(map: usize, route: &RouteRun, pace: f32, at: Vec3) -> [usize; 3] {
+    if let Some(def) = route_of(map) {
+        if let Some(seg) = data::segment(map, leg_zone(def, route, at)) {
+            return zone_pool(pace, seg);
+        }
+    }
+    data::wave_pool(pace, data::roster(map).enemies.len())
+}
+
+/// The heading from `at` to the next point of the route `map` is, if it is one.
+fn heading_at(map: usize, route: &RouteRun, at: Vec3) -> Option<f32> {
+    route_of(map).and_then(|def| heading(def, route, at))
+}
+
+/// The index in a route plan's `timed` of the `spawned`-th clock boss, drawn from the zone's
+/// `range`; `None` once the zone has no more.
+fn timed_index(range: &std::ops::Range<usize>, spawned: u32) -> Option<usize> {
+    ((spawned as usize) < range.len()).then(|| range.start + spawned as usize)
+}
+
+/// The clock boss number `spawned` for a hero at `at`: off a route the plan's next, on a route
+/// the same number of the zone the hero is in.
+fn timed_boss(map: usize, route: &RouteRun, at: Vec3, spawned: u32) -> Option<&'static EnemyDef> {
+    let plan = super::finale::plan(map);
+    let Some(def) = route_of(map) else {
+        return plan.timed.get(spawned as usize);
+    };
+    let zone = leg_zone(def, route, at);
+    let range = &plan.segments.iter().find(|(z, _)| *z == zone)?.1;
+    plan.timed.get(timed_index(range, spawned)?)
+}
+
 /// Keep the horde topped up on a ring outside the view, with the bosses and the encircling waves
-/// on the clock.
+/// on the clock. On a route ([`super::route`]) the horde and the bosses are those of the zone the
+/// hero is in, most of it comes from ahead, and the strength follows [`Run::pace`].
 pub(super) fn spawn_enemies(
     mut commands: Commands,
     time: Res<Time>,
@@ -380,6 +440,7 @@ pub(super) fn spawn_enemies(
     mut spawner: ResMut<Spawner>,
     selection: Res<Selection>,
     surge: Res<super::surge::Surge>,
+    route: Res<RouteRun>,
     nav: Res<NavGrid>,
     probe: SpawnProbe,
     hero: Query<&Transform, With<Hero>>,
@@ -404,15 +465,20 @@ pub(super) fn spawn_enemies(
         heroes[*turn % heroes.len()]
     };
     let elapsed = run.elapsed;
+    // What the horde's strength follows: the clock, and on a route the road walked if further.
+    let pace = run.pace();
     let roster = data::roster(selection.map);
-    let pool = data::wave_pool(elapsed, roster.enemies.len());
 
-    // The zone's last boss is the finale's ([`super::finale`]); the clock spawns the rest.
+    // The zone's last boss is the finale's ([`super::finale`]); the clock spawns the rest. On a
+    // route the boss is the next of the zone the hero is in, and a zone is out of bosses when it
+    // has shown them all.
     let timed = &super::finale::plan(selection.map).timed;
     let due_bosses = ((elapsed / data::BOSS_EVERY_SECS) as u32).min(timed.len() as u32);
     while run.bosses < due_bosses {
-        let def = &timed[run.bosses as usize];
         let hpos = next_anchor();
+        let Some(def) = timed_boss(selection.map, &route, hpos, run.bosses) else {
+            break;
+        };
         let a = rng.range(0.0, std::f32::consts::TAU);
         // No free spot yet (the world is still coming in): the boss waits for the next frame.
         let Some(pos) = spawn_spot(&nav, &probe, &world, hpos, a, BOSS_RADIUS) else {
@@ -432,8 +498,9 @@ pub(super) fn spawn_enemies(
     if run.rings < due_rings {
         run.rings = due_rings;
         // The ring is melee: a ring of shooters would pin the hero from every side.
-        let def = threats::melee_of(&roster.enemies, &pool, pool[0]);
         let hpos = next_anchor();
+        let pool = pool_at(selection.map, &route, pace, hpos);
+        let def = threats::melee_of(&roster.enemies, &pool, pool[0]);
         let n = 28 + (data::progress(elapsed) * 60.0) as usize;
         for i in 0..n {
             let a = i as f32 / n as f32 * std::f32::consts::TAU;
@@ -460,7 +527,7 @@ pub(super) fn spawn_enemies(
         .iter()
         .filter(|(e, _)| e.def.ranged.is_some() && !e.dead)
         .count();
-    let mut target = data::target_alive(elapsed);
+    let mut target = data::target_alive(pace);
     if surge.active {
         target = target * 3 / 2;
     }
@@ -471,16 +538,17 @@ pub(super) fn spawn_enemies(
     let batch_cap = if surge.active { 8.0 } else { 4.0 };
     let n = (((target - alive) as f32) / 6.0).ceil().min(batch_cap) as usize;
     for _ in 0..n {
+        let hpos = next_anchor();
+        let pool = pool_at(selection.map, &route, pace, hpos);
         let pick = pool[rng.index(pool.len())];
         // Shooters keep their distance and only die when they are chased, so the field holds a
         // few at a time; past that, the pool's melee creature comes instead.
-        let def = if shooters >= threats::max_shooters(elapsed) {
+        let def = if shooters >= threats::max_shooters(pace) {
             threats::melee_of(&roster.enemies, &pool, pick)
         } else {
             &roster.enemies[pick]
         };
-        let hpos = next_anchor();
-        let a = rng.range(0.0, std::f32::consts::TAU);
+        let a = spawn_angle(&mut rng, heading_at(selection.map, &route, hpos));
         let r = rng.range(SPAWN_NEAR, SPAWN_FAR);
         let Some(pos) =
             spawn_spot(&nav, &probe, &world, hpos, a, r).filter(|p| clear_of_others(*p, hpos, &heroes))
@@ -488,7 +556,7 @@ pub(super) fn spawn_enemies(
             continue;
         };
         let elite =
-            elites < MAX_ELITES && rng.f32() < elite_chance(elapsed) * super::items::drop_boost();
+            elites < MAX_ELITES && rng.f32() < elite_chance(pace) * super::items::drop_boost();
         elites += usize::from(elite);
         shooters += usize::from(def.ranged.is_some());
         spawn_enemy(&mut commands, &mut run, def, pos, hpos, false, elite);
@@ -826,7 +894,7 @@ pub(super) fn mark_dying(commands: &mut Commands, e: Entity) {
 
 /// Most experience and health gems on the ground at once; past it, a kill's worth joins an
 /// existing gem.
-const MAX_GEMS: usize = 350;
+pub(super) const MAX_GEMS: usize = 350;
 
 /// Most coin piles on the ground at once; past it, a drop's gold joins an existing pile.
 const MAX_COINS: usize = 60;
@@ -898,11 +966,73 @@ pub(super) fn drop_loot(
     }
 }
 
-/// Heals on a route's road, ahead of the hero ([`super::route`]); nothing off a route. A stub
-/// until the route's horde package fills it in (after [`drop_loot`], before [`collect_gems`]).
-pub(super) fn road_heals() {}
+/// A heal [`road_heals`] laid on the road; the ones a kill drops do not wear it.
+#[derive(Component)]
+pub(super) struct RoadHeal;
 
-pub(super) fn spawn_gem(commands: &mut Commands, serial: u64, pos: Vec3, kind: GemKind) {
+/// What a heal on the road gives back, like the one a kill may drop.
+const ROAD_HEAL_HP: f32 = 30.0;
+/// How far to either side of the road a heal may land.
+const ROAD_HEAL_SPREAD: f32 = 4.0;
+
+/// Where a heal lands for a hero at `at` heading `toward` (`atan2(z, x)`): [`ROAD_HEAL_AHEAD`]
+/// yards along the heading, `side` yards across it.
+fn road_heal_spot(at: Vec3, toward: f32, side: f32) -> Vec3 {
+    let dir = Vec3::new(toward.cos(), 0.0, toward.sin());
+    let across = Vec3::new(-dir.z, 0.0, dir.x);
+    at + dir * ROAD_HEAL_AHEAD + across * side
+}
+
+/// Heals on a route's road, ahead of the hero where the arrow points ([`super::route`]), so
+/// healing does not wait on kills and the hero runs into it; nothing off a route, once its end is
+/// reached or where hardcore has no health to pick up. At most [`ROAD_HEAL_CAP`] of them lie at
+/// once, one more every [`ROAD_HEAL_EVERY`] seconds; the ones left behind are cleared with the
+/// rest of the gems ([`super::route_run`]). After [`drop_loot`], before [`collect_gems`].
+/// Parts follow marekvi95/undying-run (branch continent-run, e911b1e, MIT OR Apache-2.0).
+pub(super) fn road_heals(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut run: ResMut<Run>,
+    mut rng: ResMut<Rng>,
+    selection: Res<Selection>,
+    route: Res<RouteRun>,
+    mut clock: Local<f32>,
+    hero: Query<&Transform, With<Hero>>,
+    gems: Query<&Gem, With<RoadHeal>>,
+    world: WorldPoint,
+) {
+    let Some(def) = route_of(selection.map) else {
+        return;
+    };
+    if route.arrived || !route.placed || run.dead_t.is_some() || run.party_down {
+        return;
+    }
+    if !run.difficulty.health_gems() {
+        return;
+    }
+    let Ok(h) = hero.single() else { return };
+    *clock += time.delta_secs();
+    if *clock < ROAD_HEAL_EVERY {
+        return;
+    }
+    *clock = 0.0;
+    if gems.iter().count() >= ROAD_HEAL_CAP {
+        return;
+    }
+    let Some(ahead) = heading(def, &route, h.translation) else {
+        return;
+    };
+    let side = rng.range(-ROAD_HEAL_SPREAD, ROAD_HEAL_SPREAD);
+    let pos = ground(
+        &world,
+        road_heal_spot(h.translation, ahead, side),
+        h.translation.y,
+    );
+    let gem = spawn_gem(&mut commands, run.guid(), pos, GemKind::Heal(ROAD_HEAL_HP));
+    commands.entity(gem).insert(RoadHeal);
+}
+
+pub(super) fn spawn_gem(commands: &mut Commands, serial: u64, pos: Vec3, kind: GemKind) -> Entity {
     let (display, scale) = super::dropart::gem_look(kind);
     // Wisps and the turkey leg hover; a heap of coins lies on the ground.
     let lift = if matches!(kind, GemKind::Gold(_)) {
@@ -919,6 +1049,7 @@ pub(super) fn spawn_gem(commands: &mut Commands, serial: u64, pos: Vec3, kind: G
         },
         units::Still,
     ));
+    e
 }
 
 /// Gems in the magnet's reach fly to the hero; levels bank as they land. When a boss falls,
@@ -1141,5 +1272,119 @@ mod tests {
         assert!((hurt_trauma(50.0, 1000.0) - 0.15).abs() < 1e-5);
         assert_eq!(hurt_trauma(900.0, 1000.0), HURT_TRAUMA_MAX);
         assert_eq!(hurt_trauma(10.0, 0.0), HURT_TRAUMA_MAX);
+    }
+
+    /// The first battleground that is a route.
+    fn a_route() -> usize {
+        (0..data::MAPS.len())
+            .find(|&m| route_of(m).is_some())
+            .expect("a route")
+    }
+
+    #[test]
+    fn the_route_horde_comes_from_the_zone_of_the_leg() {
+        let map = a_route();
+        let roster = data::roster(map);
+        assert!(roster.segments.len() >= 2);
+        for seg in &roster.segments {
+            let mut pace = 0.0;
+            while pace <= data::VICTORY_SECS * 1.5 {
+                for i in zone_pool(pace, seg) {
+                    assert!(seg.enemies.contains(&i), "pace {pace}: {i} outside {:?}", seg.enemies);
+                }
+                pace += 7.0;
+            }
+            // The zone starts with its first tiers and ends with its last.
+            let s = seg.enemies.start;
+            assert_eq!(zone_pool(0.0, seg), [s, s + 1, s + 2]);
+            let e = seg.enemies.end;
+            assert_eq!(zone_pool(data::VICTORY_SECS, seg), [e - 3, e - 2, e - 1]);
+        }
+        // The pool at a hero is the pool of the zone the leg is in, and of the whole roster off a route.
+        let def = route_of(map).unwrap();
+        let run = RouteRun {
+            next: 1,
+            stop: 1,
+            arrived: false,
+            placed: true,
+        };
+        let from = def.points()[def.point_of(0)].at;
+        let to = def.points()[def.point_of(1)].at;
+        for (at, station) in [(from.lerp(to, 0.2), 0), (from.lerp(to, 0.8), 1)] {
+            let seg = data::segment(map, def.zone_of(station)).expect("a segment");
+            assert_eq!(pool_at(map, &run, 300.0, at), zone_pool(300.0, seg));
+        }
+        let zone = (0..data::MAPS.len()).find(|&m| route_of(m).is_none()).unwrap();
+        assert_eq!(
+            pool_at(zone, &RouteRun::default(), 300.0, Vec3::ZERO),
+            data::wave_pool(300.0, data::roster(zone).enemies.len())
+        );
+    }
+
+    #[test]
+    fn a_zone_serves_its_clock_bosses_in_turn_and_then_no_more() {
+        let map = a_route();
+        let def = route_of(map).unwrap();
+        let plan = super::super::finale::plan(map);
+        let run = RouteRun {
+            next: 1,
+            stop: 1,
+            arrived: false,
+            placed: true,
+        };
+        let from = def.points()[def.point_of(0)].at;
+        let seg = plan
+            .segments
+            .iter()
+            .find(|(z, _)| *z == def.zone_of(0))
+            .expect("a segment")
+            .1
+            .clone();
+        for k in 0..seg.len() as u32 {
+            let boss = timed_boss(map, &run, from, k).expect("a boss");
+            assert_eq!(boss.name, plan.timed[seg.start + k as usize].name);
+        }
+        assert!(timed_boss(map, &run, from, seg.len() as u32).is_none());
+        // Off a route it is the plan's own order.
+        let zone = (0..data::MAPS.len()).find(|&m| route_of(m).is_none()).unwrap();
+        let own = super::super::finale::plan(zone);
+        assert_eq!(
+            timed_boss(zone, &RouteRun::default(), Vec3::ZERO, 1).map(|d| d.name),
+            own.timed.get(1).map(|d| d.name)
+        );
+    }
+
+    #[test]
+    fn most_spawns_lean_toward_the_next_stop() {
+        use std::f32::consts::{PI, TAU};
+        let wrapped = |a: f32| (a + PI).rem_euclid(TAU) - PI;
+        let mut rng = Rng(0x2545_F491_4F6C_DD1D);
+        let draws = 1000;
+        let leaning = (0..draws)
+            .filter(|_| wrapped(spawn_angle(&mut rng, Some(0.0))).abs() <= AHEAD_CONE)
+            .count();
+        assert!(leaning * 100 >= draws * 65, "{leaning} of {draws} lean ahead");
+        // Without a heading the ring is uniform: the cone's share is its width over the circle.
+        let mut rng = Rng(0x9E37_79B9_7F4A_7C15);
+        let angles: Vec<f32> = (0..draws).map(|_| spawn_angle(&mut rng, None)).collect();
+        assert!(angles.iter().all(|a| (0.0..TAU).contains(a)));
+        let in_cone = angles.iter().filter(|&&a| wrapped(a).abs() <= AHEAD_CONE).count();
+        let share = in_cone as f32 / draws as f32;
+        let uniform = 2.0 * AHEAD_CONE / TAU;
+        assert!((share - uniform).abs() < 0.07, "{share} against {uniform}");
+    }
+
+    #[test]
+    fn a_road_heal_lands_ahead_of_the_hero() {
+        let at = Vec3::new(100.0, 3.0, -40.0);
+        for toward in [0.0f32, 1.0, 2.5, -1.2, 3.0] {
+            let dir = Vec3::new(toward.cos(), 0.0, toward.sin());
+            let across = Vec3::new(-dir.z, 0.0, dir.x);
+            for side in [-ROAD_HEAL_SPREAD, 0.0, ROAD_HEAL_SPREAD] {
+                let off = flat(road_heal_spot(at, toward, side) - at);
+                assert!((off.dot(dir) - ROAD_HEAL_AHEAD).abs() < 1e-3, "{toward}: {off}");
+                assert!(off.dot(across).abs() <= ROAD_HEAL_SPREAD + 1e-3, "{toward}: {off}");
+            }
+        }
     }
 }
