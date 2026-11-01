@@ -360,7 +360,7 @@ pub(super) fn spawn_spot(
     r: f32,
 ) -> Option<Vec3> {
     (0..SPAWN_TRIES).find_map(|i| {
-        let off = ((i + 1) / 2) as f32 * SPAWN_FAN * if i % 2 == 1 { 1.0 } else { -1.0 };
+        let off = i.div_ceil(2) as f32 * SPAWN_FAN * if i % 2 == 1 { 1.0 } else { -1.0 };
         let (s, c) = (a + off).sin_cos();
         let p = ground(world, hero + Vec3::new(c, 0.0, s) * r, hero.y);
         (nav.fits(p) && probe.clear(p)).then_some(p)
@@ -524,7 +524,6 @@ fn hurt_trauma(taken: f32, max_hp: f32) -> f32 {
 /// The chase: at the hero, straight in the open and round trees and buildings by the nav grid's
 /// flow field, never into a blocked cell, pushed apart from each other, stopped by crowd control,
 /// and swinging when in reach.
-#[allow(clippy::type_complexity)]
 pub(super) fn move_enemies(
     time: Res<Time>,
     mut run: ResMut<Run>,

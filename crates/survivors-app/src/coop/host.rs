@@ -367,7 +367,6 @@ fn in_run(phase: &Phase) -> bool {
 /// The run's world goes to the guests: every enemy, totem, pickup, chest, quest item and ground
 /// area is replicated once, from the frame it appears, with where it stands. An enemy also says
 /// which creature it is and shows its marks; one whose creature cannot be named goes as a body only.
-#[allow(clippy::type_complexity)]
 fn tag_world(
     mut commands: Commands,
     phase: Res<State<Phase>>,
@@ -480,7 +479,6 @@ fn build_of(hero: &HeroState) -> NetBuild {
 
 /// The state behind the bodies: each enemy's health and fall, each unit's marks, each hero's
 /// health, gold and build, and the party's clock and level.
-#[allow(clippy::type_complexity)]
 fn mirror_state(
     run: Res<Run>,
     mut enemies: Query<(&Enemy, &mut NetEnemy)>,

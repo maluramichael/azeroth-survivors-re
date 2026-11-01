@@ -787,7 +787,6 @@ fn drop_items(
 }
 
 /// Walking over an item picks it up, and wears it if it is the best for its slot.
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn collect_items(
     mut commands: Commands,
     time: Res<Time>,

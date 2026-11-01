@@ -175,7 +175,6 @@ fn teardown(mut commands: Commands, mut ui: ResMut<PartyUi>) {
 
 /// The other heroes, by player number: every replicated hero but this machine's own (its hero on
 /// the host, its puppet on a guest).
-#[allow(clippy::type_complexity)]
 fn show(
     mut commands: Commands,
     mut ui: ResMut<PartyUi>,

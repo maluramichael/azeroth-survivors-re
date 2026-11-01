@@ -421,7 +421,6 @@ impl Serials {
 /// built from its look, with aura slots when the host shows marks on it. This player's own puppet
 /// on the host gets none, and nothing is built before the host has said which seat this player
 /// has (the arrival waits) or while the menu is up (there is no run to stand in).
-#[allow(clippy::type_complexity)]
 fn build_bodies(
     mut commands: Commands,
     session: Res<Session>,
@@ -455,7 +454,6 @@ fn build_bodies(
 }
 
 /// A pickup, chest, quest item or ground spell arrives: it gets its object, as the host built it.
-#[allow(clippy::type_complexity)]
 fn build_objects(
     mut commands: Commands,
     phase: Res<State<Phase>>,
@@ -482,7 +480,6 @@ fn build_objects(
 
 /// An enemy's body knows what it is and how it stands, for the plates, frames and minimap, and
 /// plays its death once when the host says it fell.
-#[allow(clippy::type_complexity)]
 fn sync_enemies(
     mut commands: Commands,
     selection: Res<Selection>,
@@ -520,7 +517,6 @@ fn sync_enemies(
 
 /// The marks the host shows on a unit show here too; those on this guest's puppet show on this
 /// machine's hero.
-#[allow(clippy::type_complexity)]
 fn sync_auras(
     mut bodies: Query<
         (Entity, &Guid, Ref<NetAuras>, &mut Marks, &mut ObjectStore),
@@ -549,7 +545,6 @@ fn sync_auras(
 /// What the host says of this guest's hero is this machine's hero: its health, shield, gold and
 /// fall, and its spells, ranks and cooldowns. Its bonuses, gear and world buffs are this
 /// machine's, sent the other way ([`send_loadout`]).
-#[allow(clippy::type_complexity)]
 fn sync_me(
     mut run: ResMut<Run>,
     phase: Res<State<Phase>>,

@@ -1493,7 +1493,6 @@ pub(super) fn describe_card(
     }
 }
 
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub(super) fn refresh_hud(
     mut commands: Commands,
     time: Res<Time>,
@@ -1700,7 +1699,6 @@ pub(super) fn fill_icons(
 }
 
 /// The mobility button: shown once learned, its icon the class's spell, its sweep the cooldown.
-#[allow(clippy::type_complexity)]
 pub(super) fn refresh_mobility(
     run: Res<Run>,
     mut commands: Commands,
@@ -1802,7 +1800,6 @@ const PLATE_NUDGE: f32 = 2.0;
 /// The hero's nameplate under its feet, sized from the screen diagonal as [`crate::vplates`]
 /// sizes a plate, outside the UI scale. The border's top half seats a name the hero has none of,
 /// so the plate rises until its bar sits just under the feet.
-#[allow(clippy::type_complexity)]
 pub(super) fn hero_plate(
     run: Res<Run>,
     ui_scale: Res<UiScale>,
@@ -1937,7 +1934,6 @@ impl TipLine {
 }
 
 /// The results screen's tiles, its line under the title and the payout.
-#[allow(clippy::type_complexity)]
 pub(super) fn refresh_results(
     run: Res<Run>,
     selection: Res<Selection>,
@@ -2529,7 +2525,6 @@ pub(super) fn icon_tooltip(
     });
 }
 
-#[allow(clippy::type_complexity)]
 pub(super) fn show_panels(
     phase: Res<State<Phase>>,
     mut roots: ParamSet<(

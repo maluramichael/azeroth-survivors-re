@@ -209,7 +209,6 @@ fn set<T: PartialEq>(slot: &mut T, v: T) {
 }
 
 /// Seat a bar on each enemy that deserves one and hide the rest of the pool.
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn drive(
     mut commands: Commands,
     mut plates: ResMut<Plates>,

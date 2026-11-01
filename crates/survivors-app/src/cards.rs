@@ -688,7 +688,6 @@ fn ease_out_back(t: f32) -> f32 {
 }
 
 /// Deal, tilt, lift and burst: real time, since the game clock is paused under the picker.
-#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub(super) fn animate_cards(
     time: Res<Time<Real>>,
     phase: Res<State<Phase>>,

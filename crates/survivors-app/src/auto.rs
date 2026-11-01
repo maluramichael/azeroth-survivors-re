@@ -130,7 +130,6 @@ pub(super) fn steer(auto: &Auto) -> Vec3 {
 /// Toward the nearest gem, pushed off by every enemy close enough to bite, drifting home when
 /// there is nothing to pick up. A co-op host first goes to a fallen guest and stays beside it
 /// until it is back up.
-#[allow(clippy::type_complexity)]
 pub(super) fn plan(
     time: Res<Time<Real>>,
     mut auto: ResMut<Auto>,

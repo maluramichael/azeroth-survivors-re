@@ -1317,22 +1317,24 @@ fn show_panel(
     if ui.open && (*phase.get() != Phase::Menu || keys.just_pressed(KeyCode::Escape)) {
         ui.open = false;
     }
-    if profile.ephemeral && *phase.get() == Phase::Menu && panel.iter().next().is_some() {
-        if !*auto {
-            if let Some(mode) = benilla_app::survivors_host::webenv::var("WOW_SURVIVORS_TALENTS") {
-                *auto = true;
-                ui.open = true;
-                if mode == "spend" {
-                    if let Some(class) = selection.class {
-                        let level = profile.character(class).level;
-                        let mut guard = 0;
-                        // Down the columns in turn, so every spec shows some ranks.
-                        while guard < 200 && available(&profile.talents, class, level) > 0 {
-                            let spec = guard % 3;
-                            let idx = (guard / 3) % MAX_ROWS;
-                            spend(&mut profile.talents, class, level, spec, idx);
-                            guard += 1;
-                        }
+    if profile.ephemeral
+        && *phase.get() == Phase::Menu
+        && panel.iter().next().is_some()
+        && !*auto
+    {
+        if let Some(mode) = benilla_app::survivors_host::webenv::var("WOW_SURVIVORS_TALENTS") {
+            *auto = true;
+            ui.open = true;
+            if mode == "spend" {
+                if let Some(class) = selection.class {
+                    let level = profile.character(class).level;
+                    let mut guard = 0;
+                    // Down the columns in turn, so every spec shows some ranks.
+                    while guard < 200 && available(&profile.talents, class, level) > 0 {
+                        let spec = guard % 3;
+                        let idx = (guard / 3) % MAX_ROWS;
+                        spend(&mut profile.talents, class, level, spec, idx);
+                        guard += 1;
                     }
                 }
             }
@@ -1393,7 +1395,6 @@ fn talent_clicks(
 }
 
 /// While open, the whole window for the selected class.
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn refresh(
     ui: Res<TalentsUi>,
     profile: Res<Profile>,

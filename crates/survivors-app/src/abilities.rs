@@ -692,7 +692,6 @@ impl Caster<'_, '_, '_, '_, '_> {
 }
 
 /// Ground areas tick, and totems fight, until they run out.
-#[allow(clippy::type_complexity)]
 pub(super) fn tick_areas(
     mut commands: Commands,
     time: Res<Time>,

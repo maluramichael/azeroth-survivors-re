@@ -55,14 +55,8 @@ struct EscapePressed(bool);
 
 /// Appends `s` to `value`, dropping control characters and stopping at `max_len` chars.
 fn insert(value: &mut String, s: &str, max_len: usize) {
-    let mut len = value.chars().count();
-    for c in s.chars().filter(|c| !c.is_control()) {
-        if len >= max_len {
-            break;
-        }
-        value.push(c);
-        len += 1;
-    }
+    let room = max_len.saturating_sub(value.chars().count());
+    value.extend(s.chars().filter(|c| !c.is_control()).take(room));
 }
 
 /// Removes the last char (not the last byte) of `value`.

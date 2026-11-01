@@ -595,7 +595,6 @@ fn set_kit_caption(
 }
 
 /// The bank, the pips, the prices and the Buy and Reset buttons.
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn refresh_rows(
     profile: Res<Profile>,
     mut pips: Query<(&Pip, &mut BackgroundColor)>,
@@ -673,7 +672,6 @@ fn refresh_rows(
 
 /// The unlock button: shown for a locked class, with its price or what is still missing. A locked
 /// class also holds Enter World disabled.
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn refresh_unlock(
     selection: Res<Selection>,
     profile: Res<Profile>,

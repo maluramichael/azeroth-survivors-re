@@ -651,7 +651,6 @@ fn drag(
 
 /// Show or hide the window and bring sliders, readouts, the toggle captions and the display row up
 /// to the CVars and the prefs.
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn refresh(
     ui: Res<OptionsUi>,
     cvars: Res<Cvars>,

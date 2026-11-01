@@ -4,6 +4,10 @@
 //! streamed unit gets, on a battleground picked at the menu ([`data::MAPS`]), with the player
 //! controller and FrameXML off (`CaptureMode`).
 
+// A Bevy system's query types are its dependency declaration, as its parameter list is (the
+// workspace allows `too_many_arguments` for that reason); factoring them into aliases hides them.
+#![allow(clippy::type_complexity)]
+
 mod abilities;
 mod achievements;
 mod auto;

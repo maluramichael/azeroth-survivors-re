@@ -492,7 +492,6 @@ fn drop_lines(quality: Quality) -> String {
 }
 
 /// While open, the whole window from the profile and the selection.
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn refresh(
     ui: Res<CollectionUi>,
     profile: Res<Profile>,

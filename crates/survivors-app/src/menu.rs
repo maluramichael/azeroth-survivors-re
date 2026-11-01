@@ -812,7 +812,6 @@ pub(super) fn menu_clicks(
 
 /// The screen's per-frame state: which button is lit, which races and classes the pick allows,
 /// the gender on the race faces and whether Enter is off.
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub(super) fn refresh_menu_ui(
     selection: Res<Selection>,
     profile: Option<Res<Profile>>,
@@ -999,7 +998,6 @@ fn refresh_bank(profile: Option<Res<Profile>>, mut bank: Query<&mut Text, With<B
 }
 
 /// The class title and its stat boxes: starting health, the first ability, the zones open.
-#[allow(clippy::type_complexity)]
 fn refresh_stats(
     selection: Res<Selection>,
     profile: Option<Res<Profile>>,
@@ -1074,7 +1072,6 @@ fn refresh_stats(
 
 /// The zone rows: the picked one has a bright edge and a lighter fill; a zone above the selected
 /// character's level is dimmed, shows its padlock and says what level it needs.
-#[allow(clippy::type_complexity)]
 fn refresh_zone_rows(
     selection: Res<Selection>,
     profile: Option<Res<Profile>>,
@@ -1159,7 +1156,6 @@ fn refresh_zone_rows(
 
 /// The character line above the Enter button ("Level 12 Night Elf Warrior"), its XP bar, and the
 /// red warning when the zone picked is above the character.
-#[allow(clippy::type_complexity)]
 fn refresh_pick_line(
     selection: Res<Selection>,
     profile: Option<Res<Profile>>,
@@ -1222,7 +1218,6 @@ fn refresh_pick_line(
 }
 
 /// The Enter button names the zone picked and its level range.
-#[allow(clippy::type_complexity)]
 fn refresh_enter(
     selection: Res<Selection>,
     enter: Query<&Children, With<EnterButton>>,

@@ -122,7 +122,7 @@ fn pick_index(origin: Vec3, dir: Vec3, aim: Option<Vec3>, foes: &[(Vec3, f32)]) 
         for k in [0.15f32, 0.4, 0.65, 0.9] {
             let v = feet + Vec3::Y * (height * k) - origin;
             let t = v.dot(dir);
-            if t > 0.0 && (v - dir * t).length() <= reach && best.map_or(true, |(bt, _)| t < bt) {
+            if t > 0.0 && (v - dir * t).length() <= reach && best.is_none_or(|(bt, _)| t < bt) {
                 best = Some((t, i));
             }
         }
@@ -621,7 +621,6 @@ fn show(
 }
 
 /// The diamond over the target's head, seated as the nameplates are, outside the UI scale.
-#[allow(clippy::type_complexity)]
 fn mark(
     ui: Res<FramesUi>,
     target: Res<Target>,

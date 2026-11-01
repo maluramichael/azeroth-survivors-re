@@ -146,7 +146,6 @@ fn drop_chests(
 }
 
 /// Walking over a chest opens it: for whichever standing hero reaches it, a co-op guest's too.
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn open_chests(
     mut commands: Commands,
     time: Res<Time>,

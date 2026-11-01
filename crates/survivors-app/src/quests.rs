@@ -287,7 +287,6 @@ fn count_kills(
 }
 
 /// Walking over an item picks it up; one whose quest is done, or that has lain too long, goes.
-#[allow(clippy::type_complexity)]
 fn pick_up(
     mut commands: Commands,
     time: Res<Time>,

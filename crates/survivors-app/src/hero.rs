@@ -685,7 +685,6 @@ const DOWN_SECS: f32 = 3.0;
 /// puppet on the host lives by the same rules. Alone the run ends when the hero falls; in a party
 /// a fallen hero waits to be revived ([`revive`]) and the run ends when all have lain
 /// [`DOWN_SECS`].
-#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub(super) fn hero_vitals(
     time: Res<Time>,
     mut run: ResMut<Run>,
@@ -812,7 +811,6 @@ fn revive_step(hero: &mut HeroState, helped: bool, dt: f32) -> Revival {
 
 /// A fallen hero with a standing party member beside it (not one choosing cards) gets up after
 /// [`REVIVE_SECS`] with half its health; walking away starts the count over.
-#[allow(clippy::type_complexity)]
 pub(super) fn revive(
     time: Res<Time>,
     mut run: ResMut<Run>,

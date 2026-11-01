@@ -219,7 +219,6 @@ fn set_text(t: &mut Mut<Text>, s: String) {
 }
 
 /// Build the window once the fonts are up, show it while a run is on, and keep its rows current.
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn refresh_meter(
     mut commands: Commands,
     phase: Res<State<Phase>>,
