@@ -24,6 +24,7 @@ use super::items::BossDrop;
 use super::minimap::MapMarker;
 use super::nav::{NavGrid, SpawnProbe};
 use super::rares;
+use super::route::{self, Bounds, RouteRun};
 use super::units::{self, flat, Fx};
 use super::{HeroState, Mail, Phase, Rng, Run, Selection};
 
@@ -40,6 +41,8 @@ const FINALE_XP: u32 = 3;
 const FINALE_SIZE: f32 = 1.2;
 /// How far from the hero either appears, in yards.
 const SUMMON_RANGE: f32 = 30.0;
+/// How far from the end ring's centre the finale of a route appears, in yards.
+const ROUTE_SUMMON_RANGE: f32 = 25.0;
 /// The flourish of a win: Divine Shield, as the clock's win plays it.
 const SPELL_WIN: u32 = 642;
 /// The bonus boss's portal ([`Gate`]): `InstancePortal_Red.mdx`, no collision hull, a first guess
@@ -177,7 +180,6 @@ pub(super) struct Plan {
     pub finale: EnemyDef,
     /// On a route ([`super::route`]): each zone's [`data::MAPS`] index and its range in `timed`.
     /// Empty for a zone.
-    #[allow(dead_code)] // Read by the route's horde as it lands.
     pub segments: Vec<(usize, Range<usize>)>,
 }
 
@@ -302,7 +304,17 @@ pub(super) fn plugin(app: &mut App) {
         });
 }
 
-/// The finale and the reaper arrive on the clock.
+/// Whether the finale is due: on the clock, or on a route once its last station is reached
+/// (`arrived`, the end ring stands).
+fn finale_due(on_route: bool, arrived: bool, elapsed: f32, at: f32) -> bool {
+    if on_route {
+        arrived
+    } else {
+        elapsed >= at
+    }
+}
+
+/// The finale and the reaper arrive on the clock; the finale of a route, in its end ring.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn summon(
     mut commands: Commands,
@@ -310,6 +322,8 @@ pub(super) fn summon(
     mut stage: ResMut<Stage>,
     mut rng: ResMut<Rng>,
     selection: Res<Selection>,
+    route: Res<RouteRun>,
+    bounds: Res<Bounds>,
     nav: Res<NavGrid>,
     probe: SpawnProbe,
     world: WorldPoint,
@@ -321,15 +335,26 @@ pub(super) fn summon(
         return;
     }
     let hpos = h.translation;
-    let wants_finale = !stage.finale && run.elapsed >= finale_at();
+    let on_route = route::route_of(selection.stage).is_some();
+    let wants_finale =
+        !stage.finale && finale_due(on_route, route.arrived, run.elapsed, finale_at());
     // The reaper waits out a bonus fight.
     let wants_reaper = !stage.reaper && run.elapsed >= REAPER_AT && !run.encore;
     if !wants_finale && !wants_reaper {
         return;
     }
     let a = rng.range(0.0, std::f32::consts::TAU);
+    // The finale of a route stands in the end ring, round its centre; the rest by the hero.
+    let (anchor, range) = if wants_finale && on_route {
+        (
+            Vec3::new(bounds.centre.x, hpos.y, bounds.centre.z),
+            ROUTE_SUMMON_RANGE,
+        )
+    } else {
+        (hpos, SUMMON_RANGE)
+    };
     // No free spot yet: the arrival waits for the next frame.
-    let Some(pos) = enemies::spawn_spot(&nav, &probe, &world, hpos, a, SUMMON_RANGE) else {
+    let Some(pos) = enemies::spawn_spot(&nav, &probe, &world, anchor, a, range) else {
         return;
     };
     if wants_finale {
@@ -710,5 +735,19 @@ mod tests {
         const { assert!(PORTAL_RANGE < BONUS_RANGE) };
         // The window ends before the 15:00 bell even for the latest finale.
         const { assert!(FINALE_AT + PORTAL_SECS < data::VICTORY_SECS) };
+    }
+
+    #[test]
+    fn a_route_finale_waits_for_the_end_and_a_zone_finale_for_the_clock() {
+        let at = finale_at();
+        // A zone: the clock, whatever the route says.
+        assert!(!finale_due(false, false, at - 1.0, at));
+        assert!(finale_due(false, false, at, at));
+        assert!(!finale_due(false, true, at - 1.0, at));
+        // A route: the end ring, however late or early the clock is.
+        assert!(!finale_due(true, false, at * 3.0, at));
+        assert!(finale_due(true, true, 0.0, at));
+        // It stands inside the ring it is summoned for.
+        const { assert!(ROUTE_SUMMON_RANGE < route::END_RING) };
     }
 }

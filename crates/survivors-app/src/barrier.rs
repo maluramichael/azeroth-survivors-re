@@ -1,6 +1,8 @@
-//! The edge of the battleground as a magical barrier. The hero cannot leave the circle of radius
-//! `leash` around the arena centre ([`super::hero::drive_hero`]); this stands a violet-blue energy
-//! wall on that circle, on the terrain, faint from afar and bright where the hero closes in.
+//! The edge of the battleground as a magical barrier. The hero cannot leave the circle
+//! [`Bounds`] describes ([`super::hero::drive_hero`]): on a zone the arena centre and its leash,
+//! on a route the end ring round the last station once it is reached, and nothing on its open
+//! road. This stands a violet-blue energy wall on that circle, on the terrain, faint from afar and
+//! bright where the hero closes in.
 //!
 //! One unlit, alpha-blended, double-sided material is shared by a ring of wall segments. A
 //! segment is a four-vertex strip whose vertex colours carry the glow, so the brightness follows
@@ -18,7 +20,8 @@ use bevy::mesh::{Indices, PrimitiveTopology, VertexAttributeValues};
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 
-use super::hero::{arena, Hero};
+use super::hero::Hero;
+use super::route::{route_of, Bounds};
 use super::{Phase, RunEntity, Selection};
 
 /// How far above the ground the wall stands, and how far it sinks below, in yards.
@@ -54,8 +57,8 @@ pub(super) fn plugin(app: &mut App) {
 /// which carries [`RunEntity`]; the segments are its children.
 #[derive(Component)]
 struct Barrier {
-    /// The battleground it was built for ([`Selection::stage`]).
-    stage: usize,
+    /// The shape it was built for ([`Bounds::key`]).
+    key: (usize, u8),
     center: Vec3,
     radius: f32,
     /// Terrain height at each ring point, `None` until its tiles have streamed in.
@@ -191,11 +194,19 @@ fn blank_segment(i: usize, step: f32) -> Mesh {
     mesh
 }
 
-/// Raise the wall when a run is in its battleground, and replace it when the battleground
-/// changes. The run's end despawns it with the other [`RunEntity`]s.
+/// Whether a wall stands for `bounds` on battleground `stage`: on a fenced shape, but not on a
+/// route before its start, where the first station's zone bounds only hold the hero for a moment.
+fn wants_wall(bounds: &Bounds, stage: usize) -> bool {
+    bounds.fenced && !(route_of(stage).is_some() && bounds.key.1 == 0)
+}
+
+/// Raise the wall when a run is in a fenced battleground, and replace it when the shape changes
+/// ([`Bounds::key`]) or take it down when the bounds open. The run's end despawns it with the
+/// other [`RunEntity`]s.
 fn build_barrier(
     mut commands: Commands,
     selection: Res<Selection>,
+    bounds: Res<Bounds>,
     loading: Res<benilla_app::survivors_host::loading_screen::LoadingScreen>,
     hero: Query<&Transform, With<Hero>>,
     existing: Query<(Entity, &Barrier)>,
@@ -204,8 +215,10 @@ fn build_barrier(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut images: ResMut<Assets<Image>>,
 ) {
-    let stale = existing.iter().any(|(_, b)| b.stage != selection.stage);
-    if !stale && !existing.is_empty() {
+    let want = wants_wall(&bounds, selection.stage);
+    let gone = |b: &Barrier| !want || b.key != bounds.key;
+    let stale = existing.iter().any(|(_, b)| gone(b));
+    if !stale && (!want || !existing.is_empty()) {
         return;
     }
     // The ground under the hero is only trustworthy once the loading screen has lifted.
@@ -213,7 +226,7 @@ fn build_barrier(
         return;
     };
     for (e, b) in &existing {
-        if b.stage != selection.stage {
+        if gone(b) {
             commands.entity(e).despawn();
         }
     }
@@ -221,9 +234,8 @@ fn build_barrier(
         // The old wall goes this frame; the new one is raised next.
         return;
     }
-    let map = selection.stage_def();
-    let center = arena(map);
-    let radius = map.leash;
+    let center = bounds.centre;
+    let radius = bounds.leash;
     let n = ((std::f32::consts::TAU * radius / 12.0) as usize).clamp(24, 48);
     let step = std::f32::consts::TAU * radius / n as f32;
     let material = materials.add(StandardMaterial {
@@ -237,7 +249,7 @@ fn build_barrier(
         ..default()
     });
     let mut barrier = Barrier {
-        stage: selection.stage,
+        key: bounds.key,
         center,
         radius,
         ground: Vec::new(),
@@ -363,5 +375,56 @@ fn tend_barrier(
         if let Some(mesh) = meshes.get_mut(&b.segments[i]) {
             b.write_segment(mesh, i);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::data;
+    use crate::route::{bounds_for, RouteRun, END_RING};
+
+    fn undying() -> usize {
+        data::MAPS
+            .iter()
+            .position(|m| m.name == "Undying Run")
+            .expect("the Undying Run is a battleground")
+    }
+
+    #[test]
+    fn a_zone_keeps_its_wall_as_before() {
+        for (stage, def) in data::MAPS.iter().enumerate() {
+            if route_of(stage).is_some() {
+                continue;
+            }
+            let b = bounds_for(stage, &RouteRun::default());
+            assert!(wants_wall(&b, stage), "{}", def.name);
+            assert_eq!(b.leash, def.leash, "{}", def.name);
+        }
+    }
+
+    #[test]
+    fn a_route_has_a_wall_only_in_its_end_ring() {
+        let map = undying();
+        // Before the start, and on the open road, no wall.
+        assert!(!wants_wall(&bounds_for(map, &RouteRun::default()), map));
+        let mut run = RouteRun {
+            next: 1,
+            stop: 1,
+            arrived: false,
+            placed: true,
+        };
+        let road = bounds_for(map, &run);
+        assert!(!road.fenced);
+        assert!(!wants_wall(&road, map));
+        // The end ring is a wall of its radius, keyed apart from the road.
+        let def = route_of(map).expect("a route");
+        run.stop = def.stations.len();
+        run.next = def.points().len();
+        run.arrived = true;
+        let ring = bounds_for(map, &run);
+        assert!(wants_wall(&ring, map));
+        assert_eq!(ring.leash, END_RING);
+        assert_ne!(ring.key, road.key);
     }
 }
