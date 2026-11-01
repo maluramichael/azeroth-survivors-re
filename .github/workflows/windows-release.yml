@@ -3,7 +3,9 @@
 # release. An installed copy looks for a newer release at start, downloads it in the background and
 # installs it at the next start (crates/warcraft-survivors/src/player.rs).
 #
-# No Blizzard content is packed: the game asks for the player's own WoW 1.12.1 Data folder.
+# No Blizzard content is packed: at its first start the game offers to download a WoW 1.12.1 client
+# from archive.org (fetch-data.ps1, as scripts/fetch-data.sh does) or to use one the player has.
+# The icon and the installer splash come from scripts/make-icon.py.
 name: windows-release
 
 on:
@@ -70,7 +72,7 @@ jobs:
         run: >-
           tools\vpk pack -u WarcraftSurvivors -v ${{ steps.ver.outputs.version }} -p publish
           -e warcraft-survivors.exe --packTitle "Warcraft Survivors" --packAuthors "Michael Malura"
-          -o Releases
+          -i assets\windows\icon.ico --splashImage assets\windows\splash.png -o Releases
       - name: Publish
         run: >-
           tools\vpk upload github --repoUrl $env:REPO_URL --token ${{ secrets.GITHUB_TOKEN }}
