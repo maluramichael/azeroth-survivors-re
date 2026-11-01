@@ -43,7 +43,7 @@ fn should_enrage(hp: f32, max_hp: f32) -> bool {
 /// The first time a living boss drops below the threshold: faster, harder, announced, and marked.
 /// Speed and damage are the stored base values the chase and the swing read, so scaling them in
 /// place stacks correctly with the separate `slow` and `weaken` multipliers.
-fn enrage_bosses(
+pub(super) fn enrage_bosses(
     mut commands: Commands,
     mut bosses: Query<(Entity, &mut Enemy), (Without<Enraged>, Without<Dying>)>,
     mut run: ResMut<Run>,

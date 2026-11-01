@@ -31,6 +31,16 @@ Bigger game features are built by several agents at once in the main tree. One t
    diffs, sends targeted follow-ups to the agents, and commits one commit per feature with its
    README row.
 
+## Testing without anyone at the keyboard
+
+- `cargo survivors -- --debug --class <c> --zone <z> -w --shots <dir> --script "6 shot a; 7 key F9;
+  9 hold W 2; 12 shot b; 13 quit"` plays keys and saves screenshots from inside the game and then
+  quits; no desktop capture needed (`crates/survivors-app/src/shots.rs`).
+- `cargo survivors-sim` plays every class headless through whole runs for balancing
+  (`crates/survivors-app/src/balance.rs`, knobs `SIM_*`). `the_run_keeps_its_rhythm` in the
+  suite checks the run's timeline; run `cargo test -p survivors-app --profile play` after a
+  gameplay change.
+
 ## Every new feature gets a screenshot and a README row
 
 - Take a screenshot that shows the feature. `WOW_SURVIVORS_AUTO=<class>[:idle|:all|:late]`,

@@ -380,6 +380,34 @@ fn drive(
     chat.write(ChatLine::system(format!("You gain {}.", buff.name)));
 }
 
+
+/// The world buffs for the balance simulator ([`super::balance`]), which has no window to offer
+/// them in: offered on the game's clock, the first taken once the pick time runs out, as the game
+/// does when no one picks.
+#[cfg(test)]
+pub(super) fn sim_init(app: &mut App) {
+    app.init_resource::<Buffs>();
+}
+
+#[cfg(test)]
+pub(super) fn sim_systems() -> bevy::ecs::schedule::ScheduleConfigs<bevy::ecs::system::ScheduleSystem> {
+    sim_drive.into_configs()
+}
+
+#[cfg(test)]
+fn sim_drive(mut run: ResMut<Run>, mut buffs: ResMut<Buffs>, mut rng: ResMut<Rng>) {
+    if run.elapsed < buffs.next_at + SETTLE + PICK_SECS {
+        return;
+    }
+    let offer = roll(&mut rng, &buffs.taken, OFFERED);
+    buffs.next_at += INTERVAL;
+    let Some(&index) = offer.first() else {
+        return;
+    };
+    run.buffs.add(&BUFFS[index].mods());
+    buffs.taken.push(index);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

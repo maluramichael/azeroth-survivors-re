@@ -979,6 +979,21 @@ fn show_strip(
     }
 }
 
+
+/// The run's item systems and their state, for the balance simulator ([`super::balance`]).
+#[cfg(test)]
+pub(super) fn sim_init(app: &mut App) {
+    app.init_resource::<Gear>()
+        .init_resource::<Bank>()
+        .init_resource::<Beacons>()
+        .add_message::<GotItem>();
+}
+
+#[cfg(test)]
+pub(super) fn sim_systems() -> bevy::ecs::schedule::ScheduleConfigs<bevy::ecs::system::ScheduleSystem> {
+    (arm, drop_items, collect_items).chain().into_configs()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

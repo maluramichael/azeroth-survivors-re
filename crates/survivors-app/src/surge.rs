@@ -56,7 +56,7 @@ fn phase_at(elapsed: f32) -> (bool, f32) {
 }
 
 /// Follow the run's clock. The finale has the arena to itself, so there is no surge from there on.
-fn tick(run: Res<Run>, mut surge: ResMut<Surge>) {
+pub(super) fn tick(run: Res<Run>, mut surge: ResMut<Surge>) {
     let (active, secs) = if run.elapsed >= finale::finale_at() {
         (false, f32::INFINITY)
     } else {

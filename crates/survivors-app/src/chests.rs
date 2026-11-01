@@ -265,6 +265,13 @@ fn banner(names: &[String]) -> String {
     }
 }
 
+
+/// The chest systems, for the balance simulator ([`super::balance`]).
+#[cfg(test)]
+pub(super) fn sim_systems() -> bevy::ecs::schedule::ScheduleConfigs<bevy::ecs::system::ScheduleSystem> {
+    (drop_chests, open_chests).chain().into_configs()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

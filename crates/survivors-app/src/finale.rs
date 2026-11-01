@@ -159,7 +159,7 @@ pub(super) fn finale_at() -> f32 {
 
 /// What has come this run.
 #[derive(Resource, Default)]
-struct Stage {
+pub(super) struct Stage {
     finale: bool,
     reaper: bool,
 }
@@ -182,7 +182,7 @@ pub(super) fn plugin(app: &mut App) {
 
 /// The finale and the reaper arrive on the clock.
 #[allow(clippy::too_many_arguments)]
-fn summon(
+pub(super) fn summon(
     mut commands: Commands,
     mut run: ResMut<Run>,
     mut stage: ResMut<Stage>,
@@ -234,7 +234,7 @@ fn summon(
 }
 
 /// The reaper shrugs off every blow and every spell.
-fn hunt(mut reapers: Query<&mut Enemy, With<Reaper>>) {
+pub(super) fn hunt(mut reapers: Query<&mut Enemy, With<Reaper>>) {
     for mut e in &mut reapers {
         e.hp = e.max_hp;
         e.slow = 1.0;
@@ -246,7 +246,7 @@ fn hunt(mut reapers: Query<&mut Enemy, With<Reaper>>) {
 }
 
 /// The finale's death wins the run.
-fn finale_slain(
+pub(super) fn finale_slain(
     mut run: ResMut<Run>,
     mut next: ResMut<NextState<Phase>>,
     slain: Query<(), (With<Finale>, Added<Dying>)>,

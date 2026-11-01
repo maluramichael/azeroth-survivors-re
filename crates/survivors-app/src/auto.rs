@@ -110,6 +110,28 @@ pub(super) fn from_env() -> Option<Auto> {
     })
 }
 
+/// The pilot alone, for the balance simulator ([`super::balance`]): no screenshots, no tour.
+#[cfg(test)]
+pub(super) fn pilot(class: usize, map: usize) -> Auto {
+    Auto {
+        class,
+        map,
+        idle: false,
+        all: false,
+        late: false,
+        frames: 0,
+        wait: 0.0,
+        shots: None,
+        shot_t: 0.0,
+        shot_n: 0,
+        log_t: 0.0,
+        dir: Vec3::ZERO,
+        seen: Vec::new(),
+        tour: None,
+        paused_once: true,
+    }
+}
+
 /// The walk the autopilot steers, for [`super::hero::drive_hero`].
 pub(super) fn steer(auto: &Auto) -> Vec3 {
     auto.dir

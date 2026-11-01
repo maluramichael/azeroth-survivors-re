@@ -11,6 +11,7 @@
 mod abilities;
 mod achievements;
 mod auto;
+mod balance;
 mod barrier;
 mod cards;
 mod charpanel;

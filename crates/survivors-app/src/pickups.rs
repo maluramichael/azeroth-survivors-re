@@ -346,6 +346,18 @@ fn collect_shards(
     }
 }
 
+
+/// The shard systems and their state, for the balance simulator ([`super::balance`]).
+#[cfg(test)]
+pub(super) fn sim_init(app: &mut App) {
+    app.init_resource::<Beacons>();
+}
+
+#[cfg(test)]
+pub(super) fn sim_systems() -> bevy::ecs::schedule::ScheduleConfigs<bevy::ecs::system::ScheduleSystem> {
+    (drop_shards, collect_shards).chain().into_configs()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

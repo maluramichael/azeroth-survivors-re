@@ -73,7 +73,7 @@ pub(super) struct Dot {
 
 /// A corpse playing its death before it fades.
 #[derive(Component)]
-pub(super) struct Dying(f32);
+pub(super) struct Dying(pub(super) f32);
 
 #[derive(Resource, Default)]
 pub(super) struct Spawner {

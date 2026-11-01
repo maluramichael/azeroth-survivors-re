@@ -5,3 +5,6 @@
 play = "run --profile play -p benilla"
 # `cargo survivors`: Warcraft Survivors, server-less, on the same profile.
 survivors = "run --profile play -p warcraft-survivors"
+# `cargo survivors-sim`: the balance simulator, every class through whole runs, headless
+# (`crates/survivors-app/src/balance.rs`; `SIM_CLASSES`, `SIM_ZONES`, `SIM_SEEDS`, ... pick them).
+survivors-sim = "test --profile play -p survivors-app --lib balance::balance_table -- --ignored --nocapture"

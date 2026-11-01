@@ -19,6 +19,7 @@ The `features` branch is upstream plus everything below. Newest first.
 
 | Feature | What it does | Screenshot |
 | --- | --- | --- |
+| Balance simulator | `cargo survivors-sim` plays every class through whole runs headless, with no window, GPU or game data, about 500 times faster than real time, and prints one line per run (result, level, kills, damage per second, damage taken, top spells) and one per class. `SIM_TRACE=1` adds each run's timeline every 30 seconds: level, spells, enemies spawned and alive, waves, surges, bosses. A test in the suite holds that timeline to the game's rhythm, so a change that breaks how a run flows fails. |  |
 | Screenshot tool and test scripts | F12 saves a screenshot from inside the game. `--script "6 shot a; 7 key F9; 8 hold W 2; 12 quit"` plays keys and screenshots against a run and ends it, so a test runs and photographs itself without anyone at the keyboard or a desktop capture. `--shots <dir>` picks the folder. |  |
 | Debug mode | `--debug` skips the menu into a run with the class and zone from `--class` and `--zone`, saves nothing and starts in god mode. Rings on the ground show where enemies spawn and the leash, a panel the hero's position; F5 holds the waves and the clock, F6 clears the field, F7 toggles god mode, F8 the overlay and F9 jumps to the edge. | <img src="docs/screenshots/fork-debug.jpg" width="480" alt="A warrior at the barrier in debug mode: the spawn rings on the ground and the debug panel on the left"> |
 | More launcher flags | `--auto`, `--zone` and `--shots` start a hands-off test run with screenshots; `--no-grade`, `--dpi`, `--no-vsync`, `--farclip`, `--clutter`, `--no-sound` and `--home` cover the display and other settings that were environment variables only. The dev commands that only print a list (`WOW_CAPTURE=list`, `WOW_PROBE=list`) now run without a data folder. |  |
@@ -150,7 +151,9 @@ sets the window size. Without a data folder the game stops at launch and lists w
 For testing, `--debug` starts straight into a run with the hero unhurtable, the spawn rings on the
 ground and debug keys (F5 to F9, see [CONTROLS.md](CONTROLS.md)); `--class <name>` and
 `--zone <name or index>` pick the class and battleground. `--auto <class>[:idle|:all|:late]` plays
-a run by itself. F12 saves a screenshot into `--shots <dir>`, and `--script` plays a timeline of
+a run by itself, and `cargo survivors-sim` plays every class through whole runs headless for
+balancing (`SIM_CLASSES`, `SIM_ZONES`, `SIM_SEEDS`, `SIM_LEVEL`, `SIM_DIFFICULTY`, `SIM_TRACE=1`;
+see `crates/survivors-app/src/balance.rs`). F12 saves a screenshot into `--shots <dir>`, and `--script` plays a timeline of
 keys and screenshots against the run, so a test needs nobody at the keyboard:
 
 ```bash
