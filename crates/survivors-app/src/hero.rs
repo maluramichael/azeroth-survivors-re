@@ -491,7 +491,13 @@ pub(super) fn place_camera(
     ui: UiCover,
     world: WorldPoint,
     collision: benilla_world::collision::WorldCollision,
-    prefs: Res<super::prefs::Prefs>,
+    // The player's camera settings, and the world maps, which take the wheel for their own zoom
+    // while open ([`super::worldmap`]).
+    (prefs, run_map, hub_map): (
+        Res<super::prefs::Prefs>,
+        Res<super::worldmap::WorldMapUi>,
+        Res<super::worldmap::HubMapUi>,
+    ),
     mut shake: ResMut<super::prefs::Shake>,
     // The arm length as drawn, pulled in by obstacles; 0 means "not set yet" and takes the
     // first target as it is.
@@ -507,7 +513,11 @@ pub(super) fn place_camera(
     // over-the-shoulder view. At the menu it moves the pick screen's own zoom, and not at all
     // while the cursor is over a panel.
     let over_ui = menu && ui.cursor_over_ui();
+    let map_open = run_map.open || (menu && hub_map.open);
     for w in wheel.read() {
+        if map_open {
+            continue;
+        }
         let notches = match w.unit {
             MouseScrollUnit::Line => w.y,
             MouseScrollUnit::Pixel => w.y * 0.02,
