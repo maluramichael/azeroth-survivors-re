@@ -11,7 +11,7 @@ use benilla_world::view::WorldCamera;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 
-use super::enemies::Enemy;
+use super::enemies::{Enemy, Rare};
 use super::focus::Target;
 use super::hero::{AimPoint, UiCover};
 use super::hud::{self, HudFont, UiArt, GOLD_TONE};
@@ -44,6 +44,8 @@ const PLATE: Color = Color::srgba(0.0, 0.0, 0.0, 0.55);
 const HOSTILE: Color = Color::srgba(0.62, 0.08, 0.08, 0.8);
 const HERO_BAR: Color = Color::srgb(0.0, 0.9, 0.0);
 const XP_BAR: Color = Color::srgb(0.58, 0.0, 0.55);
+/// A rare's name, silver where the others have gold.
+const RARE_TONE: Color = Color::srgb(0.78, 0.82, 0.9);
 const CLASSES: &str = "Interface\\Glues\\CharacterCreate\\UI-CharacterCreate-Classes";
 /// The frame art, 256x128: the 232x100 frame is its columns from `0.09375` on, rows to `0.78125`.
 /// The player frame draws it mirrored (`PlayerFrameTexture` texcoords `1.0, 0.09375, 0, 0.78125`),
@@ -51,6 +53,8 @@ const CLASSES: &str = "Interface\\Glues\\CharacterCreate\\UI-CharacterCreate-Cla
 const FRAME_ART: &str = "Interface\\TargetingFrame\\UI-TargetingFrame";
 /// The gold dragon of an elite or a boss (`TargetFrame_CheckClassification`).
 const ELITE_ART: &str = "Interface\\TargetingFrame\\UI-TargetingFrame-Elite";
+/// The silver dragon of a rare ([`Rare`]), the same art with a silver crown.
+const RARE_ART: &str = "Interface\\TargetingFrame\\UI-TargetingFrame-Rare";
 const FRAME_TC: [f32; 4] = [0.09375, 1.0, 0.0, 0.78125];
 const STATUS_BAR: &str = "Interface\\TargetingFrame\\UI-StatusBar";
 /// The target's portraits: a grunt, an elite, a boss.
@@ -198,6 +202,8 @@ struct Frame {
     mp_text: Entity,
     /// The gold dragon over the plain frame art.
     elite: Entity,
+    /// The silver dragon of a rare, in the gold one's place.
+    rare: Entity,
     /// The portrait layers, one shown at a time.
     icons: Vec<Entity>,
 }
@@ -311,6 +317,36 @@ struct Icon {
     shown: bool,
 }
 
+/// The dragon a target's frame wears.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Crown {
+    None,
+    Gold,
+    Silver,
+}
+
+/// The crown of a target: a rare wears silver, a boss or an elite gold, a grunt none.
+fn crown(rare: bool, boss: bool, big: bool) -> Crown {
+    if rare {
+        Crown::Silver
+    } else if boss || big {
+        Crown::Gold
+    } else {
+        Crown::None
+    }
+}
+
+/// The portrait of a target, an index into [`FOE_ICONS`]: a grunt, an elite, a boss.
+fn portrait(boss: bool, big: bool) -> usize {
+    if boss {
+        2
+    } else if big {
+        1
+    } else {
+        0
+    }
+}
+
 /// A frame art layer filling the frame.
 fn art(path: &'static str, flip: bool, shown: bool) -> impl Bundle {
     (
@@ -353,6 +389,7 @@ fn unit_frame(
         mp_fill: Entity::PLACEHOLDER,
         mp_text: Entity::PLACEHOLDER,
         elite: Entity::PLACEHOLDER,
+        rare: Entity::PLACEHOLDER,
         icons: Vec::new(),
     };
     let mut frame = root.spawn(Node {
@@ -395,6 +432,7 @@ fn unit_frame(
         f.mp_fill = bar(p, side.bars_x, MANA_Y, bars[1]);
         p.spawn(art(FRAME_ART, flip, true));
         f.elite = p.spawn(art(ELITE_ART, flip, false)).id();
+        f.rare = p.spawn(art(RARE_ART, flip, false)).id();
         f.name = label(p, font, 12.0, GOLD_TONE, side.name_x, NAME_Y, BAR_W - 6.0);
         f.level = label(p, font, 12.0, GOLD_TONE, side.level_x, LEVEL_Y, 26.0);
         let bars_cx = side.bars_x + BAR_W / 2.0;
@@ -516,7 +554,7 @@ fn show(
     selection: Res<Selection>,
     profile: Option<Res<Profile>>,
     font: Option<Res<HudFont>>,
-    enemies: Query<&Enemy>,
+    enemies: Query<(&Enemy, Has<Rare>)>,
     mut nodes: Query<&mut Node>,
     mut texts: Query<(&mut Text, &mut TextColor)>,
     mut vis: Query<&mut Visibility>,
@@ -564,7 +602,7 @@ fn show(
     let foe = target
         .0
         .and_then(|e| enemies.get(e).ok())
-        .filter(|e| !e.dead);
+        .filter(|(e, _)| !e.dead);
     if foe.is_none() && target.0.is_some() {
         target.0 = None;
     }
@@ -579,7 +617,7 @@ fn show(
             },
         );
     }
-    let Some(e) = foe else { return };
+    let Some((e, rare)) = foe else { return };
     // The con colour against the class's character, as the nameplates colour it.
     let my_level = selection
         .class
@@ -587,16 +625,20 @@ fn show(
         .map_or(1, |(class, p)| p.character(class).level);
     let [r, g, b, a] = con_color(my_level, e.def.level);
     let con = Color::srgba(r, g, b, a);
-    // The portrait and the border follow the kind: a boss and an elite wear the gold dragon.
-    let kind = if e.boss {
-        2
-    } else if e.def.big {
-        1
-    } else {
-        0
-    };
-    pick_layer(&mut vis, &f.icons, kind);
-    pick_layer(&mut vis, &[f.elite], if kind > 0 { 0 } else { 1 });
+    // The portrait and the border follow the kind: a boss and an elite wear the gold dragon, a
+    // rare the silver one.
+    let crown = crown(rare, e.boss, e.def.big);
+    pick_layer(&mut vis, &f.icons, portrait(e.boss, e.def.big));
+    pick_layer(
+        &mut vis,
+        &[f.elite],
+        if crown == Crown::Gold { 0 } else { 1 },
+    );
+    pick_layer(
+        &mut vis,
+        &[f.rare],
+        if crown == Crown::Silver { 0 } else { 1 },
+    );
     if let Ok(mut node) = nodes.get_mut(f.hp_fill) {
         set(
             &mut node.width,
@@ -609,7 +651,11 @@ fn show(
         hud::grouped(e.max_hp.ceil() as u64)
     );
     for (entity, value, color) in [
-        (f.name, e.def.name.to_string(), GOLD_TONE),
+        (
+            f.name,
+            e.def.name.to_string(),
+            if rare { RARE_TONE } else { GOLD_TONE },
+        ),
         (f.level, e.def.level.to_string(), con),
         (f.hp_text, foe_hp, Color::WHITE),
     ] {
@@ -712,6 +758,22 @@ mod tests {
         let far = Some(Vec3::new(10.0, 0.0, 40.0));
         assert_eq!(pick_index(EYE, FWD, far, &foes), None);
         assert_eq!(pick_index(EYE, FWD, None, &foes), None);
+    }
+
+    #[test]
+    fn a_rare_wears_silver_a_boss_or_elite_gold() {
+        assert_eq!(crown(true, true, false), Crown::Silver);
+        assert_eq!(crown(false, true, false), Crown::Gold);
+        assert_eq!(crown(false, false, true), Crown::Gold);
+        assert_eq!(crown(false, false, false), Crown::None);
+    }
+
+    #[test]
+    fn the_portrait_follows_the_kind() {
+        assert_eq!(portrait(true, true), 2);
+        assert_eq!(portrait(false, true), 1);
+        assert_eq!(portrait(false, false), 0);
+        assert!(portrait(true, false) < FOE_ICONS.len());
     }
 
     #[test]

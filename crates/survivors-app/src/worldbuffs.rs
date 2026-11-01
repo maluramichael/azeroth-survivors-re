@@ -159,6 +159,13 @@ struct Buffs {
     root: Option<Entity>,
 }
 
+/// The offer panel's root, so the boss bar can make room under it ([`super::bossbar`]).
+#[derive(Component)]
+pub(super) struct BuffPanel;
+
+/// The panel's height on the 768 grid: the title line and the rows, with their gaps and padding.
+pub(super) const PANEL_BOTTOM: f32 = TOP + 30.0 + OFFERED as f32 * (ROW_H + 4.0) + 20.0;
+
 /// One row of the offer: the slot (0 to 2) it takes the key of.
 #[derive(Component)]
 struct BuffRow(usize);
@@ -222,6 +229,7 @@ fn build(
     let px = Val::Px;
     commands
         .spawn((
+            BuffPanel,
             GlobalZIndex(Z),
             Node {
                 position_type: PositionType::Absolute,
