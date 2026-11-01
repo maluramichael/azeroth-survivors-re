@@ -51,13 +51,11 @@ pub(super) struct Elite;
 /// be. [`move_enemies`] still runs its timers down but neither walks it, brings it back as a
 /// stray nor swings with it, and [`spawn_enemies`] does not count it in the horde.
 #[derive(Component)]
-#[allow(dead_code)]
 pub(super) struct Steered;
 
 /// A named rare of the zone ([`super::rares`]): spawned with `boss: true` for its plate, frame
 /// and loot, but never counted in `run.bosses`.
 #[derive(Component)]
-#[allow(dead_code)]
 pub(super) struct Rare;
 
 /// An elite is this much larger, tougher and worth more than the grunt it was rolled from.
@@ -130,14 +128,6 @@ pub(super) struct Gem {
     /// Flying to the hero; the Hearthstone shard sets it on every gem.
     pub pulled: bool,
     speed: f32,
-}
-
-impl Gem {
-    /// What the gem is worth, for the look it wears ([`super::dropart::gem_look`]).
-    #[allow(dead_code)]
-    pub(super) fn kind(&self) -> GemKind {
-        self.kind
-    }
 }
 
 /// Where `def` is listed for battleground `map`, so another machine finds the same creature:

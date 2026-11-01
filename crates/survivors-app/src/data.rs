@@ -2313,7 +2313,6 @@ pub(crate) fn extras(map: usize) -> &'static [EnemyDef] {
 /// ladder, 0 its first creature and 1 its last, mixed between the two creatures either side; the
 /// rest (name, look, speed, level) is the lower one's, and it fights in melee. Adds and rares
 /// take their numbers from here so they fit the zone, and set their own name and look.
-#[allow(dead_code)]
 pub(crate) fn rung(map: usize, at: f32) -> EnemyDef {
     let foes = &roster(map).enemies;
     let t = at.clamp(0.0, 1.0) * foes.len().saturating_sub(1) as f32;

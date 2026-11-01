@@ -38,12 +38,10 @@ const FIELD_GO_TYPE: u16 = 21;
 const GO_TYPE_GENERIC: u32 = 5;
 /// `GAMEOBJECT_TYPE_CHEST`: the client's state machine lifts its lid as its state goes to
 /// [`GO_STATE_ACTIVE`] (`benilla_app::go_anim`).
-#[allow(dead_code)]
 pub(super) const GO_TYPE_CHEST: u32 = 3;
 /// `GO_STATE_READY`.
 const GO_STATE_READY: u32 = 1;
 /// `GO_STATE_ACTIVE`: a chest opened, a door open.
-#[allow(dead_code)]
 const GO_STATE_ACTIVE: u32 = 0;
 
 pub(super) fn wow_to_bevy(p: [f32; 3]) -> Vec3 {
@@ -202,7 +200,6 @@ pub(super) fn object_bundle(serial: u64, display: u32, scale: f32, pos: Vec3) ->
 }
 
 /// [`object_bundle`] as a chest ([`GO_TYPE_CHEST`]), whose lid [`open_object`] lifts.
-#[allow(dead_code)]
 pub(super) fn chest_bundle(serial: u64, display: u32, scale: f32, pos: Vec3) -> impl Bundle {
     go_bundle(serial, display, scale, pos, GO_TYPE_CHEST)
 }
@@ -237,7 +234,6 @@ fn go_bundle(serial: u64, display: u32, scale: f32, pos: Vec3, go_type: u32) -> 
 /// Open the GameObject `entity` (guid `guid`): its state goes to active, so a chest's lid lifts
 /// as a looted one's does. After deanmathieson/azeroth-survivors-re, branch `progression`,
 /// `10c6a77` (`treasure.rs`), MIT OR Apache-2.0.
-#[allow(dead_code)]
 pub(super) fn open_object(
     entity: Entity,
     guid: u64,

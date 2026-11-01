@@ -8,17 +8,26 @@ use bevy::prelude::*;
 
 use super::chatlog::{ChatKind, ChatLine};
 use super::data;
-use super::dropart::DropArt;
+use super::dropart::{self, DropArt};
 use super::enemies::{Dying, Elite, Enemy, Rare};
 use super::finale::Finale;
 use super::hero::{Hero, Peer};
 use super::items::drop_boost;
 use super::units::{self, flat, Fx};
 use super::{GuestMail, HeroState, Mail, Rng, Run};
+use benilla_app::survivors_host::net::{FieldChanged, Guid, ObjectStore};
+use benilla_app::survivors_host::sound::GlueSound;
 
-/// `GameObjectDisplayInfo` 259, `TreasureChest01.mdx`.
-const CHEST_DISPLAY: u32 = 259;
-const CHEST_SCALE: f32 = 1.0;
+/// Whether an opened chest shows its lid lifting and stays a moment ([`Spent`]). Off, it goes the
+/// moment it is opened, as it did before it was a model with a lid.
+const LID_OPENS: bool = true;
+/// Seconds an opened chest stays before it fades out.
+const LID_SECS: f32 = 2.5;
+/// Seconds more the fade has before the chest is despawned for good, in case nothing fades it
+/// (the balance simulator has no models).
+const FADE_GRACE: f32 = 3.0;
+/// The `SoundEntries` kit the opening plays.
+const SOUND_OPEN_KIT: &str = "ChestOpen";
 /// Seconds a chest waits.
 const LIFE: f32 = 120.0;
 /// How near the hero must walk, in yards.
@@ -38,7 +47,7 @@ const SPELL_OPEN: u32 = 139;
 pub(super) fn plugin(app: &mut App) {
     app.add_systems(
         Update,
-        (drop_chests, open_chests)
+        (drop_chests, open_chests, fade_opened)
             .chain()
             .after(WorldStage::Input)
             .run_if(super::run_on)
@@ -49,7 +58,6 @@ pub(super) fn plugin(app: &mut App) {
 /// Who left a chest, for its look ([`super::dropart`]): an elite, a boss or a rare, the finale
 /// (or the bonus boss), or a guard post ([`super::guards`]).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-#[allow(dead_code)]
 pub(super) enum ChestTier {
     Elite,
     Boss,
@@ -59,8 +67,14 @@ pub(super) enum ChestTier {
 
 /// A chest that does not open yet: a guard post's, while its camp stands ([`super::guards`]).
 #[derive(Component)]
-#[allow(dead_code)]
 pub(super) struct Locked;
+
+/// An opened chest: its lid lifts for [`LID_SECS`], then it fades out.
+#[derive(Component)]
+struct Spent {
+    left: f32,
+    fading: bool,
+}
 
 /// A chest on the ground, holding this many rank-ups.
 #[derive(Component)]
@@ -114,6 +128,7 @@ fn clear_of(hero: Vec3, at: Vec3) -> Vec3 {
 }
 
 /// A chest of `ranks` on the ground at `at`, left by `tier`; its look is [`super::dropart`]'s.
+/// A GameObject of the chest type, so the client lifts its lid as its state goes to open.
 pub(super) fn spawn_chest(
     commands: &mut Commands,
     run: &mut Run,
@@ -121,11 +136,14 @@ pub(super) fn spawn_chest(
     ranks: usize,
     tier: ChestTier,
 ) -> Entity {
-    let e = units::spawn_object(commands, run.guid(), CHEST_DISPLAY, CHEST_SCALE, at);
+    let (display, scale) = dropart::chest_look(tier);
     commands
-        .entity(e)
-        .insert((Chest { ranks, life: LIFE }, DropArt::Chest(tier)));
-    e
+        .spawn((
+            units::chest_bundle(run.guid(), display, scale, at),
+            Chest { ranks, life: LIFE },
+            DropArt::Chest(tier),
+        ))
+        .id()
 }
 
 /// Elites and bosses leave a chest where they fall, but never at the hero's feet. A rare's always
@@ -140,20 +158,22 @@ fn drop_chests(
 ) {
     let hpos = hero.single().map(|h| h.translation).ok();
     for (tf, enemy, elite, finale, rare) in &dead {
-        // The finale ends the run on the spot; there is no one left to open its chest.
-        if finale || !(enemy.boss || elite) {
+        if !(enemy.boss || elite) {
             continue;
         }
         if !enemy.boss && rng.f32() >= ELITE_CHANCE * drop_boost() {
             continue;
         }
         let bonus = rng.f32() < BONUS_CHANCE;
-        let ranks = match (enemy.boss && !rare, bonus) {
+        // The finale's chest holds five: it lies there while the bonus portal is open.
+        let ranks = match (enemy.boss && !rare, bonus || finale) {
             (false, false) => 1,
             (false, true) | (true, false) => 3,
             (true, true) => 5,
         };
-        let tier = if enemy.boss {
+        let tier = if finale {
+            ChestTier::Finale
+        } else if enemy.boss {
             ChestTier::Boss
         } else {
             ChestTier::Elite
@@ -176,11 +196,13 @@ fn open_chests(
     hero: Query<(Entity, &Transform), With<Hero>>,
     mut peers: Query<(Entity, &Transform, &mut HeroState), (With<Peer>, Without<Hero>)>,
     mut chests: Query<
-        (Entity, &Transform, &mut Chest),
+        (Entity, &Transform, &mut Chest, &Guid, &mut ObjectStore),
         (Without<Hero>, Without<Peer>, Without<Locked>),
     >,
     spells: Option<Res<benilla_app::survivors_host::ui_action::Spells>>,
     mut fx: Fx,
+    mut fields: MessageWriter<FieldChanged>,
+    mut sound: Option<MessageWriter<GlueSound>>,
     mut chat: MessageWriter<ChatLine>,
     mut mail: ResMut<GuestMail>,
 ) {
@@ -191,7 +213,7 @@ fn open_chests(
         return;
     }
     let dt = time.delta_secs();
-    for (e, tf, mut chest) in &mut chests {
+    for (e, tf, mut chest, guid, mut store) in &mut chests {
         chest.life -= dt;
         if chest.life <= 0.0 {
             commands.entity(e).despawn();
@@ -222,8 +244,43 @@ fn open_chests(
             None
         };
         if let Some(by) = opened {
-            commands.entity(e).despawn();
             fx.impact(by, SPELL_OPEN);
+            if LID_OPENS {
+                // The lid lifts; the chest is no pick-up any more and its column goes with
+                // its `DropArt`.
+                units::open_object(e, guid.0, &mut store, &mut fields);
+                if let Some(sound) = sound.as_mut() {
+                    sound.write(GlueSound(SOUND_OPEN_KIT));
+                }
+                commands
+                    .entity(e)
+                    .remove::<(Chest, DropArt)>()
+                    .insert(Spent {
+                        left: LID_SECS,
+                        fading: false,
+                    });
+            } else {
+                commands.entity(e).despawn();
+            }
+        }
+    }
+}
+
+/// An opened chest stands with its lid up a moment, then fades out.
+fn fade_opened(mut commands: Commands, time: Res<Time>, mut spent: Query<(Entity, &mut Spent)>) {
+    let dt = time.delta_secs();
+    for (e, mut s) in &mut spent {
+        s.left -= dt;
+        if s.left > 0.0 {
+            continue;
+        }
+        if !s.fading {
+            s.fading = true;
+            commands
+                .entity(e)
+                .insert(benilla_world::model_fade::DespawnFade::default());
+        } else if s.left <= -FADE_GRACE {
+            commands.entity(e).despawn();
         }
     }
 }
@@ -294,7 +351,7 @@ fn banner(names: &[String]) -> String {
 /// The chest systems, for the balance simulator ([`super::balance`]).
 #[cfg(test)]
 pub(super) fn sim_systems() -> bevy::ecs::schedule::ScheduleConfigs<bevy::ecs::system::ScheduleSystem> {
-    (drop_chests, open_chests).chain().into_configs()
+    (drop_chests, open_chests, fade_opened).chain().into_configs()
 }
 
 #[cfg(test)]

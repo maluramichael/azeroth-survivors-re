@@ -124,17 +124,6 @@ impl Quality {
             Quality::Epic => 6.0,
         }
     }
-
-    /// Height of the beam over the drop, in yards: the better, the taller.
-    pub(super) fn beam(self) -> f32 {
-        match self {
-            Quality::Poor => 1.2,
-            Quality::Common => 2.2,
-            Quality::Uncommon => 3.5,
-            Quality::Rare => 5.0,
-            Quality::Epic => 7.0,
-        }
-    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
@@ -808,7 +797,6 @@ fn lay(commands: &mut Commands, item: Item, at: Vec3) {
 /// the run's progress and laid on the ground at `pos`, or put on at once with `wear_now` (the
 /// finale's, when the run ends before anyone could walk to it). On top of the boss's random drop.
 #[derive(Message, Clone)]
-#[allow(dead_code)]
 pub(crate) struct BossDrop {
     pub pos: Vec3,
     pub tpl: &'static Tpl,
