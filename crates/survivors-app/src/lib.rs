@@ -10,6 +10,7 @@
 
 mod abilities;
 mod achievements;
+mod antialias;
 mod auto;
 mod balance;
 mod barrier;
@@ -88,7 +89,7 @@ impl Plugin for SurvivorsPlugin {
             .add_plugins((grade::plugin, kit::plugin, dmgmeter::plugin))
             .add_plugins((collection::plugin, loottables::plugin, achievements::plugin))
             .add_plugins((modding::plugin, questlog::plugin, threats::plugin, framerate::plugin))
-            .add_plugins(gfxpresets::plugin)
+            .add_plugins((antialias::plugin, gfxpresets::plugin))
             .add_plugins((races::plugin, records::plugin, surge::plugin, enrage::plugin, prefs::plugin, textfield::plugin))
             .add_plugins((
                 trainer::plugin,

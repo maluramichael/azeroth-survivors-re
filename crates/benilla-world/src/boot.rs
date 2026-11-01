@@ -85,8 +85,10 @@ pub fn tuned_default_plugins(mut primary_window: Window) -> PluginGroupBuilder {
         //
         // M2/WMO/ADT load through our own `mpq://` loaders; there is no glTF.
         .disable::<bevy::gltf::GltfPlugin>()
-        // No bevy AA: no Fxaa/TAA/SMAA/CAS component anywhere (MSAA is core render, unaffected).
-        .disable::<bevy::anti_alias::AntiAliasPlugin>()
+        // `bevy::anti_alias::AntiAliasPlugin` stays on: the survivors options put an Fxaa or Smaa
+        // component on the world camera (`survivors-app/src/antialias.rs`). Nothing here adds one,
+        // so TAA and CAS cost only their registered nodes, and a camera without the component
+        // skips each node. MSAA is core render, unaffected.
         // No gamepad input; 1.12's bindings are keyboard/mouse.
         .disable::<bevy::gilrs::GilrsPlugin>()
 }

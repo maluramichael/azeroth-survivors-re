@@ -1,11 +1,13 @@
 //! The survivors grade: a light ReShade-style polish (CAS sharpening, vibrance, a soft S-curve, a
 //! touch of warmth) on the world camera, after the FFXGlow filter passes and before the HUD, which
-//! composites over it untouched. On by default in survivors; `G` toggles it in play, and
-//! `?grade=0` (`WOW_GRADE=0` native) starts it off.
+//! composites over it untouched. Whether it is on, and its sharpness, are the player's
+//! [`Prefs::grade`] and [`Prefs::sharpness`] (on by default), followed live; `G` toggles it in
+//! play and saves the choice, and `?grade=0` (`WOW_GRADE=0` native) starts the session off
+//! whatever the saved setting says.
 //!
 //! It is Bevy's [`FullscreenMaterial`]: one uniform, one fragment shader
 //! (`shaders/survivors_grade.wgsl`), and a node the plugin places between FFXGlow and the end of
-//! the world's post-processing.
+//! the world's post-processing, after the optional FXAA/SMAA pass ([`super::antialias`]).
 
 use bevy::core_pipeline::core_3d::graph::{Core3d, Node3d};
 use bevy::core_pipeline::fullscreen_material::{FullscreenMaterial, FullscreenMaterialPlugin};
@@ -18,6 +20,8 @@ use bevy::render::render_resource::ShaderType;
 use bevy::shader::ShaderRef;
 
 use benilla_world::view::WorldCamera;
+
+use super::prefs::Prefs;
 
 /// The grade's uniform, on the world camera. `amount` 0 is the identity, and the toggle eases it.
 #[derive(Component, Clone, Copy, ExtractComponent, ShaderType)]
@@ -51,10 +55,14 @@ impl FullscreenMaterial for Grade {
         Some(Core3d.intern())
     }
 
-    /// After the glow's filter passes, before the world's post-processing ends.
+    /// After the glow's filter passes and the anti-aliasing (FXAA, then SMAA; each a no-op on a
+    /// camera without its component), before the world's post-processing ends: the sharpening
+    /// works on the smoothed picture.
     fn node_edges() -> Vec<InternedRenderLabel> {
         vec![
             Node3d::Tonemapping.intern(),
+            Node3d::Fxaa.intern(),
+            Node3d::Smaa.intern(),
             Self::node_label().intern(),
             Node3d::EndMainPassPostProcessing.intern(),
         ]
@@ -63,13 +71,32 @@ impl FullscreenMaterial for Grade {
 
 /// Whether the grade is wanted; the camera's `amount` eases toward it.
 #[derive(Resource)]
-struct GradeOn(bool);
+struct GradeOn {
+    wanted: bool,
+    /// The last [`Prefs::grade`] this saw. A change of the setting from outside (the options)
+    /// moves `wanted`; any other change to [`Prefs`] leaves a `WOW_GRADE=0` session alone.
+    seen: bool,
+}
+
+/// The grade's start state: the saved setting, unless `WOW_GRADE=0` switches it off for the
+/// session.
+fn start_state(saved: bool, env: Option<&str>) -> bool {
+    saved && env != Some("0")
+}
 
 pub(super) fn plugin(app: &mut App) {
-    let on = benilla_app::survivors_host::webenv::var("WOW_GRADE").is_none_or(|v| v != "0");
     app.add_plugins(FullscreenMaterialPlugin::<Grade>::default())
-        .insert_resource(GradeOn(on))
-        .add_systems(Update, (attach, toggle, drive).chain());
+        .add_systems(Startup, init_on)
+        .add_systems(Update, (attach, follow_prefs, toggle, drive).chain());
+}
+
+/// Reads the saved setting once [`Prefs`] is in the world.
+fn init_on(mut commands: Commands, prefs: Res<Prefs>) {
+    let env = benilla_app::survivors_host::webenv::var("WOW_GRADE");
+    commands.insert_resource(GradeOn {
+        wanted: start_state(prefs.grade, env.as_deref()),
+        seen: prefs.grade,
+    });
 }
 
 fn attach(
@@ -81,20 +108,65 @@ fn attach(
     }
 }
 
-fn toggle(keys: Res<ButtonInput<KeyCode>>, mut on: ResMut<GradeOn>) {
-    if keys.just_pressed(KeyCode::KeyG) {
-        on.0 = !on.0;
+/// The options switched the grade: follow the setting.
+fn follow_prefs(prefs: Res<Prefs>, on: Option<ResMut<GradeOn>>) {
+    let Some(mut on) = on else { return };
+    if prefs.grade != on.seen {
+        on.seen = prefs.grade;
+        on.wanted = prefs.grade;
     }
 }
 
-/// Eases `amount` over a quarter second.
-fn drive(time: Res<Time<Real>>, on: Res<GradeOn>, mut grades: Query<&mut Grade>) {
-    let target = if on.0 { 1.0 } else { 0.0 };
+/// `G` flips the grade and saves the choice, so the options row shows it and the next start keeps
+/// it.
+fn toggle(
+    keys: Res<ButtonInput<KeyCode>>,
+    on: Option<ResMut<GradeOn>>,
+    mut prefs: ResMut<Prefs>,
+) {
+    let Some(mut on) = on else { return };
+    if keys.just_pressed(KeyCode::KeyG) {
+        on.wanted = !on.wanted;
+        on.seen = on.wanted;
+        prefs.grade = on.wanted;
+        prefs.save();
+    }
+}
+
+/// Eases `amount` over a quarter second; the sharpness follows [`Prefs::sharpness`].
+fn drive(
+    time: Res<Time<Real>>,
+    on: Option<Res<GradeOn>>,
+    prefs: Res<Prefs>,
+    mut grades: Query<&mut Grade>,
+) {
+    let Some(on) = on else { return };
+    let target = if on.wanted { 1.0 } else { 0.0 };
+    let sharpness = prefs.sharpness.clamp(0.0, 1.0);
     let k = 1.0 - (-time.delta_secs() * 12.0).exp();
     for mut g in &mut grades {
+        g.sharpness = sharpness;
         g.amount += (target - g.amount) * k;
         if (g.amount - target).abs() < 1e-3 {
             g.amount = target;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_grade_starts_from_the_saved_setting() {
+        assert!(start_state(true, None));
+        assert!(!start_state(false, None));
+        assert!(start_state(true, Some("1")));
+    }
+
+    #[test]
+    fn the_env_switch_turns_a_saved_on_off_but_never_a_saved_off_on() {
+        assert!(!start_state(true, Some("0")));
+        assert!(!start_state(false, Some("0")));
     }
 }

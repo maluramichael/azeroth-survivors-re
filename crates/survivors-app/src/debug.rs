@@ -7,7 +7,8 @@
 //!   the leash and the spawn rings on the ground, the hero's position and the keys.
 //!
 //! The keys, debug mode only: F5 holds the waves and the clock, F6 clears the field, F7 toggles
-//! god mode, F8 the overlay, F9 puts the hero at the edge the camera looks at.
+//! god mode, F8 the overlay, F9 puts the hero at the edge the camera looks at, F10 steps MSAA and
+//! F11 the anti-aliasing (FXAA, SMAA) live.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -90,7 +91,7 @@ pub(super) fn plugin(app: &mut App) {
         return;
     }
     GOD.store(true, Ordering::Relaxed);
-    info!("survivors debug: on (F5 waves, F6 clear, F7 god mode, F8 overlay, F9 to the edge)");
+    info!("survivors debug: on (F5 waves, F6 clear, F7 god mode, F8 overlay, F9 to the edge, F10 MSAA, F11 AA)");
     app.insert_resource(DebugMode {
         started: false,
         ready: 0.0,
@@ -203,6 +204,10 @@ fn keys(
     mut hero: Query<&mut Transform, With<Hero>>,
     mut foes: Query<(Entity, &mut Enemy)>,
     mut chat: MessageWriter<super::chatlog::ChatLine>,
+    mut picture: (
+        ResMut<benilla_app::survivors_host::cvars::Cvars>,
+        ResMut<super::prefs::Prefs>,
+    ),
 ) {
     let in_run = matches!(phase.get(), Phase::Playing | Phase::LevelUp | Phase::Paused);
     let mut say = |s: String| chat.write(super::chatlog::ChatLine::system(s));
@@ -222,6 +227,31 @@ fn keys(
     }
     if keys.just_pressed(KeyCode::F8) {
         mode.overlay = !mode.overlay;
+    }
+    // F10 steps MSAA live through 1, 2, 4, 8 samples; F11 the post-process anti-aliasing. Not
+    // saved: the prefs only reach the file from the Options window.
+    if keys.just_pressed(KeyCode::F10) {
+        let (cvars, _) = &mut picture;
+        let now = cvars.num("gxMultisample").unwrap_or(1.0) as u32;
+        let next = match now {
+            0 | 1 => 2,
+            2 | 3 => 4,
+            4..=7 => 8,
+            _ => 1,
+        };
+        cvars.set("gxMultisample", &next.to_string());
+        cvars.commit_latched();
+        say(format!("Debug: multisampling {next}x."));
+    }
+    if keys.just_pressed(KeyCode::F11) {
+        use super::prefs::AntiAlias;
+        let (_, prefs) = &mut picture;
+        prefs.anti_alias = match prefs.anti_alias {
+            AntiAlias::Off => AntiAlias::Fxaa,
+            AntiAlias::Fxaa => AntiAlias::Smaa,
+            AntiAlias::Smaa => AntiAlias::Off,
+        };
+        say(format!("Debug: anti-aliasing {:?}.", prefs.anti_alias));
     }
     if !in_run {
         return;
@@ -317,6 +347,7 @@ fn show_text(
              F7  god mode {}\n\
              F8  overlay\n\
              F9  to the edge ahead\n\
+             F10 MSAA  F11 AA\n\
              \n\
              {} at {}\n\
              pos {:.1} {:.1} {:.1}\n\
