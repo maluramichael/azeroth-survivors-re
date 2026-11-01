@@ -5,8 +5,9 @@
 //! Bevy UI clips only to rectangles, so the round map is composited here each frame: the ADT tiles
 //! through `md5translate.trs` (north up, 533.33 yd per 256-px tile), masked by `MinimapMask.blp`,
 //! then the player arrow, then the red `ObjectIcons` cell per live enemy, the dot the reference
-//! draws for a tracked creature. Sizes are the engine minimap's ([`crate::minimap`]), measured
-//! against its 140.8-px blip basis.
+//! draws for a tracked creature, then the [`MapMarker`]s: guard posts, chests, shrines, bosses,
+//! rares and portals, the far ones of the important kinds pinned to the ring. Sizes are the
+//! engine minimap's ([`crate::minimap`]), measured against its 140.8-px blip basis.
 
 use std::collections::HashMap;
 
@@ -40,6 +41,20 @@ const BLIP_BASIS_PX: f32 = 140.8;
 const DOT_PX: f32 = 8.0;
 /// `ObjectIcons.blp` cell 1 (left, right, top, bottom): a unit passing creature tracking.
 const TRACKED_UNIT_CELL: [f32; 4] = [0.25, 0.5, 0.0, 0.25];
+/// `ObjectIcons.blp` is a 4 by 4 sheet of round buttons, 32 px each: cell `i` sits in column
+/// `i % 4`, row `i / 4`. Seen: 0 gold, 1 red, 2 green, 4 blue.
+const fn object_cell(i: usize) -> [f32; 4] {
+    let (c, r) = ((i % 4) as f32, (i / 4) as f32);
+    [c * 0.25, (c + 1.0) * 0.25, r * 0.25, (r + 1.0) * 0.25]
+}
+/// `UI-RaidTargetingIcons.blp`: 4 by 4 cells of 64 px, the skull the eighth (column 3, row 1).
+const RAID_SKULL: [f32; 4] = [0.75, 1.0, 0.25, 0.5];
+/// Marker sizes on the 140.8-px basis, and the opacity of a marker pinned to the ring.
+const MARK_PX: f32 = 10.0;
+const MARK_BIG_PX: f32 = 13.0;
+const PINNED_ALPHA: f32 = 0.55;
+/// Gap between a pinned marker's edge and the ring's rim, in texels.
+const RIM_GAP: f32 = 6.0;
 const ARROW_PX: f32 = 33.6;
 const ARROW_OFFSET_PX: Vec2 = Vec2::new(0.51, -1.73);
 
@@ -60,10 +75,10 @@ pub(super) struct MapBody;
 
 /// Something the minimap marks with an icon of its own, set by the module that spawns it: a guard
 /// post ([`super::guards`]), its chest or shrine, a boss, a rare ([`super::bossbar`],
-/// [`super::rares`]) and the bonus boss's portal. Not drawn yet; [`compose`] learns it with the
-/// guard posts.
+/// [`super::rares`]) and the bonus boss's portal. The entity needs a `Transform`; one that is an
+/// [`Enemy`] and dead is not drawn. Posts, bosses and portals out of the view are pinned to the
+/// ring, half transparent; the rest only show inside it.
 #[derive(Component, Clone, Copy, PartialEq, Eq, Debug)]
-#[allow(dead_code)]
 pub(super) enum MapMarker {
     Post,
     Chest,
@@ -71,6 +86,77 @@ pub(super) enum MapMarker {
     Boss,
     Rare,
     Portal,
+}
+
+/// The art sheets a marker is cut from.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Sheet {
+    Objects,
+    Raid,
+    Skull,
+}
+
+/// How a [`MapMarker`] is drawn: the sheet and cell, the size on the 140.8-px basis, an optional
+/// colour its luma is turned into, whether it pins to the ring out of view, and the order (the
+/// higher on top).
+#[derive(Clone, Copy, Debug)]
+struct Glyph {
+    sheet: Sheet,
+    uv: [f32; 4],
+    px: f32,
+    tint: Option<[f32; 3]>,
+    pinned: bool,
+    rank: u8,
+}
+
+fn glyph(m: MapMarker) -> Glyph {
+    let objects = |cell: usize, px: f32, rank: u8| Glyph {
+        sheet: Sheet::Objects,
+        uv: object_cell(cell),
+        px,
+        tint: None,
+        pinned: false,
+        rank,
+    };
+    match m {
+        MapMarker::Rare => Glyph {
+            tint: Some([190.0, 215.0, 255.0]),
+            ..objects(4, MARK_PX, 0)
+        },
+        MapMarker::Chest => objects(0, MARK_PX, 1),
+        MapMarker::Shrine => objects(2, MARK_PX, 2),
+        MapMarker::Post => Glyph {
+            sheet: Sheet::Raid,
+            uv: RAID_SKULL,
+            px: MARK_BIG_PX,
+            tint: None,
+            pinned: true,
+            rank: 3,
+        },
+        MapMarker::Portal => Glyph {
+            pinned: true,
+            ..objects(4, MARK_BIG_PX, 4)
+        },
+        MapMarker::Boss => Glyph {
+            sheet: Sheet::Skull,
+            uv: [0.0, 1.0, 0.0, 1.0],
+            px: MARK_BIG_PX,
+            tint: None,
+            pinned: true,
+            rank: 5,
+        },
+    }
+}
+
+/// Where a marker `px` texels from the map's centre is drawn on a ring of `ring` texels: there
+/// when inside, else on the ring in the same direction (and `true`).
+fn pin(px: Vec2, ring: f32) -> (Vec2, bool) {
+    let len = px.length();
+    if len <= ring {
+        (px, false)
+    } else {
+        (px / len * ring, true)
+    }
 }
 
 #[derive(Component, Clone, Copy, PartialEq, Eq)]
@@ -122,6 +208,9 @@ struct Art {
     mask: Option<Rgba>,
     arrow: Option<Rgba>,
     icons: Option<Rgba>,
+    /// The raid target icons (the guard post's skull) and the target frame's boss skull.
+    raid: Option<Rgba>,
+    skull: Option<Rgba>,
 }
 
 #[derive(Resource)]
@@ -367,7 +456,7 @@ pub(super) fn zone_text(
     }
 }
 
-/// Recomposite the map around the hero: tiles, mask, arrow, then the enemy dots.
+/// Recomposite the map around the hero: tiles, mask, arrow, the enemy dots, then the markers.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn compose(
     mut map: ResMut<MiniMap>,
@@ -377,6 +466,7 @@ pub(super) fn compose(
     phase: Res<State<super::Phase>>,
     hero: Query<&Transform, With<Hero>>,
     enemies: Query<(&Transform, &Enemy)>,
+    markers: Query<(&Transform, &MapMarker, Option<&Enemy>)>,
     mut images: ResMut<Assets<Image>>,
     time: Res<Time<Real>>,
     mut next_at: Local<f32>,
@@ -418,6 +508,8 @@ pub(super) fn compose(
             mask: Rgba::decode(&mut assets, "Textures\\MinimapMask"),
             arrow: Rgba::decode(&mut assets, benilla_app::survivors_host::minimap::blips::PLAYER_ARROW_TEXTURE),
             icons: Rgba::decode(&mut assets, "Interface\\Minimap\\ObjectIcons"),
+            raid: Rgba::decode(&mut assets, "Interface\\TargetingFrame\\UI-RaidTargetingIcons"),
+            skull: Rgba::decode(&mut assets, "Interface\\TargetingFrame\\UI-TargetingFrame-Skull"),
         });
     }
     let art = map.art.as_ref().expect("art loaded above");
@@ -544,12 +636,73 @@ pub(super) fn compose(
             });
         }
     }
+    // Markers over the dots, the higher ranks last. The ring a pinned one rests on keeps it clear
+    // of the border's rim.
+    let mut marks: Vec<(Glyph, Vec2)> = markers
+        .iter()
+        .filter(|(_, _, e)| e.is_none_or(|e| !e.dead))
+        .map(|(tf, m, _)| {
+            (
+                glyph(*m),
+                Vec2::new(tf.translation.x - p.x, tf.translation.z - p.z),
+            )
+        })
+        .collect();
+    marks.sort_by_key(|(g, _)| g.rank);
+    for (g, off) in marks {
+        let sheet = match g.sheet {
+            Sheet::Objects => art.icons.as_ref(),
+            Sheet::Raid => art.raid.as_ref(),
+            Sheet::Skull => art.skull.as_ref(),
+        };
+        let Some(sheet) = sheet else { continue };
+        let size = g.px * scale;
+        let (at, outside) = if g.pinned {
+            pin(off / yd_per_px, half - size * 0.5 - RIM_GAP)
+        } else if off.length() > radius {
+            continue;
+        } else {
+            (off / yd_per_px, false)
+        };
+        let alpha = if outside { PINNED_ALPHA } else { 1.0 };
+        draw_icon(buf, sheet, g.uv, center + at, size, alpha, g.tint);
+    }
 
     if let Some(image) = images.get_mut(&map.image) {
         if let Some(data) = image.data.as_mut() {
             data.copy_from_slice(&map.buf);
         }
     }
+}
+
+/// Blit the cell `uv` (left, right, top, bottom) of `sheet` as a `size`-px square at `at`, its
+/// alpha scaled by `alpha`; with a `tint`, the cell's luma takes that colour (0..255).
+fn draw_icon(
+    buf: &mut [u8],
+    sheet: &Rgba,
+    uv: [f32; 4],
+    at: Vec2,
+    size: f32,
+    alpha: f32,
+    tint: Option<[f32; 3]>,
+) {
+    let [l, r, t, b] = uv;
+    blit(buf, at, size, |q| {
+        let f = q / size + 0.5;
+        (0.0..1.0).contains(&f.x).then_some(())?;
+        (0.0..1.0).contains(&f.y).then_some(())?;
+        let x = (l + (r - l) * f.x) * sheet.w as f32;
+        let y = (t + (b - t) * f.y) * sheet.h as f32;
+        let mut px = sheet.sample(x, y);
+        px[3] *= alpha;
+        if let Some(c) = tint {
+            let luma = (px[0] * 0.3 + px[1] * 0.59 + px[2] * 0.11) / 255.0;
+            for k in 0..3 {
+                px[k] = (c[k] * luma * 1.25).min(255.0);
+            }
+        }
+        Some(px)
+    });
 }
 
 /// Alpha-blend a `size`-px square centred at `at`; `shade` maps a pixel's offset from the centre
@@ -574,5 +727,45 @@ fn blit(buf: &mut [u8], at: Vec2, size: f32, shade: impl Fn(Vec2) -> Option<[f32
                 buf[o + k] = (dst + (src[k] - dst) * a) as u8;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn edge_markers_clamp_to_the_ring() {
+        let ring = 80.0;
+        let (inside, out) = pin(Vec2::new(30.0, -40.0), ring);
+        assert_eq!(inside, Vec2::new(30.0, -40.0));
+        assert!(!out);
+        let far = Vec2::new(300.0, -400.0);
+        let (at, out) = pin(far, ring);
+        assert!(out);
+        assert!((at.length() - ring).abs() < 1e-3, "{}", at.length());
+        assert!((at.normalize() - far.normalize()).length() < 1e-5, "same direction");
+        // Right on the ring stays put; the centre does not divide by zero.
+        assert!(!pin(Vec2::new(ring, 0.0), ring).1);
+        assert_eq!(pin(Vec2::ZERO, ring), (Vec2::ZERO, false));
+    }
+
+    #[test]
+    fn only_the_far_kinds_pin_and_the_important_ones_draw_last() {
+        for m in [MapMarker::Post, MapMarker::Boss, MapMarker::Portal] {
+            assert!(glyph(m).pinned, "{m:?}");
+        }
+        for m in [MapMarker::Chest, MapMarker::Shrine, MapMarker::Rare] {
+            assert!(!glyph(m).pinned, "{m:?}");
+        }
+        assert!(glyph(MapMarker::Boss).rank > glyph(MapMarker::Post).rank);
+        assert!(glyph(MapMarker::Post).rank > glyph(MapMarker::Chest).rank);
+    }
+
+    #[test]
+    fn object_cells_tile_the_sheet() {
+        assert_eq!(object_cell(0), [0.0, 0.25, 0.0, 0.25]);
+        assert_eq!(object_cell(1), TRACKED_UNIT_CELL);
+        assert_eq!(object_cell(4), [0.0, 0.25, 0.25, 0.5]);
     }
 }
