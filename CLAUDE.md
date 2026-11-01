@@ -4,25 +4,19 @@
 
 `AGENTS.md` is upstream's file and stays untouched; the fork's own rules live here.
 
-## Branches and worktrees
+## Where the work happens
 
-- `features` is the fork's default branch: `upstream/main` (OutThisLife/azeroth-survivors-re)
-  plus every feature branch merged in with `--no-ff`. It is what people see on the fork and what
-  gets played locally, from the main tree `~/development/projects/azeroth-survivors-re`.
-- `main` mirrors `upstream/main` and gets no commits of its own.
-- New work happens in the work worktree `~/development/projects/azeroth-survivors-re-work`:
-  `git switch -c <feature> upstream/main` there, never a branch off `features`. Upstream's
-  `docs/CONTRIBUTING.md` wants one change per pull request, so a feature branch holds that one
-  change and nothing else. PRs go to `-R OutThisLife/azeroth-survivors-re` with
-  `.github/pull_request_template.md`.
-- When a feature is done, merge its branch into `features`, then update the README table there.
-  New upstream commits are merged into `features` as well.
+- This repository is a fork of OutThisLife/azeroth-survivors-re (`upstream`), not the original.
+- All work happens on `features`, the fork's default branch, in the main tree
+  `~/development/projects/azeroth-survivors-re`. It is what people see on the fork and what gets
+  played locally. Commit straight on `features`; there are no feature branches and no pull
+  requests to upstream. Do not ask about them.
+- New upstream commits may be merged into `features` when Michael asks for it.
 
 ## Feature rounds with several agents in one tree
 
-Upstream merges nothing so far, so bigger game features are built straight on `features` in
-the main tree, not as upstream PR branches. One tree means one `target/` and one incremental
-build. A round runs like this:
+Bigger game features are built by several agents at once in the main tree. One tree means one
+`target/` and one incremental build. A round runs like this:
 
 1. The orchestrator (the main session) lays the shared groundwork itself first: data types,
    resources and the hooks every feature needs, plus an empty module per feature already
@@ -45,7 +39,5 @@ build. A round runs like this:
 - Save it as JPEG, 1600 px wide, as `docs/screenshots/fork-<feature>.jpg`, and keep a copy in
   `~/.claude/screenshots/azeroth-survivors-re/`.
 - Add a row at the top of the "What this fork adds" table in `README.md`: feature, what it does in
-  one or two sentences, and the screenshot at `width="480"`. The table has no upstream PR column.
-  A change with nothing to show (a fix, tooling) gets a row without a screenshot.
-- README rows and screenshots are committed on `features` only, never on a feature branch: they
-  would break upstream's one-change-per-PR rule.
+  one or two sentences, and the screenshot at `width="480"`. A change with nothing to show (a
+  fix, tooling) gets a row without a screenshot.

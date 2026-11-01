@@ -15,8 +15,7 @@ from-scratch WoW 1.12.1 client engine (Rust + [Bevy](https://bevy.org)).**
 
 This is [maluramichael/azeroth-survivors-re](https://github.com/maluramichael/azeroth-survivors-re),
 a fork of [OutThisLife/azeroth-survivors-re](https://github.com/OutThisLife/azeroth-survivors-re).
-The `features` branch is upstream plus everything below; each feature is also offered upstream
-as its own pull request. Newest first.
+The `features` branch is upstream plus everything below. Newest first.
 
 | Feature | What it does | Screenshot |
 | --- | --- | --- |
