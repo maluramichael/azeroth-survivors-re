@@ -10,14 +10,17 @@ use bevy_replicon::prelude::{ClientState, ClientSystems, Remote};
 use super::{Session, ASIDE_YARDS};
 use super::smooth;
 use super::wire::{
-    Aim, CardAction, EndRun, FxBatch, Loadout, NetMail, NetPicked, NetQuests, Hello, Look, MoveInput, NetAuras, NetBuild, NetEnemy, NetFx, NetHero, NetPos,
+    Aim, CardAction, EndRun, FxBatch, Loadout, NetMail, NetMarker, NetMissile, NetOpen, NetPicked, NetQuests, NetTelegraph, Hello, Look, MoveInput, NetAuras, NetBuild, NetEnemy, NetFx, NetHero, NetPos,
     NetRun, NetVitals, Refused, RunOver, StartRun, Welcome,
 };
 use crate::chatlog::ChatLine;
-use crate::enemies::{self, Elite, Enemy};
+use crate::enemies::{self, Elite, Enemy, Rare};
+use crate::enrage::Enraged;
 use crate::hero::Hero;
+use crate::minimap::MapMarker;
 use crate::profile::Profile;
-use crate::units::{self, area_bundle, object_bundle, unit_bundle, AreaLook, Fx, Marks, ObjLook};
+use crate::threats::{self, Canvas, Seen};
+use crate::units::{self, area_bundle, chest_bundle, object_bundle, unit_bundle, AreaLook, Fx, Marks, ObjLook};
 use crate::{NetRole, Owned, Phase, Run, RunEntity, Selection, data, hud};
 use benilla_app::survivors_host::net::{FieldChanged, Guid, ObjectStore};
 
@@ -60,6 +63,10 @@ pub(super) fn plugin(app: &mut App) {
             step_aside,
             build_bodies,
             build_objects,
+            build_threats,
+            sync_markers,
+            lift_lids,
+            threats::animate_seen,
             smooth_bodies,
             sync_enemies,
             sync_auras,
@@ -465,10 +472,15 @@ fn build_objects(
         return;
     }
     for (e, look, pos) in &objects {
-        commands
-            .entity(e)
-            .insert((object_bundle(serials.next(), look.display, look.scale, pos.pos()), RemoteBody))
-            .remove::<RunEntity>();
+        let serial = serials.next();
+        let mut entity = commands.entity(e);
+        // A chest is built as one, so its lid lifts when the host opens it ([`lift_lids`]).
+        if look.go_type == units::GO_TYPE_CHEST {
+            entity.insert((chest_bundle(serial, look.display, look.scale, pos.pos()), RemoteBody));
+        } else {
+            entity.insert((object_bundle(serial, look.display, look.scale, pos.pos()), RemoteBody));
+        }
+        entity.remove::<RunEntity>();
     }
     for (e, look, pos) in &areas {
         commands
@@ -478,17 +490,118 @@ fn build_objects(
     }
 }
 
+/// A chest whose lid has been lifted here.
+#[derive(Component)]
+struct Lifted;
+
+/// A chest the host has opened gets its lid lifted, as a looted one's does.
+fn lift_lids(
+    mut commands: Commands,
+    mut fields: MessageWriter<FieldChanged>,
+    mut chests: Query<(Entity, &NetOpen, &Guid, &mut ObjectStore), (With<RemoteBody>, Without<Lifted>)>,
+) {
+    for (e, open, guid, mut store) in &mut chests {
+        if open.0 {
+            units::open_object(e, guid.0, &mut store, &mut fields);
+            commands.entity(e).insert(Lifted);
+        }
+    }
+}
+
+/// A telegraph or a missile arrives: the host sent the datum, this machine draws it. A telegraph
+/// fills and flashes on its own clock ([`threats::animate_seen`]); a missile follows its place
+/// like any body. Neither hurts anyone here.
+fn build_threats(
+    mut commands: Commands,
+    phase: Res<State<Phase>>,
+    mut canvas: Canvas,
+    telegraphs: Query<(Entity, &NetTelegraph), (With<Remote>, Without<Seen>)>,
+    missiles: Query<(Entity, &NetMissile, &NetPos), (With<Remote>, Without<RemoteBody>)>,
+) {
+    if *phase.get() == Phase::Menu {
+        return;
+    }
+    for (e, net) in &telegraphs {
+        canvas.telegraph_on(
+            &mut commands,
+            e,
+            net.shape.into(),
+            Vec3::from_array(net.origin),
+            net.yaw,
+            net.secs,
+            net.t,
+        );
+    }
+    for (e, net, pos) in &missiles {
+        // The replicated entity belongs to replicon, not to the run (no `RunEntity` here).
+        commands
+            .entity(e)
+            .insert((Transform::from_translation(pos.pos()), RemoteBody));
+        canvas.missile_on(&mut commands, e, net.glow);
+    }
+}
+
+/// What the minimap marks on the host's entities it marks here: a body gets the host's marker,
+/// a marker on an entity of its own (a guard post) gets a body to stand at, and a marker the host
+/// took off goes here too.
+#[allow(clippy::type_complexity)]
+fn sync_markers(
+    mut commands: Commands,
+    phase: Res<State<Phase>>,
+    posts: Query<
+        (Entity, &NetPos),
+        (
+            With<Remote>,
+            With<NetMarker>,
+            Without<RemoteBody>,
+            Without<Look>,
+            Without<ObjLook>,
+            Without<AreaLook>,
+        ),
+    >,
+    marked: Query<
+        (Entity, &NetMarker, Option<&MapMarker>),
+        (With<RemoteBody>, Or<(Changed<NetMarker>, Without<MapMarker>)>),
+    >,
+    mut removed: RemovedComponents<NetMarker>,
+) {
+    if *phase.get() != Phase::Menu {
+        for (e, pos) in &posts {
+            commands
+                .entity(e)
+                .insert((Transform::from_translation(pos.pos()), Visibility::default(), RemoteBody));
+        }
+    }
+    for (e, net, now) in &marked {
+        let want = MapMarker::from(*net);
+        if now != Some(&want) {
+            commands.entity(e).insert(want);
+        }
+    }
+    for e in removed.read() {
+        commands.entity(e).try_remove::<MapMarker>();
+    }
+}
+
 /// An enemy's body knows what it is and how it stands, for the plates, frames and minimap, and
 /// plays its death once when the host says it fell.
 fn sync_enemies(
     mut commands: Commands,
     selection: Res<Selection>,
     mut bodies: Query<
-        (Entity, Ref<NetEnemy>, Option<&mut Enemy>, &mut ObjectStore, Has<Killed>),
+        (
+            Entity,
+            Ref<NetEnemy>,
+            Option<&mut Enemy>,
+            &mut ObjectStore,
+            Has<Killed>,
+            Has<Rare>,
+            Has<Enraged>,
+        ),
         With<RemoteBody>,
     >,
 ) {
-    for (e, net, enemy, mut store, killed) in &mut bodies {
+    for (e, net, enemy, mut store, killed, rare, enraged) in &mut bodies {
         match enemy {
             None => {
                 if let Some(def) = enemies::def_at(selection.stage, net.def) {
@@ -499,12 +612,25 @@ fn sync_enemies(
                     if net.elite {
                         entity.insert(Elite);
                     }
+                    // With the enemy itself, so the boss bar's first look at it is right.
+                    if net.rare {
+                        entity.insert(Rare);
+                    }
+                    if net.enraged {
+                        entity.insert(Enraged);
+                    }
                 }
             }
             Some(mut en) if net.is_changed() => {
                 en.hp = net.hp;
                 en.max_hp = net.max_hp;
                 en.dead = net.dead;
+                if net.rare != rare {
+                    set_marker(&mut commands, e, net.rare, Rare);
+                }
+                if net.enraged != enraged {
+                    set_marker(&mut commands, e, net.enraged, Enraged);
+                }
             }
             Some(_) => {}
         }
@@ -512,6 +638,15 @@ fn sync_enemies(
             units::kill_unit(&mut store);
             commands.entity(e).insert(Killed);
         }
+    }
+}
+
+/// `marker` on `e` when `on`, else not.
+fn set_marker<C: Component>(commands: &mut Commands, e: Entity, on: bool, marker: C) {
+    if on {
+        commands.entity(e).try_insert(marker);
+    } else {
+        commands.entity(e).try_remove::<C>();
     }
 }
 

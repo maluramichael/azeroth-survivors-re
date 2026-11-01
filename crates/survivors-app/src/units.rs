@@ -121,6 +121,8 @@ impl Look {
 pub(crate) struct ObjLook {
     pub display: u32,
     pub scale: f32,
+    /// The GameObject type: [`GO_TYPE_CHEST`] for a chest, whose lid lifts, else a plain model.
+    pub go_type: u32,
 }
 
 /// The ground spell a dynamic object shows ([`spawn_area_object`]).
@@ -227,7 +229,7 @@ fn go_bundle(serial: u64, display: u32, scale: f32, pos: Vec3, go_type: u32) -> 
         Transform::from_translation(pos),
         Visibility::default(),
         RunEntity,
-        ObjLook { display, scale },
+        ObjLook { display, scale, go_type },
     )
 }
 
@@ -251,6 +253,15 @@ pub(super) fn open_object(
         old: GO_STATE_READY,
         new: GO_STATE_ACTIVE,
     });
+}
+
+/// Whether the GameObject with this `store` has been opened (a chest's lid is up).
+#[cfg_attr(not(all(feature = "coop", not(target_arch = "wasm32"))), allow(dead_code))]
+pub(super) fn is_open(store: &ObjectStore) -> bool {
+    store
+        .0
+        .raw_fields()
+        .any(|(index, value)| index == FIELD_GO_STATE && value == GO_STATE_ACTIVE)
 }
 
 /// Zero health: the animation selector plays Death and holds the corpse pose.

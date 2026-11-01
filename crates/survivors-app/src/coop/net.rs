@@ -19,8 +19,9 @@ use bevy_replicon_renet2::RenetChannelsExt;
 /// TCP 5000, which only confuses a search for what is listening.
 pub(super) const DEFAULT_PORT: u16 = 37373;
 /// "WSURV1" and the wire version: a build speaking another protocol is turned away at the
-/// handshake.
-const PROTOCOL_ID: u64 = 0x5753_5552_5631_0001;
+/// handshake. Version 2: telegraphs, missiles, chest lids and map markers replicate, and
+/// `ObjLook` and `NetEnemy` carry more.
+const PROTOCOL_ID: u64 = 0x5753_5552_5631_0002;
 /// Clients one host takes: the party's other three.
 pub(super) const MAX_CLIENTS: usize = 3;
 

@@ -11,11 +11,15 @@ use bevy_replicon::prelude::*;
 use bevy_replicon::server::server_tick::ServerTick;
 
 use super::wire::{
-    Aim, CardAction, EndRun, FxBatch, Loadout, NetMail, NetQuests, Hello, Look, MoveInput, NetAuras, NetBuild, NetEnemy, NetFx, NetHero,
+    Aim, CardAction, EndRun, FxBatch, Loadout, NetMail, NetMarker, NetMissile, NetOpen, NetQuests, NetTelegraph, Hello, Look, MoveInput, NetAuras, NetBuild, NetEnemy, NetFx, NetHero,
     NetPos, NetRun, NetVitals, Refused, RunOver, StartRun, Welcome,
 };
-use crate::enemies::{self, Elite, Enemy};
-use crate::units::{AreaLook, FxOut, Marks, ObjLook};
+use crate::enemies::{self, Elite, Enemy, Rare};
+use crate::enrage::Enraged;
+use crate::minimap::MapMarker;
+use crate::threats::{Glowing, Telegraph};
+use crate::units::{self, AreaLook, FxOut, Marks, ObjLook};
+use benilla_app::survivors_host::net::ObjectStore;
 use crate::RunEntity;
 use super::{admits, free_slot, Guest, Lobby, Session};
 use crate::chatlog::ChatLine;
@@ -53,6 +57,7 @@ pub(super) fn plugin(app: &mut App) {
             (
                 pulse,
                 tag_world,
+                mirror_markers,
                 keep_run_entity,
                 mirror.run_if(due),
                 mirror_state.run_if(due),
@@ -372,7 +377,15 @@ fn tag_world(
     phase: Res<State<Phase>>,
     selection: Res<Selection>,
     units: Query<
-        (Entity, &Transform, Option<&Enemy>, Has<Elite>, Option<&Marks>),
+        (
+            Entity,
+            &Transform,
+            Option<&Enemy>,
+            Has<Elite>,
+            Has<Rare>,
+            Has<Enraged>,
+            Option<&Marks>,
+        ),
         (
             With<Look>,
             With<RunEntity>,
@@ -382,23 +395,37 @@ fn tag_world(
         ),
     >,
     objects: Query<
-        (Entity, &Transform),
+        (Entity, &Transform, Option<&ObjLook>, Option<&ObjectStore>),
         (
             Or<(With<ObjLook>, With<AreaLook>)>,
             With<RunEntity>,
             Without<Replicated>,
         ),
     >,
+    telegraphs: Query<(Entity, &Telegraph), Without<Replicated>>,
+    missiles: Query<(Entity, &Transform, &Glowing), (With<RunEntity>, Without<Replicated>)>,
+    // A marker on an entity of its own (a guard post), with nothing else to show.
+    posts: Query<
+        (Entity, &Transform),
+        (
+            With<MapMarker>,
+            With<RunEntity>,
+            Without<Replicated>,
+            Without<Look>,
+            Without<ObjLook>,
+            Without<AreaLook>,
+        ),
+    >,
 ) {
     if !in_run(phase.get()) {
         return;
     }
-    for (e, tf, enemy, elite, marks) in &units {
+    for (e, tf, enemy, elite, rare, enraged, marks) in &units {
         let mut entity = commands.entity(e);
         entity.insert((Replicated, NetPos::new(tf.translation, yaw_of(tf.rotation), 0.0, 0)));
         if let Some(en) = enemy {
             if let Some(def) = enemies::def_ref(selection.stage, en.def) {
-                entity.insert(net_enemy(def, en, elite));
+                entity.insert(net_enemy(def, en, elite, rare, enraged));
             }
         }
         if let Some(marks) = marks {
@@ -408,14 +435,62 @@ fn tag_world(
             });
         }
     }
-    for (e, tf) in &objects {
+    for (e, tf, look, store) in &objects {
+        let mut entity = commands.entity(e);
+        entity.insert((Replicated, NetPos::new(tf.translation, yaw_of(tf.rotation), 0.0, 0)));
+        // A chest says whether its lid is up.
+        if look.is_some_and(|l| l.go_type == units::GO_TYPE_CHEST) {
+            entity.insert(NetOpen(store.is_some_and(units::is_open)));
+        }
+    }
+    // A telegraph is a datum, not a body: the guest draws it where it lies.
+    for (e, t) in &telegraphs {
+        let (shape, origin, yaw, secs, t) = t.datum();
+        commands.entity(e).insert((
+            Replicated,
+            NetTelegraph {
+                shape: shape.into(),
+                origin: origin.to_array(),
+                yaw,
+                secs,
+                t,
+            },
+        ));
+    }
+    for (e, tf, glow) in &missiles {
+        commands.entity(e).insert((
+            Replicated,
+            NetPos::new(tf.translation, yaw_of(tf.rotation), 0.0, 0),
+            NetMissile { glow: glow.index() },
+        ));
+    }
+    for (e, tf) in &posts {
         commands
             .entity(e)
             .insert((Replicated, NetPos::new(tf.translation, yaw_of(tf.rotation), 0.0, 0)));
     }
 }
 
-fn net_enemy(def: (u8, u16), en: &Enemy, elite: bool) -> NetEnemy {
+/// What the minimap marks, said to the guests: put on when a replicated entity gets a marker,
+/// changed when it changes, taken off when the marker goes.
+fn mirror_markers(
+    mut commands: Commands,
+    fresh: Query<(Entity, &MapMarker), (With<Replicated>, Without<NetMarker>)>,
+    mut marked: Query<(&MapMarker, &mut NetMarker), Changed<MapMarker>>,
+    gone: Query<Entity, (With<NetMarker>, Without<MapMarker>)>,
+) {
+    for (e, m) in &fresh {
+        commands.entity(e).insert(NetMarker::from(*m));
+    }
+    for (m, mut net) in &mut marked {
+        net.set_if_neq(NetMarker::from(*m));
+    }
+    for e in &gone {
+        commands.entity(e).remove::<NetMarker>();
+    }
+}
+
+fn net_enemy(def: (u8, u16), en: &Enemy, elite: bool, rare: bool, enraged: bool) -> NetEnemy {
     NetEnemy {
         def,
         hp: en.hp.max(0.0),
@@ -423,6 +498,8 @@ fn net_enemy(def: (u8, u16), en: &Enemy, elite: bool) -> NetEnemy {
         boss: en.boss,
         elite,
         dead: en.dead,
+        rare,
+        enraged,
     }
 }
 
@@ -481,16 +558,20 @@ fn build_of(hero: &HeroState) -> NetBuild {
 /// health, gold and build, and the party's clock and level.
 fn mirror_state(
     run: Res<Run>,
-    mut enemies: Query<(&Enemy, &mut NetEnemy)>,
+    mut enemies: Query<(&Enemy, Has<Rare>, Has<Enraged>, &mut NetEnemy)>,
+    mut chests: Query<(&ObjectStore, &mut NetOpen)>,
     mut auras: Query<(&Marks, &mut NetAuras)>,
     mut mine: Query<(&mut NetVitals, &mut NetBuild), (With<Hero>, Without<Peer>)>,
     mut puppets: Query<(&HeroState, &mut NetVitals, &mut NetBuild), (With<Peer>, Without<Hero>)>,
     mut shared: Query<(&mut NetRun, &mut NetQuests)>,
     quests: Res<crate::quests::QuestLog>,
 ) {
-    for (en, mut net) in &mut enemies {
-        let now = net_enemy(net.def, en, net.elite);
+    for (en, rare, enraged, mut net) in &mut enemies {
+        let now = net_enemy(net.def, en, net.elite, rare, enraged);
         net.set_if_neq(now);
+    }
+    for (store, mut open) in &mut chests {
+        open.set_if_neq(NetOpen(units::is_open(store)));
     }
     for (marks, mut net) in &mut auras {
         net.set_if_neq(NetAuras {

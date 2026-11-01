@@ -7,6 +7,8 @@ use bevy::prelude::*;
 use bevy_replicon::prelude::*;
 use serde::{Deserialize, Serialize};
 
+use crate::bosses::Shape;
+use crate::minimap::MapMarker;
 use crate::units::{AreaLook, FxRecord, ObjLook, Still};
 
 
@@ -72,6 +74,10 @@ pub(crate) struct NetEnemy {
     pub boss: bool,
     pub elite: bool,
     pub dead: bool,
+    /// A named rare ([`crate::enemies::Rare`]): the boss bar and the frame read it.
+    pub rare: bool,
+    /// A boss that has enraged ([`crate::enrage::Enraged`]): the boss bar names it.
+    pub enraged: bool,
 }
 
 /// A hero's health, shield, fall and gold this run.
@@ -114,6 +120,99 @@ pub(crate) struct NetRun {
     pub xp: f32,
     /// The last party-wide banner and its number ([`crate::Run::announce`]).
     pub banner: (u32, String),
+}
+
+/// A boss's ground telegraph, as a guest draws it: the host replicates the datum, every machine
+/// draws the mesh. It is made once, `t` seconds into its `secs` of warning; the guest runs the
+/// clock on from there and the blow itself (damage, the pool it leaves) stays the host's.
+#[derive(Component, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+pub(crate) struct NetTelegraph {
+    pub shape: NetShape,
+    /// Where the shape lies, in yards: its middle, or the foot of a cone or a line.
+    pub origin: [f32; 3],
+    pub yaw: f32,
+    pub secs: f32,
+    pub t: f32,
+}
+
+/// [`crate::bosses::Shape`] on the wire.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+pub(crate) enum NetShape {
+    Circle { radius: f32 },
+    Cone { radius: f32, half_angle: f32 },
+    Line { length: f32, width: f32 },
+    Donut { inner: f32, outer: f32 },
+}
+
+impl From<Shape> for NetShape {
+    fn from(shape: Shape) -> Self {
+        match shape {
+            Shape::Circle { radius } => Self::Circle { radius },
+            Shape::Cone { radius, half_angle } => Self::Cone { radius, half_angle },
+            Shape::Line { length, width } => Self::Line { length, width },
+            Shape::Donut { inner, outer } => Self::Donut { inner, outer },
+        }
+    }
+}
+
+impl From<NetShape> for Shape {
+    fn from(shape: NetShape) -> Self {
+        match shape {
+            NetShape::Circle { radius } => Self::Circle { radius },
+            NetShape::Cone { radius, half_angle } => Self::Cone { radius, half_angle },
+            NetShape::Line { length, width } => Self::Line { length, width },
+            NetShape::Donut { inner, outer } => Self::Donut { inner, outer },
+        }
+    }
+}
+
+/// A missile in flight, as a guest paints it: how it glows ([`crate::threats::Glowing`]). Where it
+/// is rides on its [`NetPos`]; it hurts nobody on a guest's machine.
+#[derive(Component, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct NetMissile {
+    pub glow: u8,
+}
+
+/// The state of a chest: `true` once its lid has been lifted (`GO_STATE_ACTIVE`). A guest lifts
+/// the lid of its copy when this turns true.
+#[derive(Component, Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct NetOpen(pub bool);
+
+/// [`MapMarker`] on the wire: the icon the minimap draws for the entity.
+#[derive(Component, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum NetMarker {
+    Post,
+    Chest,
+    Shrine,
+    Boss,
+    Rare,
+    Portal,
+}
+
+impl From<MapMarker> for NetMarker {
+    fn from(m: MapMarker) -> Self {
+        match m {
+            MapMarker::Post => Self::Post,
+            MapMarker::Chest => Self::Chest,
+            MapMarker::Shrine => Self::Shrine,
+            MapMarker::Boss => Self::Boss,
+            MapMarker::Rare => Self::Rare,
+            MapMarker::Portal => Self::Portal,
+        }
+    }
+}
+
+impl From<NetMarker> for MapMarker {
+    fn from(m: NetMarker) -> Self {
+        match m {
+            NetMarker::Post => Self::Post,
+            NetMarker::Chest => Self::Chest,
+            NetMarker::Shrine => Self::Shrine,
+            NetMarker::Boss => Self::Boss,
+            NetMarker::Rare => Self::Rare,
+            NetMarker::Portal => Self::Portal,
+        }
+    }
 }
 
 // Guest to host --------------------------------------------------------------------------------
@@ -429,6 +528,11 @@ pub(super) fn protocol(app: &mut App) {
         .replicate::<NetAuras>()
         .replicate::<NetRun>()
         .replicate::<NetQuests>()
+        // Appended after the first stage: the order is the protocol.
+        .replicate::<NetTelegraph>()
+        .replicate::<NetMissile>()
+        .replicate::<NetOpen>()
+        .replicate::<NetMarker>()
         .add_client_message::<Hello>(Channel::Ordered)
         .add_client_message::<MoveInput>(Channel::Unreliable)
         .add_client_message::<CardAction>(Channel::Ordered)
@@ -497,6 +601,53 @@ mod tests {
         assert!((p.yaw() - 1.0).abs() < std::f32::consts::TAU / 256.0);
         assert!((p.pace() - 7.0).abs() < 0.01);
         assert_eq!(p.flags, 3);
+    }
+
+    #[test]
+    fn a_telegraph_round_trips() {
+        use bevy_replicon::postcard;
+        let shapes = [
+            Shape::Circle { radius: 5.5 },
+            Shape::Cone { radius: 12.0, half_angle: 0.6 },
+            Shape::Line { length: 30.0, width: 4.0 },
+            Shape::Donut { inner: 6.0, outer: 18.0 },
+        ];
+        for shape in shapes {
+            let sent = NetTelegraph {
+                shape: shape.into(),
+                origin: [12.5, 3.25, -40.0],
+                yaw: 1.25,
+                secs: 2.0,
+                t: 0.4,
+            };
+            let mut buf = [0u8; 64];
+            let bytes = postcard::to_slice(&sent, &mut buf).expect("serialises");
+            let got: NetTelegraph = postcard::from_bytes(bytes).expect("reads back");
+            assert_eq!(got, sent);
+            assert_eq!(Shape::from(got.shape), shape);
+        }
+    }
+
+    #[test]
+    fn a_marker_and_a_missile_round_trip() {
+        use bevy_replicon::postcard;
+        for m in [
+            MapMarker::Post,
+            MapMarker::Chest,
+            MapMarker::Shrine,
+            MapMarker::Boss,
+            MapMarker::Rare,
+            MapMarker::Portal,
+        ] {
+            let mut buf = [0u8; 8];
+            let bytes = postcard::to_slice(&NetMarker::from(m), &mut buf).unwrap();
+            let back: NetMarker = postcard::from_bytes(bytes).unwrap();
+            assert_eq!(MapMarker::from(back), m);
+        }
+        let missile = NetMissile { glow: 5 };
+        let mut buf = [0u8; 8];
+        let bytes = postcard::to_slice(&missile, &mut buf).unwrap();
+        assert_eq!(postcard::from_bytes::<NetMissile>(bytes).unwrap(), missile);
     }
 
     #[test]

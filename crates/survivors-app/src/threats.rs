@@ -374,7 +374,7 @@ pub(super) struct Missile {
 
 /// A shape on the ground that fills and then strikes: a circle, a cone, a line or a ring.
 #[derive(Component)]
-struct Telegraph {
+pub(super) struct Telegraph {
     shape: Shape,
     /// Where the shape lies: its middle, or for a cone and a line the foot it points from.
     origin: Vec3,
@@ -404,6 +404,13 @@ enum Beat {
 }
 
 impl Telegraph {
+    /// What a co-op guest needs to draw this telegraph: shape, origin, facing, the warning in
+    /// seconds and how far into it the telegraph is.
+    #[cfg_attr(not(all(feature = "coop", not(target_arch = "wasm32"))), allow(dead_code))]
+    pub(super) fn datum(&self) -> (Shape, Vec3, f32, f32, f32) {
+        (self.shape, self.origin, self.yaw, self.secs, self.t)
+    }
+
     fn new(
         shape: Shape,
         origin: Vec3,
@@ -556,8 +563,28 @@ enum Glow {
     Boss,
 }
 
+/// How a missile glows, kept on it so a co-op guest paints the same ([`Canvas::missile_on`]).
+#[derive(Component, Clone, Copy)]
+pub(super) struct Glowing(Glow);
+
+#[cfg_attr(not(all(feature = "coop", not(target_arch = "wasm32"))), allow(dead_code))]
+impl Glowing {
+    /// The glow as a number for the wire.
+    pub(super) fn index(self) -> u8 {
+        self.0.index() as u8
+    }
+}
+
 impl Glow {
     const COUNT: usize = 6;
+    const ALL: [Glow; Self::COUNT] = [
+        Glow::Shadow,
+        Glow::Frost,
+        Glow::Fire,
+        Glow::Nature,
+        Glow::Arrow,
+        Glow::Boss,
+    ];
 
     fn index(self) -> usize {
         self as usize
@@ -675,16 +702,29 @@ fn launch(
     dir: Vec3,
     missile: Missile,
 ) {
+    let at = missile_at(from, dir, &missile);
+    let entity = commands.spawn((at, missile, Glowing(glow), RunEntity)).id();
+    missile_visual(commands, entity, art, meshes, materials, glow);
+}
+
+/// The look of a missile of `glow` on `entity`: a bright core and a faint halo. The host's missile
+/// wears it and so does a co-op guest's copy of one.
+fn missile_visual(
+    commands: &mut Commands,
+    entity: Entity,
+    art: &mut Art,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    glow: Glow,
+) {
     let ((core, halo), (core_mat, halo_mat)) = art.missile(glow, meshes, materials);
     commands
-        .spawn((
-            missile_at(from, dir, &missile),
-            missile,
+        .entity(entity)
+        .insert((
             Mesh3d(core),
             MeshMaterial3d(core_mat),
             NotShadowCaster,
             Visibility::default(),
-            RunEntity,
         ))
         .with_child((
             Mesh3d(halo),
@@ -864,6 +904,30 @@ pub(super) fn spawn_telegraph(
     damage: f32,
     pool: Option<(f32, f32)>,
 ) {
+    let entity = commands
+        .spawn((
+            Telegraph::new(shape, origin, yaw, secs, damage, pool),
+            RunEntity,
+        ))
+        .id();
+    telegraph_visual(commands, entity, art, meshes, materials, world, shape, origin, yaw);
+}
+
+/// The look of a telegraph of `shape` on `entity`: its fill, which the ticking recolours, and its
+/// edge, both lying on the ground under it. The host's telegraph wears it and so does a co-op
+/// guest's copy of one.
+#[allow(clippy::too_many_arguments)]
+fn telegraph_visual(
+    commands: &mut Commands,
+    entity: Entity,
+    art: &mut Art,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    world: &WorldPoint,
+    shape: Shape,
+    origin: Vec3,
+    yaw: f32,
+) {
     let per = COLS + 1;
     let turn = Quat::from_rotation_y(yaw);
     let mut heights = vec![origin.y; (BANDS + 1) * per];
@@ -880,15 +944,14 @@ pub(super) fn spawn_telegraph(
     }
     let material = art.blend(materials);
     commands
-        .spawn((
-            Telegraph::new(shape, origin, yaw, secs, damage, pool),
+        .entity(entity)
+        .insert((
             Mesh3d(meshes.add(fill_mesh(shape, &heights))),
             MeshMaterial3d(material.clone()),
             // The hero is looking at it, and shadows on a ground marker only muddy it.
             NotShadowCaster,
             Transform::from_xyz(origin.x, 0.0, origin.z).with_rotation(turn),
             Visibility::default(),
-            RunEntity,
         ))
         .with_child((
             Mesh3d(meshes.add(edge_mesh(shape, &heights))),
@@ -969,6 +1032,53 @@ impl Canvas<'_, '_> {
                 },
             );
         }
+    }
+
+    /// The look of a telegraph on a co-op guest's copy `entity` ([`telegraph_visual`]): the host
+    /// replicates the datum, this machine draws the mesh. The guest's copy has no blow of its own.
+    #[cfg_attr(not(all(feature = "coop", not(target_arch = "wasm32"))), allow(dead_code))]
+    pub fn telegraph_on(
+        &mut self,
+        commands: &mut Commands,
+        entity: Entity,
+        shape: Shape,
+        origin: Vec3,
+        yaw: f32,
+        secs: f32,
+        t: f32,
+    ) {
+        let mut clock = Telegraph::new(shape, origin, yaw, secs, 0.0, None);
+        clock.t = t.clamp(0.0, secs);
+        commands.entity(entity).insert(Seen(clock));
+        telegraph_visual(
+            commands,
+            entity,
+            &mut self.art,
+            &mut self.meshes,
+            &mut self.materials,
+            &self.world,
+            shape,
+            origin,
+            yaw,
+        );
+    }
+
+    /// The look of a missile of glow number `glow` on a co-op guest's copy `entity`
+    /// ([`missile_visual`]); false for a number this build does not know.
+    #[cfg_attr(not(all(feature = "coop", not(target_arch = "wasm32"))), allow(dead_code))]
+    pub fn missile_on(&mut self, commands: &mut Commands, entity: Entity, glow: u8) -> bool {
+        let Some(&glow) = Glow::ALL.get(usize::from(glow)) else {
+            return false;
+        };
+        missile_visual(
+            commands,
+            entity,
+            &mut self.art,
+            &mut self.meshes,
+            &mut self.materials,
+            glow,
+        );
+        true
     }
 
     /// A spot `r` yards from `center` at angle `a` where a creature may stand ([`enemies::spawn_spot`]).
@@ -1287,6 +1397,38 @@ fn tick_telegraphs(
                 }
                 fill_colors(1.0, Some(1.0)).collect()
             }
+            Beat::Flash(left) => fill_colors(1.0, Some(left)).collect(),
+        };
+        if let Some(mesh) = meshes.get_mut(&mesh.0) {
+            mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
+        }
+    }
+}
+
+/// A co-op guest's copy of a telegraph: only its clock, which fills and flashes the mesh as the
+/// host's does. The blow and the pool it leaves are the host's.
+#[derive(Component)]
+pub(super) struct Seen(Telegraph);
+
+/// On a co-op guest: the telegraphs fill, flash and go out. The host's despawn takes the entity;
+/// until it arrives a finished copy only hides.
+#[cfg_attr(not(all(feature = "coop", not(target_arch = "wasm32"))), allow(dead_code))]
+pub(super) fn animate_seen(
+    time: Res<Time>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut seen: Query<(&mut Seen, &Mesh3d, &mut Visibility)>,
+) {
+    let dt = time.delta_secs();
+    for (mut seen, mesh, mut vis) in &mut seen {
+        let colors: Vec<[f32; 4]> = match seen.0.advance(dt) {
+            Beat::Done => {
+                if *vis != Visibility::Hidden {
+                    *vis = Visibility::Hidden;
+                }
+                continue;
+            }
+            Beat::Charge(p) => fill_colors(p, None).collect(),
+            Beat::Strike => fill_colors(1.0, Some(1.0)).collect(),
             Beat::Flash(left) => fill_colors(1.0, Some(left)).collect(),
         };
         if let Some(mesh) = meshes.get_mut(&mesh.0) {
