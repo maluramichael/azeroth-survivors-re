@@ -101,9 +101,9 @@ impl Spellbook {
             .unwrap_or_default()
     }
 
-    /// An automated run (`WOW_SURVIVORS_AUTO`) saves nothing, as the profile does.
+    /// An automated or debug run ([`super::throwaway`]) saves nothing, as the profile does.
     fn save(&self) {
-        if benilla_app::survivors_host::webenv::var("WOW_SURVIVORS_AUTO").is_some() {
+        if super::throwaway() {
             return;
         }
         let Some(path) = Self::path() else { return };

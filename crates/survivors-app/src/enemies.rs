@@ -293,7 +293,13 @@ const PARTY_COUNT: f32 = 0.35;
 /// The most enemies alive at once, whatever the party.
 const MAX_ALIVE: usize = 400;
 /// A spawn never lands this close to a hero other than the one it rings.
-const SPAWN_CLEAR: f32 = 20.0;
+pub(super) const SPAWN_CLEAR: f32 = 20.0;
+/// The ring the horde is topped up on, from and to this many yards around a hero.
+pub(super) const SPAWN_NEAR: f32 = 34.0;
+pub(super) const SPAWN_FAR: f32 = 42.0;
+/// The radius of the closing ring between bosses, and the distance a boss spawns at.
+pub(super) const RING_RADIUS: f32 = 26.0;
+pub(super) const BOSS_RADIUS: f32 = 30.0;
 
 /// The health multiplier of a party of `n` heroes.
 pub(super) fn party_hp(n: u32) -> f32 {
@@ -386,7 +392,8 @@ pub(super) fn spawn_enemies(
     mut chat: MessageWriter<ChatLine>,
     mut turn: Local<usize>,
 ) {
-    if hero.single().is_err() || run.party_down {
+    // The debug mode's F5 holds the waves ([`super::debug`]).
+    if hero.single().is_err() || run.party_down || super::debug::waves_held() {
         return;
     }
     // Each spawn rings the next standing hero in turn; alone, always this one.
@@ -410,7 +417,7 @@ pub(super) fn spawn_enemies(
         let hpos = next_anchor();
         let a = rng.range(0.0, std::f32::consts::TAU);
         // No free spot yet (the world is still coming in): the boss waits for the next frame.
-        let Some(pos) = spawn_spot(&nav, &probe, &world, hpos, a, 30.0) else {
+        let Some(pos) = spawn_spot(&nav, &probe, &world, hpos, a, BOSS_RADIUS) else {
             break;
         };
         spawn_enemy(&mut commands, &mut run, def, pos, hpos, true, false);
@@ -431,7 +438,7 @@ pub(super) fn spawn_enemies(
         let n = 28 + (data::progress(elapsed) * 60.0) as usize;
         for i in 0..n {
             let a = i as f32 / n as f32 * std::f32::consts::TAU;
-            let Some(pos) = spawn_spot(&nav, &probe, &world, hpos, a, 26.0)
+            let Some(pos) = spawn_spot(&nav, &probe, &world, hpos, a, RING_RADIUS)
                 .filter(|p| clear_of_others(*p, hpos, &heroes))
             else {
                 continue;
@@ -464,7 +471,7 @@ pub(super) fn spawn_enemies(
         let def = &roster.enemies[pool[rng.index(pool.len())]];
         let hpos = next_anchor();
         let a = rng.range(0.0, std::f32::consts::TAU);
-        let r = rng.range(34.0, 42.0);
+        let r = rng.range(SPAWN_NEAR, SPAWN_FAR);
         let Some(pos) =
             spawn_spot(&nav, &probe, &world, hpos, a, r).filter(|p| clear_of_others(*p, hpos, &heroes))
         else {

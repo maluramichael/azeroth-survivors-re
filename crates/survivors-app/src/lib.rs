@@ -20,6 +20,7 @@ mod chatlog;
 mod coop;
 mod collection;
 mod data;
+mod debug;
 mod difficulty;
 mod dmgmeter;
 mod enrage;
@@ -98,6 +99,7 @@ impl Plugin for SurvivorsPlugin {
                 evolutions::plugin,
                 quests::plugin,
                 frames::plugin,
+                debug::plugin,
             ))
             .init_state::<Phase>()
             .init_resource::<Rng>()
@@ -351,6 +353,12 @@ pub(crate) fn run_on(phase: Res<State<Phase>>, role: Res<NetRole>) -> bool {
         Phase::LevelUp | Phase::Paused => *role != NetRole::Solo,
         Phase::Menu | Phase::GameOver => false,
     }
+}
+
+/// A test run that must not touch the player's progress: an automated run (`WOW_SURVIVORS_AUTO`)
+/// or the debug mode (`WOW_SURVIVORS_DEBUG`). Its profile opens everything and saves nothing.
+pub(crate) fn throwaway() -> bool {
+    benilla_app::survivors_host::webenv::var("WOW_SURVIVORS_AUTO").is_some() || debug::active()
 }
 
 /// Run condition: this machine simulates the run (alone or as the host); a guest only shows the

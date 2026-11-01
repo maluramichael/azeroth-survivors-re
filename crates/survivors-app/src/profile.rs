@@ -116,8 +116,8 @@ pub(super) struct Profile {
     /// `WOW_SURVIVORS_UNLOCK_ALL`: every class and zone open; never saved.
     #[serde(skip)]
     pub unlock_all: bool,
-    /// An automated run (`WOW_SURVIVORS_AUTO`): everything open and nothing saved, so a test run
-    /// never touches the player's progress.
+    /// An automated run (`WOW_SURVIVORS_AUTO`) or the debug mode ([`super::debug`]): everything
+    /// open and nothing saved, so a test run never touches the player's progress.
     #[serde(skip)]
     pub ephemeral: bool,
 }
@@ -168,7 +168,7 @@ impl Profile {
             })
             .unwrap_or_default();
         p.normalize();
-        p.ephemeral = benilla_app::survivors_host::webenv::var("WOW_SURVIVORS_AUTO").is_some();
+        p.ephemeral = super::throwaway();
         if p.ephemeral {
             p.apply_test_env();
         }

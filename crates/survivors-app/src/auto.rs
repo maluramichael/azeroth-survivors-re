@@ -83,22 +83,10 @@ pub(super) fn from_env() -> Option<Auto> {
     let idle = mode.eq_ignore_ascii_case("idle");
     let late = mode.eq_ignore_ascii_case("late");
     let all = late || mode.eq_ignore_ascii_case("all");
-    let class = data::CLASSES
-        .iter()
-        .position(|c| c.name.eq_ignore_ascii_case(name))
+    let class = super::debug::class_index(name).unwrap_or(0);
+    let map = benilla_app::survivors_host::webenv::var("WOW_SURVIVORS_MAP")
+        .and_then(|m| super::debug::map_index(&m))
         .unwrap_or(0);
-    let map = benilla_app::survivors_host::webenv::var("WOW_SURVIVORS_MAP").map_or(0, |m| {
-        let m = m.trim().to_ascii_lowercase();
-        m.parse::<usize>()
-            .ok()
-            .filter(|&i| i < data::MAPS.len())
-            .unwrap_or_else(|| {
-                data::MAPS
-                    .iter()
-                    .position(|d| d.name.to_ascii_lowercase().contains(&m))
-                    .unwrap_or(0)
-            })
-    });
     let shots = std::env::var_os("WOW_SURVIVORS_SHOTS").map(std::path::PathBuf::from);
     if let Some(dir) = &shots {
         let _ = std::fs::create_dir_all(dir);

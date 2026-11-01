@@ -47,9 +47,25 @@ struct Cli {
     #[arg(long, value_name = "CLASS[:MODE]", help_heading = "Testing")]
     auto: Option<String>,
 
-    /// The battleground `--auto` plays, by name or index (`barrens`, `3`). Sets
-    /// `WOW_SURVIVORS_MAP`.
-    #[arg(long, value_name = "ZONE", requires = "auto", help_heading = "Testing")]
+    /// Start without the menu: a run with the picked class and zone, the hero unhurtable, an
+    /// overlay with the spawn rings and the hero's position, and debug keys (F5 hold the waves,
+    /// F6 clear the field, F7 god mode, F8 overlay, F9 to the edge). Nothing is saved. Sets
+    /// `WOW_SURVIVORS_DEBUG=1`.
+    #[arg(long, help_heading = "Testing")]
+    debug: bool,
+
+    /// Pick this class at the menu (`mage`), over the last pick. Sets `WOW_SURVIVORS_CLASS`.
+    #[arg(
+        long,
+        value_name = "CLASS",
+        conflicts_with = "auto",
+        help_heading = "Testing"
+    )]
+    class: Option<String>,
+
+    /// Pick this battleground at the menu, by name or index (`barrens`, `3`); with `--auto`, the
+    /// one the run plays. Sets `WOW_SURVIVORS_MAP`.
+    #[arg(long, value_name = "ZONE", help_heading = "Testing")]
     zone: Option<String>,
 
     /// Save the `--auto` run's screenshots into `DIR`: the menu, the first level-ups, the pause
@@ -149,6 +165,8 @@ fn main() -> AppExit {
         ("WOW_SURVIVORS_JOIN", cli.join),
         ("WOW_SURVIVORS_NAME", cli.name),
         ("WOW_SURVIVORS_AUTO", cli.auto),
+        ("WOW_SURVIVORS_DEBUG", flag(cli.debug, "1")),
+        ("WOW_SURVIVORS_CLASS", cli.class),
         ("WOW_SURVIVORS_MAP", cli.zone),
         ("WOW_SURVIVORS_SHOTS", path(cli.shots)),
         ("WOW_GRADE", flag(cli.no_grade, "0")),

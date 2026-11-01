@@ -614,9 +614,10 @@ struct Bank {
     item: Option<Item>,
 }
 
-/// An automated run (`WOW_SURVIVORS_AUTO`) reads and writes no bank, as it saves no profile.
+/// An automated or debug run ([`super::throwaway`]) reads and writes no bank, as it saves no
+/// profile.
 fn ephemeral() -> bool {
-    benilla_app::survivors_host::webenv::var("WOW_SURVIVORS_AUTO").is_some()
+    super::throwaway()
 }
 
 fn bank_path() -> Option<std::path::PathBuf> {

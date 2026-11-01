@@ -653,7 +653,7 @@ fn shake_offsets(trauma: f32, t: f32, arm: f32) -> (Vec3, Vec3) {
 /// Damage the hero takes from one blow, after immunity, armour and the shield; returns what got
 /// through.
 pub(super) fn hurt_hero(hero: &mut HeroState, raw: f32) -> f32 {
-    if hero.immune_t > 0.0 || hero.dead_t.is_some() || hero.picking {
+    if hero.immune_t > 0.0 || hero.dead_t.is_some() || hero.picking || super::debug::god() {
         return 0.0;
     }
     let mut dmg = (raw - hero.stats().armor).max(1.0);
@@ -742,7 +742,10 @@ pub(super) fn hero_vitals(
     } else {
         *all_down = 0.0;
     }
-    run.elapsed += dt;
+    // The debug mode's F5 holds the clock with the waves ([`super::debug`]).
+    if !super::debug::waves_held() {
+        run.elapsed += dt;
+    }
     if run.dead_t.is_none() {
         tend(&mut run.me, dt);
         show_buffs(&run.me, &mut marks);
