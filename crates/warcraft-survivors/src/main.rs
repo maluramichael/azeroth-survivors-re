@@ -68,10 +68,19 @@ struct Cli {
     #[arg(long, value_name = "ZONE", help_heading = "Testing")]
     zone: Option<String>,
 
-    /// Save the `--auto` run's screenshots into `DIR`: the menu, the first level-ups, the pause
-    /// menu, the results and one every few seconds. Sets `WOW_SURVIVORS_SHOTS`.
-    #[arg(long, value_name = "DIR", requires = "auto", help_heading = "Testing")]
+    /// The folder for screenshots: F12's, `--script`'s, and an `--auto` run's (the menu, the
+    /// first level-ups, the pause menu, the results and one every few seconds). Without it they
+    /// go to `Screenshots` in the state folder. Sets `WOW_SURVIVORS_SHOTS`.
+    #[arg(long, value_name = "DIR", help_heading = "Testing")]
     shots: Option<PathBuf>,
+
+    /// A timeline played against the run, for a test without anyone at the keyboard: steps
+    /// separated by `;`, each `<seconds from the run's start> <action>`. Actions: `shot <name>`,
+    /// `key <KEY>`, `hold <KEY> <seconds>`, `quit`. Example with `--debug`:
+    /// `"6 shot overlay; 7 key F9; 8.5 shot edge; 9 hold W 2; 12 shot walked; 13 quit"`. Sets
+    /// `WOW_SURVIVORS_SCRIPT`.
+    #[arg(long, value_name = "STEPS", help_heading = "Testing")]
+    script: Option<String>,
 
     /// Start with the colour grade (sharpening, vibrance, warmth) off; `G` toggles it in play.
     /// Sets `WOW_GRADE=0`.
@@ -169,6 +178,7 @@ fn main() -> AppExit {
         ("WOW_SURVIVORS_CLASS", cli.class),
         ("WOW_SURVIVORS_MAP", cli.zone),
         ("WOW_SURVIVORS_SHOTS", path(cli.shots)),
+        ("WOW_SURVIVORS_SCRIPT", cli.script),
         ("WOW_GRADE", flag(cli.no_grade, "0")),
         ("WOW_DPI", cli.dpi.map(|v| v.to_string())),
         ("WOW_NOVSYNC", flag(cli.no_vsync, "1")),

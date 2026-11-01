@@ -50,6 +50,8 @@ mod textfield;
 mod profile;
 mod quests;
 mod races;
+#[cfg(not(target_arch = "wasm32"))]
+mod shots;
 mod records;
 mod trainer;
 mod surge;
@@ -73,6 +75,9 @@ impl Plugin for SurvivorsPlugin {
         // Present before `OnEnter(InWorld)`, where the UI lifecycle decides not to load FrameXML.
         #[cfg(all(feature = "coop", not(target_arch = "wasm32")))]
         coop::plugin(app);
+        // F12 and the scripted test timeline; a browser has no folder to save into.
+        #[cfg(not(target_arch = "wasm32"))]
+        app.add_plugins(shots::plugin);
         app.insert_resource(benilla_app::survivors_host::run_mode::CaptureMode)
             .add_plugins((grade::plugin, kit::plugin, dmgmeter::plugin))
             .add_plugins((collection::plugin, loottables::plugin, achievements::plugin))
