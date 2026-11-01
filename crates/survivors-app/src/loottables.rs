@@ -226,10 +226,18 @@ fn panel(ui: &mut ChildSpawnerCommands, fonts: &KitFonts) {
     });
 }
 
-/// The left column: one row per zone, lowest level first as the hub lists them.
+/// The zone the window opens on for the hub's pick: the pick itself, or on a route (it has no
+/// drops of its own, only its zones') the zone it starts in.
+fn listed(map: usize) -> usize {
+    super::route::route_of(map).map_or(map, |route| route.zone_of(0))
+}
+
+/// The left column: one row per zone, lowest level first as the hub lists them. A route is no
+/// row: its zones are.
 fn zone_list(cols: &mut ChildSpawnerCommands, fonts: &KitFonts) {
     let px = Val::Px;
     let mut order: Vec<(usize, u32, u32)> = (0..data::MAPS.len())
+        .filter(|&i| super::route::route_of(i).is_none())
         .map(|i| {
             let (lo, hi) = zone_levels(i);
             (i, lo, hi)
@@ -290,7 +298,7 @@ fn show_panel(
     if view.was_open != ui.open {
         view.was_open = ui.open;
         if ui.open {
-            view.map = selection.map;
+            view.map = listed(selection.map);
             view.shown = None;
         }
     }
@@ -712,5 +720,24 @@ fn cell(w: f32) -> Node {
         flex_shrink: 0.0,
         justify_content: JustifyContent::Center,
         ..default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_route_has_no_drops_of_its_own_and_opens_on_its_first_zone() {
+        for (i, map) in data::MAPS.iter().enumerate() {
+            match super::super::route::route_of(i) {
+                Some(route) => {
+                    let zone = listed(i);
+                    assert_eq!(zone, route.zone_of(0), "{}", map.name);
+                    assert!(super::super::route::route_of(zone).is_none());
+                }
+                None => assert_eq!(listed(i), i, "{}", map.name),
+            }
+        }
     }
 }

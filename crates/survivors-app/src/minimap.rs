@@ -55,6 +55,12 @@ const MARK_BIG_PX: f32 = 13.0;
 const PINNED_ALPHA: f32 = 0.55;
 /// Gap between a pinned marker's edge and the ring's rim, in texels.
 const RIM_GAP: f32 = 6.0;
+/// The route's next station: a gold dot as big as a boss mark, more opaque than the other
+/// pinned marks because it is the way on.
+const STOP_PX: f32 = MARK_BIG_PX;
+const STOP_PINNED_ALPHA: f32 = 0.85;
+const STOP_GOLD: [f32; 3] = [255.0, 209.0, 0.0];
+const STOP_RIM: [f32; 3] = [92.0, 58.0, 0.0];
 const ARROW_PX: f32 = 33.6;
 const ARROW_OFFSET_PX: Vec2 = Vec2::new(0.51, -1.73);
 
@@ -467,6 +473,8 @@ pub(super) fn compose(
     hero: Query<&Transform, With<Hero>>,
     enemies: Query<(&Transform, &Enemy)>,
     markers: Query<(&Transform, &MapMarker, Option<&Enemy>)>,
+    selection: Res<super::Selection>,
+    route: Res<super::route::RouteRun>,
     mut images: ResMut<Assets<Image>>,
     time: Res<Time<Real>>,
     mut next_at: Local<f32>,
@@ -667,12 +675,43 @@ pub(super) fn compose(
         let alpha = if outside { PINNED_ALPHA } else { 1.0 };
         draw_icon(buf, sheet, g.uv, center + at, size, alpha, g.tint);
     }
+    // On a route the next station, over everything, pinned to the ring while it is out of view.
+    if let Some(off) = stop_offset(&selection, &route, p) {
+        let size = STOP_PX * scale;
+        let (at, outside) = pin(off / yd_per_px, half - size * 0.5 - RIM_GAP);
+        let alpha = if outside { STOP_PINNED_ALPHA } else { 1.0 };
+        blit(buf, center + at, size, |q| stop_dot(q / size, alpha));
+    }
 
     if let Some(image) = images.get_mut(&map.image) {
         if let Some(data) = image.data.as_mut() {
             data.copy_from_slice(&map.buf);
         }
     }
+}
+
+/// Where the next station of the route under way lies from the hero at `hero`, in yards on the
+/// map's axes (east right, south down); `None` off a route and once it is walked.
+fn stop_offset(
+    selection: &super::Selection,
+    route: &super::route::RouteRun,
+    hero: Vec3,
+) -> Option<Vec2> {
+    let def = super::route::route_of(selection.stage)?;
+    let stop = super::route_hud::next_station(def, route)?;
+    Some(Vec2::new(stop.at.x - hero.x, stop.at.z - hero.z))
+}
+
+/// The station dot at `f`, the offset from its centre in dot sizes: gold with a dark rim and a
+/// soft edge, `None` outside it.
+fn stop_dot(f: Vec2, alpha: f32) -> Option<[f32; 4]> {
+    let d = f.length() * 2.0;
+    if d >= 1.0 {
+        return None;
+    }
+    let [r, g, b] = if d > 0.68 { STOP_RIM } else { STOP_GOLD };
+    let edge = ((1.0 - d) / 0.12).min(1.0);
+    Some([r, g, b, 255.0 * alpha * edge])
 }
 
 /// Blit the cell `uv` (left, right, top, bottom) of `sheet` as a `size`-px square at `at`, its
@@ -760,6 +799,51 @@ mod tests {
         }
         assert!(glyph(MapMarker::Boss).rank > glyph(MapMarker::Post).rank);
         assert!(glyph(MapMarker::Post).rank > glyph(MapMarker::Chest).rank);
+    }
+
+    #[test]
+    fn the_station_dot_is_a_gold_disc_with_a_rim() {
+        let mid = stop_dot(Vec2::ZERO, 1.0).expect("the middle is in");
+        assert_eq!(mid, [255.0, 209.0, 0.0, 255.0]);
+        let rim = stop_dot(Vec2::new(0.4, 0.0), 1.0).expect("the rim is in");
+        assert_eq!(&rim[..3], &STOP_RIM);
+        assert!(stop_dot(Vec2::new(0.5, 0.0), 1.0).is_none());
+        assert!(stop_dot(Vec2::new(0.4, 0.4), 1.0).is_none());
+        // Pinned, it is fainter.
+        assert!(stop_dot(Vec2::ZERO, STOP_PINNED_ALPHA).unwrap()[3] < 255.0);
+    }
+
+    #[test]
+    fn the_station_dot_follows_the_run_along_its_route() {
+        let map = super::super::data::MAPS
+            .iter()
+            .position(|m| m.name == "Undying Run")
+            .expect("the Undying Run is a battleground");
+        let def = super::super::route::route_of(map).expect("a route");
+        let selection = super::super::Selection {
+            stage: map,
+            map,
+            ..default()
+        };
+        let mut run = super::super::route::RouteRun {
+            next: 1,
+            stop: 1,
+            arrived: false,
+            placed: true,
+        };
+        let hero = def.points()[0].at;
+        let to = def.points()[def.point_of(1)].at - hero;
+        assert_eq!(stop_offset(&selection, &run, hero), Some(Vec2::new(to.x, to.z)));
+        // The next station moves on with the stops reached.
+        run.stop = 2;
+        assert_ne!(stop_offset(&selection, &run, hero), Some(Vec2::new(to.x, to.z)));
+        // Not on a route, not before the start, not once the end is reached.
+        let zone = super::super::Selection::default();
+        assert_eq!(stop_offset(&zone, &run, hero), None);
+        let unplaced = super::super::route::RouteRun { placed: false, ..run.clone() };
+        assert_eq!(stop_offset(&selection, &unplaced, hero), None);
+        run.arrived = true;
+        assert_eq!(stop_offset(&selection, &run, hero), None);
     }
 
     #[test]

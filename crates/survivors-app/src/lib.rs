@@ -439,7 +439,6 @@ pub(crate) struct Run {
     /// for it.
     pub encore: bool,
     /// The share of a route walked, 0 to 1 ([`route`]); 0 off a route.
-    #[allow(dead_code)] // Read by the route's packages as they land.
     pub route_frac: f32,
     /// This machine's hero.
     pub me: HeroState,
@@ -635,7 +634,6 @@ impl Run {
     /// How far the run is, in seconds of the clock, for what grows with it (the horde's numbers
     /// and size, the elites): the clock, or on a route the share walked times
     /// [`data::VICTORY_SECS`] when that is further. Off a route it is the clock.
-    #[allow(dead_code)] // Read by the route's horde as it lands.
     pub fn pace(&self) -> f32 {
         self.elapsed.max(self.route_frac * data::VICTORY_SECS)
     }

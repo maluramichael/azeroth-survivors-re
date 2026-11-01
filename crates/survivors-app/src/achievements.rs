@@ -93,7 +93,7 @@ fn counter(key: &str, need: u64) -> Goal {
 
 fn zone_points(name: &str) -> u32 {
     match name {
-        "Mount Hyjal" | "Naxxramas" => 50,
+        "Mount Hyjal" | "Naxxramas" | "Undying Run" => 50,
         "The Dark Portal" | "Gates of Ahn'Qiraj" | "Fire Plume Ridge" | "Gurubashi Arena"
         | "Redridge Mountains" | "Duskwood" => 25,
         _ => 10,
@@ -108,6 +108,7 @@ fn zone_icon(name: &str) -> &'static str {
         "Gurubashi Arena" => "INV_Misc_Bone_HumanSkull_01",
         "Mount Hyjal" => "INV_Misc_Head_Dragon_01",
         "Naxxramas" => "Spell_Shadow_DeathScream",
+        "Undying Run" => "INV_Misc_Map_01",
         _ => "INV_Misc_Map_01",
     }
 }
@@ -164,7 +165,11 @@ fn build_table() -> Vec<Achievement> {
         add(
             &format!("zone_{i}"),
             &format!("{} Conquered", map.name),
-            &format!("Win a run in {}", map.name),
+            &if super::route::route_of(i).is_some() {
+                format!("Reach the end of the {}", map.name)
+            } else {
+                format!("Win a run in {}", map.name)
+            },
             zone_points(map.name),
             "Zones",
             zone_icon(map.name),
@@ -1524,6 +1529,21 @@ mod tests {
         for c in CATEGORIES {
             assert!(table().iter().any(|a| a.category == c), "{c}");
         }
+    }
+
+    #[test]
+    fn the_undying_run_is_worth_fifty_and_wears_a_map() {
+        let i = data::MAPS
+            .iter()
+            .position(|m| m.name == "Undying Run")
+            .expect("the Undying Run is a battleground");
+        let a = table()
+            .iter()
+            .find(|a| a.key == format!("zone_{i}"))
+            .expect("a zone achievement");
+        assert_eq!(a.points, 50);
+        assert_eq!(a.icon, "INV_Misc_Map_01");
+        assert_eq!(a.name, "Undying Run Conquered");
     }
 
     #[test]

@@ -300,26 +300,77 @@ fn refresh_meter(
     }
 }
 
-/// The line under the clock: the next timed boss, else the finale, else nothing.
+/// The line under the clock: the next timed boss, else the finale, else nothing. On a route
+/// ([`super::route`]) the finale comes at the last station, not on the clock: it reads "Final
+/// boss: Duskwood" once the timed ones are through, and nothing once the end ring stands.
 fn refresh_next_boss(
     run: Res<Run>,
     selection: Res<Selection>,
+    route: Res<super::route::RouteRun>,
     mut line: Query<&mut Text, With<NextBossText>>,
 ) {
     let Ok(mut t) = line.single_mut() else { return };
-    let elapsed = run.elapsed;
     let timed = finale::plan(selection.map).timed.len() as u32;
-    let finale_at = finale::finale_at();
-    // The k-th timed boss (counting from 0) comes at `(k + 1) * BOSS_EVERY_SECS`.
-    let next = (run.bosses < timed).then(|| (run.bosses + 1) as f32 * data::BOSS_EVERY_SECS);
-    let (caption, at) = match next {
-        Some(at) if at < finale_at => ("Next boss", at),
-        _ if elapsed < finale_at => ("Final boss", finale_at),
-        _ => {
-            set_text(&mut t, String::new());
-            return;
-        }
+    let end = super::route::route_of(selection.map)
+        .and_then(|r| r.stations.last())
+        .map(|s| (s.label, route.arrived));
+    let text = next_boss_line(run.elapsed, run.bosses, timed, finale::finale_at(), end);
+    set_text(&mut t, text);
+}
+
+/// The words of [`refresh_next_boss`]. `route` is the last station's name and whether it is
+/// reached, on a route.
+fn next_boss_line(
+    elapsed: f32,
+    bosses: u32,
+    timed: u32,
+    finale_at: f32,
+    route: Option<(&str, bool)>,
+) -> String {
+    let countdown = |caption: &str, at: f32| {
+        let left = (at - elapsed).max(0.0).ceil() as u32;
+        format!("{caption} in {:02}:{:02}", left / 60, left % 60)
     };
-    let left = (at - elapsed).max(0.0).ceil() as u32;
-    set_text(&mut t, format!("{caption} in {:02}:{:02}", left / 60, left % 60));
+    // The k-th timed boss (counting from 0) comes at `(k + 1) * BOSS_EVERY_SECS`.
+    let next = (bosses < timed).then(|| (bosses + 1) as f32 * data::BOSS_EVERY_SECS);
+    if let Some((last, arrived)) = route {
+        return match next {
+            _ if arrived => String::new(),
+            Some(at) => countdown("Next boss", at),
+            None => format!("Final boss: {last}"),
+        };
+    }
+    match next {
+        Some(at) if at < finale_at => countdown("Next boss", at),
+        _ if elapsed < finale_at => countdown("Final boss", finale_at),
+        _ => String::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_zone_counts_down_to_the_boss_then_the_finale() {
+        let finale_at = data::BOSS_EVERY_SECS * 6.0;
+        assert_eq!(next_boss_line(0.0, 0, 5, finale_at, None), "Next boss in 02:15");
+        assert_eq!(next_boss_line(130.5, 0, 5, finale_at, None), "Next boss in 00:05");
+        // All timed bosses through: the finale's clock.
+        assert_eq!(next_boss_line(700.0, 5, 5, finale_at, None), "Final boss in 01:50");
+        assert_eq!(next_boss_line(finale_at, 5, 5, finale_at, None), "");
+    }
+
+    #[test]
+    fn a_route_names_its_end_not_a_clock_for_the_finale() {
+        let finale_at = data::BOSS_EVERY_SECS * 6.0;
+        let end = Some(("Duskwood", false));
+        // Past the zone's finale slot the timed bosses still count down.
+        assert_eq!(next_boss_line(900.0, 6, 20, finale_at, end), "Next boss in 00:45");
+        assert_eq!(next_boss_line(10.0, 0, 20, finale_at, end), "Next boss in 02:05");
+        assert_eq!(next_boss_line(2000.0, 20, 20, finale_at, end), "Final boss: Duskwood");
+        // The end ring stands: the finale is there, the line goes.
+        assert_eq!(next_boss_line(2000.0, 20, 20, finale_at, Some(("Duskwood", true))), "");
+        assert_eq!(next_boss_line(900.0, 6, 20, finale_at, Some(("Duskwood", true))), "");
+    }
 }

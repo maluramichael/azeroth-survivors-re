@@ -14,7 +14,6 @@
 
 // The route's packages (its run, horde, nav, streaming, co-op, pilot and display) read the rest
 // of this as they land; drop this then.
-#![allow(dead_code)]
 
 use std::sync::LazyLock;
 

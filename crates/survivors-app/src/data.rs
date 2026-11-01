@@ -2288,10 +2288,12 @@ pub(crate) struct Roster {
 
 /// One zone's part of a route's roster: its [`MAPS`] index and its ranges in the route's
 /// `enemies` and `bosses`.
-#[allow(dead_code)] // Read by the route's horde as it lands.
 pub(crate) struct Segment {
     pub map: usize,
     pub enemies: Range<usize>,
+    /// Its part of the roster's bosses; the clock reads the route's boss plan
+    /// ([`super::finale::Plan`]) instead, so only the tests look at this.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub bosses: Range<usize>,
 }
 
@@ -2345,7 +2347,6 @@ pub(crate) fn roster(map: usize) -> &'static Roster {
 }
 
 /// Zone `zone`'s part of battleground `map`'s roster, when `map` is a route through it.
-#[allow(dead_code)] // Read by the route's horde as it lands.
 pub(crate) fn segment(map: usize, zone: usize) -> Option<&'static Segment> {
     roster(map).segments.iter().find(|s| s.map == zone)
 }

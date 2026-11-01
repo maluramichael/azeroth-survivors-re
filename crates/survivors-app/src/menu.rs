@@ -555,8 +555,20 @@ fn class_panel(ui: &mut ChildSpawnerCommands, fonts: &KitFonts, art: &GlueArt) {
     });
 }
 
-/// The right panel: one row per zone, lowest level first. A locked zone is dimmed, with its
-/// padlock; `refresh_zone_rows` keeps them current.
+/// What a route's row and Enter button say under its name: "4 zones, Westfall to Duskwood".
+fn route_sub(route: &super::route::RouteDef) -> String {
+    let label = |s: Option<&super::route::Station>| s.map_or("", |s| s.label);
+    format!(
+        "{} zones, {} to {}",
+        route.stations.len(),
+        label(route.stations.first()),
+        label(route.stations.last())
+    )
+}
+
+/// The right panel: the routes ([`super::route`]) in rows of their own on top, then one row per
+/// zone, lowest level first. A locked zone is dimmed, with its padlock; `refresh_zone_rows` keeps
+/// them current.
 fn zone_panel(ui: &mut ChildSpawnerCommands, fonts: &KitFonts, lock: Option<Handle<Image>>) {
     let px = Val::Px;
     let mut order: Vec<(usize, u32, u32)> = (0..data::MAPS.len())
@@ -566,6 +578,9 @@ fn zone_panel(ui: &mut ChildSpawnerCommands, fonts: &KitFonts, lock: Option<Hand
         })
         .collect();
     order.sort_by_key(|&(i, lo, _)| (lo, data::MAPS[i].name));
+    let (routes, order): (Vec<_>, Vec<_>) = order
+        .into_iter()
+        .partition(|&(i, _, _)| super::route::route_of(i).is_some());
 
     ui.spawn(kit::panel(Node {
         position_type: PositionType::Absolute,
@@ -591,15 +606,22 @@ fn zone_panel(ui: &mut ChildSpawnerCommands, fonts: &KitFonts, lock: Option<Hand
                 ..default()
             })
             .with_children(|list| {
-                for &(i, lo, hi) in &order {
+                for &(i, lo, hi) in routes.iter().chain(&order) {
                     let map = &data::MAPS[i];
+                    // A route's row is taller for its subtitle and stands apart from the zones.
+                    let sub = super::route::route_of(i).map(route_sub);
                     list.spawn((
                         Button,
                         MenuAction::Map(i),
                         ZoneRow(i),
                         kit::inset(Node {
                             width: Val::Percent(100.0),
-                            height: px(ZONE_ROW_H),
+                            height: px(if sub.is_some() {
+                                ZONE_ROW_H + 12.0
+                            } else {
+                                ZONE_ROW_H
+                            }),
+                            margin: UiRect::bottom(px(if sub.is_some() { 6.0 } else { 0.0 })),
                             flex_shrink: 0.0,
                             justify_content: JustifyContent::SpaceBetween,
                             align_items: AlignItems::Center,
@@ -608,7 +630,16 @@ fn zone_panel(ui: &mut ChildSpawnerCommands, fonts: &KitFonts, lock: Option<Hand
                         }),
                     ))
                     .with_children(|row| {
-                        row.spawn((ZoneName(i), kit::title(fonts, map.name, 18.0)));
+                        row.spawn(Node {
+                            flex_direction: FlexDirection::Column,
+                            ..default()
+                        })
+                        .with_children(|left| {
+                            left.spawn((ZoneName(i), kit::title(fonts, map.name, 18.0)));
+                            if let Some(sub) = sub {
+                                left.spawn(kit::body(fonts, sub, 10.0, kit::MUTED));
+                            }
+                        });
                         // The level range over the best run, right-aligned; the best's line
                         // keeps its height when empty so the rows stay level.
                         row.spawn(Node {
@@ -1080,9 +1111,13 @@ fn refresh_stats(
             }
             StatValue::Racial => races::trait_text(race).unwrap_or_default(),
             StatValue::Zones => {
-                let total = data::MAPS.len();
+                // Zones only: a run across several (the Undying Run) is not one.
+                let zones: Vec<usize> = (0..data::MAPS.len())
+                    .filter(|&m| super::route::route_of(m).is_none())
+                    .collect();
+                let total = zones.len();
                 let open = profile.map_or(total, |p| {
-                    (0..total).filter(|&m| p.zone_unlocked(index, m)).count()
+                    zones.iter().filter(|&&m| p.zone_unlocked(index, m)).count()
                 });
                 format!("{open} of {total}")
             }
@@ -1237,7 +1272,7 @@ fn refresh_pick_line(
     }
 }
 
-/// The Enter button names the zone picked and its level range.
+/// The Enter button names the zone picked and its level range (a route, its zones).
 fn refresh_enter(
     selection: Res<Selection>,
     enter: Query<&Children, With<EnterButton>>,
@@ -1246,8 +1281,13 @@ fn refresh_enter(
 ) {
     let map = selection.map_def();
     let caption = format!("Enter {}", map.name);
-    let (lo, hi) = zone_levels(selection.map);
-    let sub = format!("{}, {}", level_range(lo, hi), map.zone);
+    let sub = match super::route::route_of(selection.map) {
+        Some(route) => route_sub(route),
+        None => {
+            let (lo, hi) = zone_levels(selection.map);
+            format!("{}, {}", level_range(lo, hi), map.zone)
+        }
+    };
     for children in &enter {
         for child in children.iter() {
             if let Ok(mut text) = captions.get_mut(child) {
@@ -1261,5 +1301,20 @@ fn refresh_enter(
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_route_reads_its_zones_and_ends() {
+        let map = data::MAPS
+            .iter()
+            .position(|m| m.name == "Undying Run")
+            .expect("the Undying Run is a battleground");
+        let route = super::super::route::route_of(map).expect("a route");
+        assert_eq!(route_sub(route), "4 zones, Westfall to Duskwood");
     }
 }
