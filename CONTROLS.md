@@ -32,6 +32,12 @@
 | Options | **Esc** (or **Close**) | close the options |
 | Game over | **Enter** (or **Play again**) | back to the menu |
 | Any | minimap **+ / −** / minimize | minimap zoom / collapse |
+| Any | **F12** | screenshot, into the `--shots` folder or `Screenshots` in the state folder |
+| Debug (`--debug`) | **F5** | hold the waves and the run clock / let them run again |
+| Debug | **F6** | clear the field: every enemy dies, without loot |
+| Debug | **F7** | god mode on / off (on at the start) |
+| Debug | **F8** | the overlay (spawn rings, position, keys) on / off |
+| Debug | **F9** | jump to the edge of the battleground the camera looks at |
 
 The camera follows the hero and the hero faces where it looks; a drag with either mouse button
 or the left and right arrows turn it, so one hand runs and strafes on WASD while the other turns. In

@@ -19,6 +19,8 @@ The `features` branch is upstream plus everything below. Newest first.
 
 | Feature | What it does | Screenshot |
 | --- | --- | --- |
+| Screenshot tool and test scripts | F12 saves a screenshot from inside the game. `--script "6 shot a; 7 key F9; 8 hold W 2; 12 quit"` plays keys and screenshots against a run and ends it, so a test runs and photographs itself without anyone at the keyboard or a desktop capture. `--shots <dir>` picks the folder. |  |
+| Debug mode | `--debug` skips the menu into a run with the class and zone from `--class` and `--zone`, saves nothing and starts in god mode. Rings on the ground show where enemies spawn and the leash, a panel the hero's position; F5 holds the waves and the clock, F6 clears the field, F7 toggles god mode, F8 the overlay and F9 jumps to the edge. | <img src="docs/screenshots/fork-debug.jpg" width="480" alt="A warrior at the barrier in debug mode: the spawn rings on the ground and the debug panel on the left"> |
 | More launcher flags | `--auto`, `--zone` and `--shots` start a hands-off test run with screenshots; `--no-grade`, `--dpi`, `--no-vsync`, `--farclip`, `--clutter`, `--no-sound` and `--home` cover the display and other settings that were environment variables only. The dev commands that only print a list (`WOW_CAPTURE=list`, `WOW_PROBE=list`) now run without a data folder. |  |
 | Co-op, stage three | Every player picks their own level-up cards while the world keeps running (whoever is choosing is spared, a hand left open 20 seconds picks itself), brings their whole profile, and keeps their own chests, gear and gold; quests are the party's. A fallen hero lies until a friend stands beside them for three seconds; the run is lost when everyone is down. Party frames on the left show each other hero's class, name, level, health and spells, and the results list the whole party. | <img src="docs/screenshots/fork-coop-party.jpg" width="480" alt="A guest's mage with the party frames of the host's warlock and a second guest's priest on the left"> |
 | Co-op, stage two | The host runs the fight for everyone: guests see the horde with its nameplates, the pickups, ground spells, totems, every cast, swing and damage number. Enemies chase and hit the nearest hero, guests included, and a guest's spells are cast on the host and kill there. More heroes bring more and tougher enemies. When the host falls, every guest sees the results and stays in the party for the next run. Guest cards, revive and shared loot come in stage three. | <img src="docs/screenshots/fork-coop-horde.jpg" width="480" alt="The guest's mage in the host's run, the host's curses and the guest's spells landing on the horde"> |
@@ -145,8 +147,17 @@ cargo run --release -p warcraft-survivors -- --data /path/to/WoW --size 1280x720
 `--windowed` (`-w`) opens a 1600×900 window instead of borderless fullscreen, and `--size WxH`
 sets the window size. Without a data folder the game stops at launch and lists where it looked.
 
-For testing, `--auto <class>[:idle|:all|:late]` plays a run by itself, `--zone <name or index>`
-picks its battleground and `--shots <dir>` saves its screenshots. Display and other settings:
+For testing, `--debug` starts straight into a run with the hero unhurtable, the spawn rings on the
+ground and debug keys (F5 to F9, see [CONTROLS.md](CONTROLS.md)); `--class <name>` and
+`--zone <name or index>` pick the class and battleground. `--auto <class>[:idle|:all|:late]` plays
+a run by itself. F12 saves a screenshot into `--shots <dir>`, and `--script` plays a timeline of
+keys and screenshots against the run, so a test needs nobody at the keyboard:
+
+```bash
+cargo survivors -- --debug --class warrior --zone barrens -w --shots /tmp/shots \
+  --script "6 shot overlay; 8 key F9; 9 hold W 3; 12.5 shot walked; 13 quit"
+```
+ Display and other settings:
 `--no-grade`, `--dpi <scale>`, `--no-vsync`, `--farclip <yards>`, `--clutter <density>`,
 `--no-sound` and `--home <dir>`. Each flag only sets the `WOW_*` variable the game already reads,
 so the variables keep working. `--help` lists every flag.
