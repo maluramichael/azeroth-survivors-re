@@ -172,6 +172,12 @@ struct TrainerPanel;
 /// The row holding the unlock button, shown while a locked class is selected.
 #[derive(Component)]
 struct UnlockWrap;
+/// The line over the unlock button naming the class's quest, the other way in.
+#[derive(Component)]
+struct UnlockQuest;
+/// The row holding [`UnlockQuest`], shown while a locked class with a quest is selected.
+#[derive(Component)]
+struct UnlockQuestWrap;
 /// A rank pip: upgrade index and its position in the row.
 #[derive(Component)]
 struct Pip(usize, u8);
@@ -290,6 +296,26 @@ fn build_trainer(
                     GlueBtnKind::Normal,
                     1.0,
                 );
+            });
+
+            // The class's quest, the free way in, over the button.
+            ui.spawn((
+                UnlockQuestWrap,
+                Node {
+                    position_type: PositionType::Absolute,
+                    bottom: px(242.0),
+                    width: Val::Percent(100.0),
+                    justify_content: JustifyContent::Center,
+                    display: Display::None,
+                    ..default()
+                },
+            ))
+            .with_children(|c| {
+                c.spawn((
+                    UnlockQuest,
+                    kit::body(&fonts, "", 14.0, kit::CREAM),
+                    TextLayout::new(Justify::Center, LineBreak::NoWrap),
+                ));
             });
 
             panel(ui, &fonts);
@@ -676,6 +702,8 @@ fn refresh_unlock(
     selection: Res<Selection>,
     profile: Res<Profile>,
     mut wrap: Query<&mut Node, With<UnlockWrap>>,
+    mut quest_wrap: Query<&mut Node, (With<UnlockQuestWrap>, Without<UnlockWrap>)>,
+    mut quest_text: Query<&mut Text, (With<UnlockQuest>, Without<GlueCaption>, Without<KitCaption>)>,
     mut buttons: Query<(Entity, &TrainerAction, &mut GlueDisabled)>,
     mut kit_buttons: Query<(Entity, &TrainerAction, &mut KitButton)>,
     mut enter: Query<(&MenuAction, &mut GlueDisabled), Without<TrainerAction>>,
@@ -694,6 +722,32 @@ fn refresh_unlock(
     for mut node in &mut wrap {
         if node.display != display {
             node.display = display;
+        }
+    }
+    // The quest that opens the class for free, with how far it is.
+    let quest = locked.and_then(super::questlog::class_quest);
+    let line = quest.map_or_else(String::new, |q| {
+        let (_, progress) = q.status(&profile);
+        let progress = q.progress_text(progress);
+        if progress.is_empty() {
+            format!("Or quest: {}", q.goal)
+        } else {
+            format!("Or quest: {} ({progress})", q.goal)
+        }
+    });
+    let display = if quest.is_some() {
+        Display::Flex
+    } else {
+        Display::None
+    };
+    for mut node in &mut quest_wrap {
+        if node.display != display {
+            node.display = display;
+        }
+    }
+    for mut text in &mut quest_text {
+        if text.0 != line {
+            text.0 = line.clone();
         }
     }
     if locked.is_some() {

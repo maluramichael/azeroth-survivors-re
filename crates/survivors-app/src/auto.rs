@@ -47,13 +47,14 @@ pub(super) struct Auto {
 const PAUSE_AT: f32 = 20.0;
 
 /// The hub's windows the tour opens, in order, and the screenshot each gives.
-const TOUR: [&str; 6] = [
+const TOUR: [&str; 7] = [
     "achievements",
     "collection",
     "loot",
     "trainer",
     "options",
     "coop",
+    "questlog",
 ];
 
 impl Auto {
@@ -368,6 +369,7 @@ type Windows<'w> = (
     ResMut<'w, super::options::OptionsUi>,
     // Present only in a build with co-op.
     Option<ResMut<'w, super::CoopUi>>,
+    ResMut<'w, super::questlog::QuestLogUi>,
 );
 
 /// `WOW_SURVIVORS_WINDOWS`: at the menu, open each of [`TOUR`]'s windows alone, photograph it
@@ -407,6 +409,7 @@ pub(super) fn tour(
         if let Some(coop) = w.5.as_mut() {
             coop.open = on == Some(5);
         }
+        w.6.open = on == Some(6);
     };
     open(&mut windows, Some(step));
     if *wait > 2.5 {

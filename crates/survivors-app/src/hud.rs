@@ -1298,6 +1298,7 @@ pub(super) fn keys(
         Option<Res<super::CoopUi>>,
         // A co-op guest waits for the host to start the run.
         Res<super::NetRole>,
+        Res<super::questlog::QuestLogUi>,
     ),
     mut next: ResMut<NextState<Phase>>,
 ) {
@@ -1312,6 +1313,7 @@ pub(super) fn keys(
                 && !windows.1.open
                 && !windows.2.open
                 && !windows.3.as_ref().is_some_and(|c| c.open)
+                && !windows.5.open
                 && *windows.4 != super::NetRole::Client
                 && start_run(&mut run, &mut selection, &profile)
             {

@@ -110,6 +110,15 @@ pub(super) struct Profile {
     pub perks: BTreeMap<String, u8>,
     /// Best run per zone and class, by [`super::records::key`] ([`super::records`]).
     pub records: BTreeMap<String, super::records::Best>,
+    /// The quests already announced in chat, by [`super::questlog::Quest::id`], so each is said once.
+    pub quests_announced: BTreeSet<String>,
+    /// Zones a character could already enter by level before the quest log came, by name: they
+    /// stay open without their zone quest ([`Self::keep_open_zones`]).
+    pub zones_kept: BTreeSet<String>,
+    /// [`Self::keep_open_zones`] has run for this profile. A saved profile without the field is
+    /// from before the quest log: `false` (a new one starts `true`).
+    #[serde(default)]
+    pub quest_log_seen: bool,
     /// What the last run paid out.
     #[serde(skip)]
     pub last_award: Option<Award>,
@@ -138,6 +147,10 @@ impl Default for Profile {
             counters: BTreeMap::new(),
             perks: BTreeMap::new(),
             records: BTreeMap::new(),
+            quests_announced: BTreeSet::new(),
+            zones_kept: BTreeSet::new(),
+            // A new profile has nothing to keep open.
+            quest_log_seen: true,
             last_award: None,
             unlock_all: false,
             ephemeral: false,
@@ -169,6 +182,7 @@ impl Profile {
             .unwrap_or_default();
         p.normalize();
         p.ephemeral = super::throwaway();
+        p.keep_open_zones();
         if p.ephemeral {
             p.apply_test_env();
         }
@@ -232,17 +246,41 @@ impl Profile {
         }
     }
 
+    /// Once per profile from before the quest log: every zone some character could already enter
+    /// by level stays open, so the zone quests never take away a zone a player had. Saved at once.
+    fn keep_open_zones(&mut self) {
+        if self.quest_log_seen {
+            return;
+        }
+        self.quest_log_seen = true;
+        let top = self.characters.iter().map(|c| c.level).max().unwrap_or(1);
+        for (map, def) in data::MAPS.iter().enumerate() {
+            if top >= zone_min_level(map) {
+                self.zones_kept.insert(def.name.to_string());
+            }
+        }
+        info!(
+            "survivors: the quest log keeps {} zones open that this profile could enter by level",
+            self.zones_kept.len()
+        );
+        self.save();
+    }
+
     pub fn character(&self, class: usize) -> Character {
         self.characters.get(class).copied().unwrap_or_default()
     }
 
+    /// A class is open when bought, or when its quest is done ([`super::questlog`]).
     pub fn class_unlocked(&self, class: usize) -> bool {
-        self.unlock_all || self.classes.get(class).copied().unwrap_or(false)
+        self.unlock_all
+            || self.classes.get(class).copied().unwrap_or(false)
+            || super::questlog::class_quest_done(self, class)
     }
 
-    /// Whether `class`'s character may enter `map`: its level is at least the zone's lowest.
+    /// Whether `class`'s character may enter `map`: its level is at least the zone's lowest and
+    /// the quest that opens the zone is done ([`super::questlog::zone_lock`] says what is missing).
     pub fn zone_unlocked(&self, class: usize, map: usize) -> bool {
-        self.unlock_all || self.character(class).level >= zone_min_level(map)
+        self.unlock_all || !super::questlog::zone_lock(self, class, map).is_locked()
     }
 
     /// The bonus a run with `class` starts with: the character's level, then the trainer.
@@ -378,6 +416,23 @@ pub(super) fn award_run(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_profile_from_before_the_quest_log_keeps_its_zones() {
+        let mut p: Profile = toml::from_str("gold = 5").unwrap();
+        assert!(!p.quest_log_seen, "an old file has no quest log yet");
+        p.normalize();
+        for c in &mut p.characters {
+            c.level = 60;
+        }
+        p.keep_open_zones();
+        assert!(p.quest_log_seen);
+        for m in 0..data::MAPS.len() {
+            assert!(p.zone_unlocked(0, m), "{} stays open", data::MAPS[m].name);
+        }
+        let fresh = Profile::default();
+        assert!(fresh.quest_log_seen && fresh.zones_kept.is_empty());
+    }
 
     #[test]
     fn levels_carry_over_and_cap() {

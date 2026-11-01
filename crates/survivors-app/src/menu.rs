@@ -11,7 +11,7 @@ use bevy::prelude::*;
 
 use super::hud::{self, looks_for, rgb, start_run, MenuRoot};
 use super::kit::{self, KitButton, KitFonts, KitStyle};
-use super::profile::{xp_to_next, zone_min_level, Profile, MAX_LEVEL};
+use super::profile::{xp_to_next, Profile, MAX_LEVEL};
 use super::{data, races, Phase, Rng, Run, Selection};
 use benilla_app::survivors_host::char_select::race_name;
 use benilla_app::survivors_host::glue::art::{class_tc, race_tc, tc_rect, GlueArt};
@@ -140,6 +140,8 @@ enum MenuTab {
     Collection,
     Loot,
     Achievements,
+    /// The quest log ([`super::questlog`]).
+    Quests,
     /// The co-op window ([`super::coop`]); the tab exists only in a build with co-op.
     Coop,
     Options,
@@ -337,6 +339,7 @@ fn top_bar(ui: &mut ChildSpawnerCommands, fonts: &KitFonts) {
                 (MenuTab::Collection, "Collection"),
                 (MenuTab::Loot, "Loot Tables"),
                 (MenuTab::Achievements, "Achievements"),
+                (MenuTab::Quests, "Quest Log"),
                 (MenuTab::Coop, "Co-op"),
                 (MenuTab::Options, "Options"),
             ]
@@ -915,12 +918,20 @@ pub(super) fn plugin(app: &mut App) {
     );
 }
 
-/// Whether the selected class's character is too low for `map`. False with no class or profile.
+/// Whether the selected class's character is kept out of `map`, by its level or its quest. False
+/// with no class or profile.
 fn zone_locked(selection: &Selection, profile: Option<&Profile>, map: usize) -> bool {
-    selection
-        .class
-        .zip(profile)
-        .is_some_and(|(class, p)| !p.zone_unlocked(class, map))
+    zone_lock(selection, profile, map).is_some()
+}
+
+/// What keeps the selected class out of `map`, `None` when it may enter.
+fn zone_lock(
+    selection: &Selection,
+    profile: Option<&Profile>,
+    map: usize,
+) -> Option<super::questlog::ZoneLock> {
+    let (class, p) = selection.class.zip(profile)?;
+    (!p.zone_unlocked(class, map)).then(|| super::questlog::zone_lock(p, class, map))
 }
 
 /// A press on a tab opens its window by setting the window's own flag.
@@ -932,6 +943,7 @@ fn tab_clicks(
     mut collection: ResMut<super::collection::CollectionUi>,
     mut loot: ResMut<super::loottables::LootUi>,
     mut achievements: ResMut<super::achievements::AchievementsUi>,
+    mut questlog: ResMut<super::questlog::QuestLogUi>,
     mut coop: Option<ResMut<super::CoopUi>>,
 ) {
     let Some(tab) = tabs
@@ -948,6 +960,7 @@ fn tab_clicks(
         MenuTab::Collection => collection.open = true,
         MenuTab::Loot => loot.open = true,
         MenuTab::Achievements => achievements.open = true,
+        MenuTab::Quests => questlog.open = true,
         MenuTab::Coop => {
             if let Some(coop) = coop.as_mut() {
                 coop.open = true;
@@ -1111,10 +1124,9 @@ fn refresh_zone_rows(
         }
     }
     for (row, mut text, mut color) in &mut levels {
-        let want = if zone_locked(&selection, profile, row.map) {
-            format!("Locked, level {}", row.lo)
-        } else {
-            level_range(row.lo, row.hi)
+        let want = match zone_lock(&selection, profile, row.map) {
+            Some(lock) => lock.short(),
+            None => level_range(row.lo, row.hi),
         };
         if text.0 != want {
             text.0 = want;
@@ -1206,11 +1218,9 @@ fn refresh_pick_line(
     }
 
     if let Ok(mut t) = warn.single_mut() {
-        let want = if zone_locked(&selection, profile, selection.map) {
-            format!("Requires level {}", zone_min_level(selection.map))
-        } else {
-            String::new()
-        };
+        let want = zone_lock(&selection, profile, selection.map)
+            .map(|lock| lock.long())
+            .unwrap_or_default();
         if t.0 != want {
             t.0 = want;
         }
