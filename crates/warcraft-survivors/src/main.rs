@@ -57,6 +57,16 @@ fn parse_size(s: &str) -> Result<(u32, u32), String> {
     Ok((w, h))
 }
 
+/// Whether the client will only print a report and exit before any setup: `WOW_CAPTURE=list`,
+/// `WOW_PROBE=list` and `WOW_HOVER_LOG_REPORT=<csv>`, the early exits at the top of
+/// `benilla_app`'s launch.
+fn prints_and_exits() -> bool {
+    let is_list = |name| std::env::var(name).as_deref() == Ok("list");
+    std::env::var("WOW_HOVER_LOG_REPORT").is_ok()
+        || is_list("WOW_CAPTURE")
+        || is_list("WOW_PROBE")
+}
+
 fn main() -> AppExit {
     let cli = Cli::parse();
 
@@ -84,9 +94,10 @@ fn main() -> AppExit {
     }
 
     // The client starts without an install and only logs it, which leaves an empty world; the
-    // survivors mode has nothing to show without one, so it stops here instead.
+    // survivors mode has nothing to show without one, so it stops here instead. The dev commands
+    // that only print a list and exit before any setup need no install, so they skip the check.
     benilla_formats::set_project_folder(env!("BENILLA_PROJECT_DIR"));
-    if benilla_formats::wow_data().is_none() {
+    if !prints_and_exits() && benilla_formats::wow_data().is_none() {
         eprintln!("warcraft-survivors: no WoW 1.12.1 Data folder found. Looked in:");
         for path in benilla_formats::candidates() {
             eprintln!("  {}", path.display());
