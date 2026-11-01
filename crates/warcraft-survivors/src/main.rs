@@ -82,6 +82,11 @@ struct Cli {
     #[arg(long, value_name = "STEPS", help_heading = "Testing")]
     script: Option<String>,
 
+    /// Load class, ability and passive mods (`*.toml`) from `DIR` instead of `mods` in the state
+    /// folder. See `docs/MODDING.md`. Sets `WOW_SURVIVORS_MODS`.
+    #[arg(long, value_name = "DIR", help_heading = "Mods")]
+    mods: Option<PathBuf>,
+
     /// Start with the colour grade (sharpening, vibrance, warmth) off; `G` toggles it in play.
     /// Sets `WOW_GRADE=0`.
     #[arg(long, help_heading = "Display")]
@@ -179,6 +184,7 @@ fn main() -> AppExit {
         ("WOW_SURVIVORS_MAP", cli.zone),
         ("WOW_SURVIVORS_SHOTS", path(cli.shots)),
         ("WOW_SURVIVORS_SCRIPT", cli.script),
+        ("WOW_SURVIVORS_MODS", path(cli.mods)),
         ("WOW_GRADE", flag(cli.no_grade, "0")),
         ("WOW_DPI", cli.dpi.map(|v| v.to_string())),
         ("WOW_NOVSYNC", flag(cli.no_vsync, "1")),

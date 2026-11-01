@@ -1,10 +1,13 @@
 //! The mode's tables: classes, abilities, passives, enemies and the wave clock. Spell ids name
 //! `Spell.dbc` rows only for their icon, name and visual chain; every number here is the mode's.
 
+use std::sync::LazyLock;
+
 /// A weapon on the hero's virtual item slots: `(slot, display, class, subclass, material, inv,
 /// sheath)`, the creature form of `UNIT_VIRTUAL_ITEM_SLOT_DISPLAY` and `_INFO`.
 pub(crate) type Weapon = (u16, u32, u8, u8, u8, u8, u8);
 
+#[derive(Clone, Copy)]
 pub(crate) struct ClassDef {
     pub id: u8,
     pub name: &'static str,
@@ -21,7 +24,7 @@ pub(crate) struct ClassDef {
     pub sheath: u8,
 }
 
-#[derive(Clone, Copy, PartialEq, Debug)]
+#[derive(Clone, Copy, PartialEq, Debug, serde::Deserialize)]
 pub(crate) enum Kind {
     /// A missile at the nearest enemies (or instant if the spell has no speed).
     Bolt,
@@ -57,7 +60,7 @@ pub(crate) enum Kind {
     Totem,
 }
 
-#[derive(Clone, Copy, PartialEq, Debug)]
+#[derive(Clone, Copy, PartialEq, Debug, serde::Deserialize)]
 pub(crate) enum Effect {
     None,
     /// Speed multiplier for seconds.
@@ -73,6 +76,7 @@ pub(crate) enum Effect {
     Execute(f32),
 }
 
+#[derive(Clone, Copy)]
 pub(crate) struct AbilityDef {
     pub key: &'static str,
     pub spell: u32,
@@ -97,7 +101,8 @@ pub(crate) struct AbilityDef {
     pub overhead: bool,
 }
 
-const fn ab(key: &'static str, spell: u32, kind: Kind) -> AbilityDef {
+/// An ability with the defaults every entry starts from; the mod loader starts from it too.
+pub(crate) const fn ab(key: &'static str, spell: u32, kind: Kind) -> AbilityDef {
     AbilityDef {
         key,
         spell,
@@ -122,7 +127,7 @@ macro_rules! ability {
     };
 }
 
-pub(crate) static ABILITIES: &[AbilityDef] = &[
+static BUILTIN_ABILITIES: &[AbilityDef] = &[
     // --- Mage ---
     ability!(
         "frostbolt",
@@ -1053,7 +1058,7 @@ pub(crate) const MAX_PASSIVE_LEVEL: u8 = 5;
 pub(crate) const MAX_ABILITIES: usize = 6;
 pub(crate) const MAX_PASSIVES: usize = 6;
 
-#[derive(Clone, Copy, PartialEq, Debug)]
+#[derive(Clone, Copy, PartialEq, Debug, serde::Deserialize)]
 pub(crate) enum Stat {
     Might,
     MaxHp,
@@ -1067,6 +1072,7 @@ pub(crate) enum Stat {
     Crit,
 }
 
+#[derive(Clone, Copy)]
 pub(crate) struct PassiveDef {
     pub key: &'static str,
     pub name: &'static str,
@@ -1076,7 +1082,7 @@ pub(crate) struct PassiveDef {
     pub per_level: f32,
 }
 
-pub(crate) static PASSIVES: &[PassiveDef] = &[
+static BUILTIN_PASSIVES: &[PassiveDef] = &[
     PassiveDef {
         key: "might",
         name: "Blessing of Might",
@@ -1149,7 +1155,42 @@ pub(crate) static PASSIVES: &[PassiveDef] = &[
     },
 ];
 
-pub(crate) static CLASSES: &[ClassDef] = &[
+/// Every ability: the built-in table, then what the mod files add (see [`super::modding`]).
+pub(crate) static ABILITIES: LazyLock<Vec<AbilityDef>> = LazyLock::new(|| {
+    let mut all = BUILTIN_ABILITIES.to_vec();
+    all.extend(super::modding::mods().abilities.iter().copied());
+    all
+});
+
+/// Every passive: the built-in table, then the mods'.
+pub(crate) static PASSIVES: LazyLock<Vec<PassiveDef>> = LazyLock::new(|| {
+    let mut all = BUILTIN_PASSIVES.to_vec();
+    all.extend(super::modding::mods().passives.iter().copied());
+    all
+});
+
+/// Every class: the built-in table, then the mods'. Mod classes come last so the built-in
+/// indices, and the saved progress that follows them, never move.
+pub(crate) static CLASSES: LazyLock<Vec<ClassDef>> = LazyLock::new(|| {
+    let mut all = BUILTIN_CLASSES.to_vec();
+    all.extend(super::modding::mods().classes.iter().copied());
+    all
+});
+
+/// The tables the game ships with, for the mod loader to check keys and pick a base class from.
+pub(super) fn builtin_abilities() -> &'static [AbilityDef] {
+    BUILTIN_ABILITIES
+}
+
+pub(super) fn builtin_passives() -> &'static [PassiveDef] {
+    BUILTIN_PASSIVES
+}
+
+pub(super) fn builtin_classes() -> &'static [ClassDef] {
+    BUILTIN_CLASSES
+}
+
+static BUILTIN_CLASSES: &[ClassDef] = &[
     ClassDef {
         id: 1,
         name: "Warrior",

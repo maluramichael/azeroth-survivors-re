@@ -1,0 +1,18 @@
+# Spellblade: a hybrid class. It fights with the warrior's looks and weapons and draws its
+# spells from both the warrior's and the mage's pools, plus one ability of its own.
+# Copy this file into the mods folder (see docs/MODDING.md) to play it.
+
+[[ability]]
+key = "arcane_blade"
+spell = 1449                       # Arcane Explosion: icon, name and visuals
+kind = "Nova"
+damage = 18.0
+cooldown = 3.0
+radius = 7.0
+effect = { Slow = [0.5, 2.0] }     # to half speed for 2 seconds
+
+[[class]]
+name = "Spellblade"
+base = "Warrior"                   # id, power, colour, looks, weapons and sheath come from here
+start = "cleave"
+pool = ["cleave", "whirlwind", "frostbolt", "blizzard", "arcane_blade"]

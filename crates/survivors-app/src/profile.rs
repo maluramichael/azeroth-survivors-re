@@ -325,7 +325,10 @@ pub(super) fn award_run(
     mut profile: ResMut<Profile>,
     mut chat: MessageWriter<ChatLine>,
 ) {
-    let Some(class) = data::CLASSES.iter().position(|c| c.id == run.class.id) else {
+    let Some(class) = data::CLASSES
+        .iter()
+        .position(|c| c.id == run.class.id && c.name == run.class.name)
+    else {
         return;
     };
     let char_level = profile.character(class).level;

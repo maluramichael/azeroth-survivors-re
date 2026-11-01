@@ -1053,7 +1053,7 @@ mod tests {
 
     #[test]
     fn a_hand_is_never_longer_than_asked_and_never_repeats_a_card() {
-        for class in data::CLASSES {
+        for class in data::CLASSES.iter() {
             let mut run = Run {
                 me: crate::HeroState {
                     class,
@@ -1132,7 +1132,7 @@ mod tests {
 
     #[test]
     fn a_pick_named_by_keys_lands_the_same_on_another_copy_and_only_once() {
-        for class in data::CLASSES {
+        for class in data::CLASSES.iter() {
             let mut here = crate::HeroState::new(class, 1, Default::default(), Default::default());
             let mut there = crate::HeroState::new(class, 1, Default::default(), Default::default());
             let mut rng = Rng(5);

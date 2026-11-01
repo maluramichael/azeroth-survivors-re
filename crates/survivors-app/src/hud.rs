@@ -1162,7 +1162,7 @@ pub(super) fn choices_for(
         }
     }
     if run.passives.len() < data::MAX_PASSIVES {
-        for p in data::PASSIVES {
+        for p in data::PASSIVES.iter() {
             if !run.passives.iter().any(|(q, _)| q.key == p.key) && !banished.contains(&p.key) {
                 pool.push((Choice::NewPassive(p), 0.5));
             }
@@ -1978,7 +1978,9 @@ pub(super) fn refresh_results(
         gold: u64::from(run.gold),
         ..default()
     });
-    let class = data::CLASSES.iter().position(|c| c.id == run.class.id);
+    let class = data::CLASSES
+        .iter()
+        .position(|c| c.id == run.class.id && c.name == run.class.name);
     let character = class.map(|c| profile.character(c)).unwrap_or_default();
     let level_line = if award.levels > 0 {
         format!("{} reached level {}!", run.class.name, character.level)

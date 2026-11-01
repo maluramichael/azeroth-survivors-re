@@ -358,7 +358,7 @@ mod tests {
 
     #[test]
     fn every_class_has_a_recipe_and_the_panel_holds_them() {
-        for c in data::CLASSES {
+        for c in data::CLASSES.iter() {
             let n = recipes(c.pool).len();
             assert!(n >= 1, "{} has no evolution", c.name);
             assert!(n <= ROWS, "{} has {n} recipes", c.name);
