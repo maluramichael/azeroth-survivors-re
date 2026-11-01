@@ -19,7 +19,7 @@ use super::finale::Finale;
 use super::hero::{Hero, Peer};
 use super::hud::UiArt;
 use super::mods::StatMods;
-use super::pickups::Beacons;
+use super::dropart::DropArt;
 use super::units::flat;
 use super::{data, GuestMail, HeroState, Mail, Phase, Rng, Run, RunEntity};
 
@@ -53,13 +53,14 @@ pub(super) fn plugin(app: &mut App) {
         .add_systems(Startup, load_bank)
         .add_systems(
             Update,
-            (arm, drop_items, collect_items)
+            (arm, drop_items, boss_drops, collect_items)
                 .chain()
                 .after(WorldStage::Input)
                 .run_if(super::run_on)
                 .run_if(|l: Res<benilla_app::survivors_host::loading_screen::LoadingScreen>| !l.covering()),
         )
         .add_message::<GotItem>()
+        .add_message::<BossDrop>()
         .add_systems(Update, wear_mailed.run_if(in_run))
         .add_systems(Update, show_strip.run_if(in_run))
         .add_systems(OnEnter(Phase::GameOver), (bank_best, teardown))
@@ -125,7 +126,7 @@ impl Quality {
     }
 
     /// Height of the beam over the drop, in yards: the better, the taller.
-    fn beam(self) -> f32 {
+    pub(super) fn beam(self) -> f32 {
         match self {
             Quality::Poor => 1.2,
             Quality::Common => 2.2,
@@ -402,6 +403,14 @@ pub(super) struct Item {
 }
 
 impl Item {
+    pub(super) fn slot(&self) -> Slot {
+        self.slot
+    }
+
+    pub(super) fn quality(&self) -> Quality {
+        self.quality
+    }
+
     fn mods(&self) -> StatMods {
         let mut m = StatMods::default();
         for r in &self.stats {
@@ -546,7 +555,13 @@ fn roll_item(rng: &mut Rng, quality: Quality, progress: f32) -> Item {
         .iter()
         .filter(|t| t.quality == quality)
         .collect();
-    let tpl = pool[rng.index(pool.len())];
+    roll_from(pool[rng.index(pool.len())], rng, progress)
+}
+
+/// The item `tpl` names with its stats rolled, stronger the later in the run (`progress` 0 to 1):
+/// a boss's signature piece ([`BossDrop`]) as much as a random drop.
+pub(super) fn roll_from(tpl: &Tpl, rng: &mut Rng, progress: f32) -> Item {
+    let quality = tpl.quality;
     let points =
         quality.points() * rng.range(0.85, 1.15) * (1.0 + LATE_BONUS * progress.clamp(0.0, 1.0));
     let [a, b] = tpl.stats;
@@ -733,9 +748,6 @@ fn drop_items(
     mut rng: ResMut<Rng>,
     mut run: ResMut<Run>,
     mut gear: ResMut<Gear>,
-    mut beacons: ResMut<Beacons>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
     dead: Query<(&Transform, &Enemy, Has<Elite>, Has<Finale>), Added<Dying>>,
     drops: Query<(), With<ItemDrop>>,
     mut profile: Option<ResMut<super::profile::Profile>>,
@@ -770,20 +782,57 @@ fn drop_items(
         let item = roll_item(&mut rng, quality, progress);
         let a = rng.range(0.0, std::f32::consts::TAU);
         let at = tf.translation + Vec3::new(a.cos(), 0.0, a.sin()) * 0.9;
-        let (color, height) = (item.quality.color(), item.quality.beam());
-        let e = commands
-            .spawn((
-                ItemDrop {
-                    item,
-                    life: DROP_LIFE,
-                },
-                Transform::from_translation(at),
-                Visibility::default(),
-                RunEntity,
-            ))
-            .id();
-        beacons.attach(&mut commands, &mut meshes, &mut materials, e, color, height);
+        lay(&mut commands, item, at);
         on_ground += 1;
+    }
+}
+
+/// `item` on the ground at `at`, dressed by [`super::dropart`].
+fn lay(commands: &mut Commands, item: Item, at: Vec3) {
+    commands.spawn((
+        DropArt::Item {
+            slot: item.slot(),
+            quality: item.quality(),
+        },
+        ItemDrop {
+            item,
+            life: DROP_LIFE,
+        },
+        Transform::from_translation(at),
+        Visibility::default(),
+        RunEntity,
+    ));
+}
+
+/// A boss's own piece of loot ([`super::bosses`], [`super::rares`]): the template `tpl` rolled at
+/// the run's progress and laid on the ground at `pos`, or put on at once with `wear_now` (the
+/// finale's, when the run ends before anyone could walk to it). On top of the boss's random drop.
+#[derive(Message, Clone)]
+#[allow(dead_code)]
+pub(crate) struct BossDrop {
+    pub pos: Vec3,
+    pub tpl: &'static Tpl,
+    pub wear_now: bool,
+}
+
+/// Bosses' signature loot ([`BossDrop`]) goes on the ground or straight on.
+fn boss_drops(
+    mut commands: Commands,
+    mut drops: MessageReader<BossDrop>,
+    mut rng: ResMut<Rng>,
+    mut run: ResMut<Run>,
+    mut gear: ResMut<Gear>,
+    mut profile: Option<ResMut<super::profile::Profile>>,
+    mut chat: MessageWriter<ChatLine>,
+) {
+    let progress = data::progress(run.elapsed);
+    for d in drops.read() {
+        let item = roll_from(d.tpl, &mut rng, progress);
+        if d.wear_now {
+            take(&item, &mut run, &mut gear, profile.as_deref_mut(), &mut chat);
+        } else {
+            lay(&mut commands, item, d.pos);
+        }
     }
 }
 
@@ -985,13 +1034,13 @@ fn show_strip(
 pub(super) fn sim_init(app: &mut App) {
     app.init_resource::<Gear>()
         .init_resource::<Bank>()
-        .init_resource::<Beacons>()
-        .add_message::<GotItem>();
+        .add_message::<GotItem>()
+        .add_message::<BossDrop>();
 }
 
 #[cfg(test)]
 pub(super) fn sim_systems() -> bevy::ecs::schedule::ScheduleConfigs<bevy::ecs::system::ScheduleSystem> {
-    (arm, drop_items, collect_items).chain().into_configs()
+    (arm, drop_items, boss_drops, collect_items).chain().into_configs()
 }
 
 #[cfg(test)]

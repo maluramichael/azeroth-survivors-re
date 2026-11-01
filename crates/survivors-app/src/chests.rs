@@ -8,19 +8,17 @@ use bevy::prelude::*;
 
 use super::chatlog::{ChatKind, ChatLine};
 use super::data;
-use super::enemies::{Dying, Elite, Enemy};
+use super::dropart::DropArt;
+use super::enemies::{Dying, Elite, Enemy, Rare};
 use super::finale::Finale;
 use super::hero::{Hero, Peer};
 use super::items::drop_boost;
-use super::pickups::Beacons;
 use super::units::{self, flat, Fx};
 use super::{GuestMail, HeroState, Mail, Rng, Run};
 
 /// `GameObjectDisplayInfo` 259, `TreasureChest01.mdx`.
 const CHEST_DISPLAY: u32 = 259;
 const CHEST_SCALE: f32 = 1.0;
-const CHEST_COLOR: Color = Color::srgb(1.0, 0.8, 0.2);
-const BEAM_HEIGHT: f32 = 6.0;
 /// Seconds a chest waits.
 const LIFE: f32 = 120.0;
 /// How near the hero must walk, in yards.
@@ -47,6 +45,22 @@ pub(super) fn plugin(app: &mut App) {
             .run_if(|l: Res<benilla_app::survivors_host::loading_screen::LoadingScreen>| !l.covering()),
     );
 }
+
+/// Who left a chest, for its look ([`super::dropart`]): an elite, a boss or a rare, the finale
+/// (or the bonus boss), or a guard post ([`super::guards`]).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[allow(dead_code)]
+pub(super) enum ChestTier {
+    Elite,
+    Boss,
+    Finale,
+    Post,
+}
+
+/// A chest that does not open yet: a guard post's, while its camp stands ([`super::guards`]).
+#[derive(Component)]
+#[allow(dead_code)]
+pub(super) struct Locked;
 
 /// A chest on the ground, holding this many rank-ups.
 #[derive(Component)]
@@ -99,21 +113,33 @@ fn clear_of(hero: Vec3, at: Vec3) -> Vec3 {
     Vec3::new(p.x, at.y, p.z)
 }
 
-/// Elites and bosses leave a chest where they fall, but never at the hero's feet.
-#[allow(clippy::too_many_arguments)]
+/// A chest of `ranks` on the ground at `at`, left by `tier`; its look is [`super::dropart`]'s.
+pub(super) fn spawn_chest(
+    commands: &mut Commands,
+    run: &mut Run,
+    at: Vec3,
+    ranks: usize,
+    tier: ChestTier,
+) -> Entity {
+    let e = units::spawn_object(commands, run.guid(), CHEST_DISPLAY, CHEST_SCALE, at);
+    commands
+        .entity(e)
+        .insert((Chest { ranks, life: LIFE }, DropArt::Chest(tier)));
+    e
+}
+
+/// Elites and bosses leave a chest where they fall, but never at the hero's feet. A rare's always
+/// drops and holds what an elite's does.
 fn drop_chests(
     mut commands: Commands,
     mut run: ResMut<Run>,
     mut rng: ResMut<Rng>,
-    mut beacons: ResMut<Beacons>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
     hero: Query<&Transform, (With<Hero>, Without<Enemy>)>,
     world: WorldPoint,
-    dead: Query<(&Transform, &Enemy, Has<Elite>, Has<Finale>), Added<Dying>>,
+    dead: Query<(&Transform, &Enemy, Has<Elite>, Has<Finale>, Has<Rare>), Added<Dying>>,
 ) {
     let hpos = hero.single().map(|h| h.translation).ok();
-    for (tf, enemy, elite, finale) in &dead {
+    for (tf, enemy, elite, finale, rare) in &dead {
         // The finale ends the run on the spot; there is no one left to open its chest.
         if finale || !(enemy.boss || elite) {
             continue;
@@ -122,26 +148,22 @@ fn drop_chests(
             continue;
         }
         let bonus = rng.f32() < BONUS_CHANCE;
-        let ranks = match (enemy.boss, bonus) {
+        let ranks = match (enemy.boss && !rare, bonus) {
             (false, false) => 1,
             (false, true) | (true, false) => 3,
             (true, true) => 5,
+        };
+        let tier = if enemy.boss {
+            ChestTier::Boss
+        } else {
+            ChestTier::Elite
         };
         let mut at = tf.translation;
         if let Some(h) = hpos {
             at = clear_of(h, at);
             at.y = world.terrain_height_under(at).unwrap_or(at.y);
         }
-        let e = units::spawn_object(&mut commands, run.guid(), CHEST_DISPLAY, CHEST_SCALE, at);
-        commands.entity(e).insert(Chest { ranks, life: LIFE });
-        beacons.attach(
-            &mut commands,
-            &mut meshes,
-            &mut materials,
-            e,
-            CHEST_COLOR,
-            BEAM_HEIGHT,
-        );
+        spawn_chest(&mut commands, &mut run, at, ranks, tier);
     }
 }
 
@@ -153,7 +175,10 @@ fn open_chests(
     mut rng: ResMut<Rng>,
     hero: Query<(Entity, &Transform), With<Hero>>,
     mut peers: Query<(Entity, &Transform, &mut HeroState), (With<Peer>, Without<Hero>)>,
-    mut chests: Query<(Entity, &Transform, &mut Chest), (Without<Hero>, Without<Peer>)>,
+    mut chests: Query<
+        (Entity, &Transform, &mut Chest),
+        (Without<Hero>, Without<Peer>, Without<Locked>),
+    >,
     spells: Option<Res<benilla_app::survivors_host::ui_action::Spells>>,
     mut fx: Fx,
     mut chat: MessageWriter<ChatLine>,

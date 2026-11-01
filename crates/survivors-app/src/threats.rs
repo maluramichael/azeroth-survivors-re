@@ -834,7 +834,8 @@ fn arm(
                 cd: rng.range(0.5, r.cooldown),
             });
         }
-        if e.boss && !reaper {
+        // A boss with a script of its own ([`super::bosses`]) fights by that instead.
+        if e.boss && !reaper && !super::bosses::scripted(e.def.name) {
             // The clock's bosses are numbered by their place on the zone's schedule.
             let index = match enemies::def_ref(selection.map, e.def) {
                 Some((2, i)) => u32::from(i),

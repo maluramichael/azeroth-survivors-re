@@ -14,6 +14,8 @@ mod antialias;
 mod auto;
 mod balance;
 mod barrier;
+mod bossbar;
+mod bosses;
 mod cards;
 mod charpanel;
 mod chests;
@@ -25,6 +27,7 @@ mod data;
 mod debug;
 mod difficulty;
 mod dmgmeter;
+mod dropart;
 mod enrage;
 mod enemies;
 mod evolutions;
@@ -35,6 +38,7 @@ mod framerate;
 mod gfxpresets;
 mod frames;
 mod grade;
+mod guards;
 mod hero;
 mod hud;
 mod items;
@@ -57,6 +61,7 @@ mod profile;
 mod quests;
 mod questlog;
 mod races;
+mod rares;
 #[cfg(not(target_arch = "wasm32"))]
 mod shots;
 mod records;
@@ -91,6 +96,7 @@ impl Plugin for SurvivorsPlugin {
             .add_plugins((collection::plugin, loottables::plugin, achievements::plugin))
             .add_plugins((modding::plugin, questlog::plugin, threats::plugin, framerate::plugin))
             .add_plugins((antialias::plugin, gfxpresets::plugin, vfx::plugin))
+            .add_plugins((bosses::plugin, bossbar::plugin, guards::plugin, dropart::plugin, rares::plugin))
             .add_plugins((races::plugin, records::plugin, surge::plugin, enrage::plugin, prefs::plugin, textfield::plugin))
             .add_plugins((
                 trainer::plugin,
@@ -412,6 +418,9 @@ pub(crate) struct Run {
     /// The player left from the pause screen: the run ends as a loss and still pays out what it
     /// earned ([`profile::award_run`]).
     pub abandoned: bool,
+    /// A bonus fight past the finale is on ([`rares`]): the bell at [`data::VICTORY_SECS`] waits
+    /// for it.
+    pub encore: bool,
     /// This machine's hero.
     pub me: HeroState,
 }
@@ -489,6 +498,7 @@ impl Default for Run {
             party_down: false,
             host_gone: false,
             abandoned: false,
+            encore: false,
             me: HeroState::default(),
         }
     }

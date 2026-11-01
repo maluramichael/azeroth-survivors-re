@@ -760,7 +760,8 @@ pub(super) fn hero_vitals(
             return;
         }
     }
-    if run.elapsed >= data::VICTORY_SECS {
+    // A bonus fight past the finale ([`super::Run::encore`]) holds the bell until it ends.
+    if run.elapsed >= data::VICTORY_SECS && !run.encore {
         run.won = true;
         // A last flourish before the results.
         fx.cast(entity, 642, &[entity], None);

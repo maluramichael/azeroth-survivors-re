@@ -58,6 +58,21 @@ pub(super) struct ZoneText;
 #[derive(Component)]
 pub(super) struct MapBody;
 
+/// Something the minimap marks with an icon of its own, set by the module that spawns it: a guard
+/// post ([`super::guards`]), its chest or shrine, a boss, a rare ([`super::bossbar`],
+/// [`super::rares`]) and the bonus boss's portal. Not drawn yet; [`compose`] learns it with the
+/// guard posts.
+#[derive(Component, Clone, Copy, PartialEq, Eq, Debug)]
+#[allow(dead_code)]
+pub(super) enum MapMarker {
+    Post,
+    Chest,
+    Shrine,
+    Boss,
+    Rare,
+    Portal,
+}
+
 #[derive(Component, Clone, Copy, PartialEq, Eq)]
 pub(super) enum MapButton {
     ZoomIn,

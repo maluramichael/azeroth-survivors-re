@@ -1,13 +1,13 @@
 //! WoW pickups: a Hearthstone shard pulls every gem in, Divine Intervention clears the screen,
 //! Frost Nova freezes the horde. They drop rarely from the dead and work when the hero walks over
-//! them. This module also owns the [`Beacons`] every ground drop (items, chests, shards) is lit
-//! with: a tall, faint beam and a glowing orb in one colour.
+//! them. How a shard looks on the ground is [`super::dropart`]'s.
 
 use benilla_world::schedule::WorldStage;
 use bevy::prelude::*;
 
 use super::abilities::Hit;
 use super::chatlog::ChatLine;
+use super::dropart::{DropArt, ShardArt};
 use super::enemies::{Dying, Elite, Enemy, Gem};
 use super::finale::Reaper;
 use super::hero::{Hero, Peer};
@@ -41,15 +41,8 @@ const CHANCE_INTERVENTION: f32 = 0.001;
 const CHANCE_NOVA: f32 = 0.002;
 const ELITE_LUCK: f32 = 8.0;
 
-const BEAM_RADIUS: f32 = 0.14;
-const ORB_RADIUS: f32 = 0.3;
-const BEAM_ALPHA: f32 = 0.28;
-const ORB_ALPHA: f32 = 0.9;
-/// How high the orb floats over the ground.
-const ORB_LIFT: f32 = 0.7;
-
 pub(super) fn plugin(app: &mut App) {
-    app.init_resource::<Beacons>().add_systems(
+    app.add_systems(
         Update,
         (drop_shards, collect_shards)
             .chain()
@@ -58,79 +51,6 @@ pub(super) fn plugin(app: &mut App) {
             .run_if(super::simulates)
             .run_if(|l: Res<benilla_app::survivors_host::loading_screen::LoadingScreen>| !l.covering()),
     );
-}
-
-/// The meshes and materials the beacons share: one beam and one orb mesh, a material per colour.
-#[derive(Resource, Default)]
-pub(super) struct Beacons {
-    meshes: Option<(Handle<Mesh>, Handle<Mesh>)>,
-    /// Colour as bytes, whether it is the beam's (faint) material, and the material.
-    materials: Vec<([u8; 3], bool, Handle<StandardMaterial>)>,
-}
-
-impl Beacons {
-    /// Light `parent` with a beam `height` yards tall and an orb, both `color`.
-    pub fn attach(
-        &mut self,
-        commands: &mut Commands,
-        meshes: &mut Assets<Mesh>,
-        materials: &mut Assets<StandardMaterial>,
-        parent: Entity,
-        color: Color,
-        height: f32,
-    ) {
-        let (beam, orb) = self
-            .meshes
-            .get_or_insert_with(|| {
-                (
-                    meshes.add(Cylinder::new(BEAM_RADIUS, 1.0)),
-                    meshes.add(Sphere::new(ORB_RADIUS)),
-                )
-            })
-            .clone();
-        let glass = self.material(materials, color, true);
-        let solid = self.material(materials, color, false);
-        commands.entity(parent).with_children(|p| {
-            p.spawn((
-                Mesh3d(beam),
-                MeshMaterial3d(glass),
-                Transform::from_xyz(0.0, height * 0.5, 0.0).with_scale(Vec3::new(1.0, height, 1.0)),
-            ));
-            p.spawn((
-                Mesh3d(orb),
-                MeshMaterial3d(solid),
-                Transform::from_xyz(0.0, ORB_LIFT, 0.0),
-            ));
-        });
-    }
-
-    fn material(
-        &mut self,
-        materials: &mut Assets<StandardMaterial>,
-        color: Color,
-        glass: bool,
-    ) -> Handle<StandardMaterial> {
-        let rgba = color.to_srgba();
-        let key = [rgba.red, rgba.green, rgba.blue].map(|c| (c * 255.0).round() as u8);
-        if let Some((_, _, h)) = self
-            .materials
-            .iter()
-            .find(|(k, g, _)| *k == key && *g == glass)
-        {
-            return h.clone();
-        }
-        let alpha = if glass { BEAM_ALPHA } else { ORB_ALPHA };
-        let h = materials.add(StandardMaterial {
-            base_color: Color::srgba(rgba.red, rgba.green, rgba.blue, alpha),
-            unlit: true,
-            alpha_mode: AlphaMode::Blend,
-            cull_mode: None,
-            fog_enabled: false,
-            ..default()
-        });
-        self.materials.push((key, glass, h.clone()));
-        h
-    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -151,11 +71,12 @@ impl Kind {
         }
     }
 
-    fn color(self) -> Color {
+    /// How the shard looks on the ground ([`super::dropart`]).
+    fn art(self) -> ShardArt {
         match self {
-            Kind::Hearthstone => Color::srgb(0.35, 0.6, 1.0),
-            Kind::Intervention => Color::srgb(1.0, 1.0, 0.8),
-            Kind::Nova => Color::srgb(0.55, 0.9, 1.0),
+            Kind::Hearthstone => ShardArt::Hearthstone,
+            Kind::Intervention => ShardArt::Intervention,
+            Kind::Nova => ShardArt::Nova,
         }
     }
 
@@ -190,13 +111,9 @@ struct Shard {
 }
 
 /// The dead drop shards: rarely a normal kill, more often an elite, always a boss.
-#[allow(clippy::too_many_arguments)]
 fn drop_shards(
     mut commands: Commands,
     mut rng: ResMut<Rng>,
-    mut beacons: ResMut<Beacons>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
     dead: Query<(&Transform, &Enemy, Has<Elite>), Added<Dying>>,
     shards: Query<(), With<Shard>>,
 ) {
@@ -214,25 +131,16 @@ fn drop_shards(
         let Some(kind) = kind else { continue };
         let a = rng.range(0.0, std::f32::consts::TAU);
         let at = tf.translation + Vec3::new(a.cos(), 0.0, a.sin()) * 1.2;
-        let e = commands
-            .spawn((
-                Shard {
-                    kind,
-                    life: SHARD_LIFE,
-                },
-                Transform::from_translation(at),
-                Visibility::default(),
-                RunEntity,
-            ))
-            .id();
-        beacons.attach(
-            &mut commands,
-            &mut meshes,
-            &mut materials,
-            e,
-            kind.color(),
-            6.0,
-        );
+        commands.spawn((
+            Shard {
+                kind,
+                life: SHARD_LIFE,
+            },
+            DropArt::Shard(kind.art()),
+            Transform::from_translation(at),
+            Visibility::default(),
+            RunEntity,
+        ));
         on_ground += 1;
     }
 }
@@ -347,12 +255,7 @@ fn collect_shards(
 }
 
 
-/// The shard systems and their state, for the balance simulator ([`super::balance`]).
-#[cfg(test)]
-pub(super) fn sim_init(app: &mut App) {
-    app.init_resource::<Beacons>();
-}
-
+/// The shard systems, for the balance simulator ([`super::balance`]).
 #[cfg(test)]
 pub(super) fn sim_systems() -> bevy::ecs::schedule::ScheduleConfigs<bevy::ecs::system::ScheduleSystem> {
     (drop_shards, collect_shards).chain().into_configs()

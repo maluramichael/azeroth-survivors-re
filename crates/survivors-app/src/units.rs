@@ -36,8 +36,15 @@ const FIELD_GO_STATE: u16 = 14;
 const FIELD_GO_TYPE: u16 = 21;
 /// `GAMEOBJECT_TYPE_GENERIC`: a model and nothing to use.
 const GO_TYPE_GENERIC: u32 = 5;
+/// `GAMEOBJECT_TYPE_CHEST`: the client's state machine lifts its lid as its state goes to
+/// [`GO_STATE_ACTIVE`] (`benilla_app::go_anim`).
+#[allow(dead_code)]
+pub(super) const GO_TYPE_CHEST: u32 = 3;
 /// `GO_STATE_READY`.
 const GO_STATE_READY: u32 = 1;
+/// `GO_STATE_ACTIVE`: a chest opened, a door open.
+#[allow(dead_code)]
+const GO_STATE_ACTIVE: u32 = 0;
 
 pub(super) fn wow_to_bevy(p: [f32; 3]) -> Vec3 {
     Vec3::new(-p[1], p[2], -p[0])
@@ -191,6 +198,17 @@ pub(super) fn spawn_object(
 
 /// [`spawn_object`]'s components, to put on an entity that exists already.
 pub(super) fn object_bundle(serial: u64, display: u32, scale: f32, pos: Vec3) -> impl Bundle {
+    go_bundle(serial, display, scale, pos, GO_TYPE_GENERIC)
+}
+
+/// [`object_bundle`] as a chest ([`GO_TYPE_CHEST`]), whose lid [`open_object`] lifts.
+#[allow(dead_code)]
+pub(super) fn chest_bundle(serial: u64, display: u32, scale: f32, pos: Vec3) -> impl Bundle {
+    go_bundle(serial, display, scale, pos, GO_TYPE_CHEST)
+}
+
+/// A GameObject of `go_type`, ready.
+fn go_bundle(serial: u64, display: u32, scale: f32, pos: Vec3, go_type: u32) -> impl Bundle {
     let guid = HIGH_GAMEOBJECT | serial;
     let pairs = [
         (0, guid as u32),
@@ -199,7 +217,7 @@ pub(super) fn object_bundle(serial: u64, display: u32, scale: f32, pos: Vec3) ->
         (4, scale.to_bits()),
         (FIELD_GO_DISPLAY, display),
         (FIELD_GO_STATE, GO_STATE_READY),
-        (FIELD_GO_TYPE, GO_TYPE_GENERIC),
+        (FIELD_GO_TYPE, go_type),
     ];
     (
         Guid(guid),
@@ -214,6 +232,29 @@ pub(super) fn object_bundle(serial: u64, display: u32, scale: f32, pos: Vec3) ->
         RunEntity,
         ObjLook { display, scale },
     )
+}
+
+/// Open the GameObject `entity` (guid `guid`): its state goes to active, so a chest's lid lifts
+/// as a looted one's does. After deanmathieson/azeroth-survivors-re, branch `progression`,
+/// `10c6a77` (`treasure.rs`), MIT OR Apache-2.0.
+#[allow(dead_code)]
+pub(super) fn open_object(
+    entity: Entity,
+    guid: u64,
+    store: &mut ObjectStore,
+    fields: &mut MessageWriter<FieldChanged>,
+) {
+    store
+        .0
+        .merge(ObjectFields::from_pairs(&[(FIELD_GO_STATE, GO_STATE_ACTIVE)]));
+    fields.write(FieldChanged {
+        entity,
+        guid,
+        kind: ObjectType::GameObject,
+        index: FIELD_GO_STATE,
+        old: GO_STATE_READY,
+        new: GO_STATE_ACTIVE,
+    });
 }
 
 /// Zero health: the animation selector plays Death and holds the corpse pose.

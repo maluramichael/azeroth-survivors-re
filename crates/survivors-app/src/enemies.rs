@@ -47,6 +47,19 @@ pub(super) struct Enemy {
 #[derive(Component)]
 pub(super) struct Elite;
 
+/// Another module moves this enemy (a guard at its post, a charging boss); the chase leaves it
+/// be. [`move_enemies`] still runs its timers down but neither walks it, brings it back as a
+/// stray nor swings with it, and [`spawn_enemies`] does not count it in the horde.
+#[derive(Component)]
+#[allow(dead_code)]
+pub(super) struct Steered;
+
+/// A named rare of the zone ([`super::rares`]): spawned with `boss: true` for its plate, frame
+/// and loot, but never counted in `run.bosses`.
+#[derive(Component)]
+#[allow(dead_code)]
+pub(super) struct Rare;
+
 /// An elite is this much larger, tougher and worth more than the grunt it was rolled from.
 const ELITE_SCALE: f32 = 1.35;
 const ELITE_HP: f32 = 5.0;
@@ -93,7 +106,7 @@ pub(super) struct Loot {
     pub def: &'static data::EnemyDef,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) enum GemKind {
     Xp(u32),
     Heal(f32),
@@ -119,29 +132,18 @@ pub(super) struct Gem {
     speed: f32,
 }
 
-/// The `GameObjectDisplayInfo` row and scale a pickup wears: a wisp per experience tier, the
-/// bigger tiers rarer, a turkey leg for health and a pile of gold that grows with its worth.
-fn look_for(kind: GemKind) -> (u32, f32) {
-    match kind {
-        // `TurkeyLeg.mdx`.
-        GemKind::Heal(_) => (114, 2.5),
-        // `GoldPilesmall01.mdx`, a flat heap about two yards across at scale 1.
-        GemKind::Gold(g) if g >= 100 => (2614, 1.4),
-        GemKind::Gold(g) if g >= 25 => (2614, 0.9),
-        GemKind::Gold(g) if g >= 6 => (2614, 0.6),
-        GemKind::Gold(_) => (2614, 0.45),
-        // `BFD_WispSmallPurple.mdx`.
-        GemKind::Xp(xp) if xp >= 20 => (1307, 1.0),
-        // `BFD_WispSmallGreen.mdx`.
-        GemKind::Xp(xp) if xp >= 5 => (1267, 1.0),
-        // `BFD_WispSmall.mdx`.
-        GemKind::Xp(_) => (426, 1.0),
+impl Gem {
+    /// What the gem is worth, for the look it wears ([`super::dropart::gem_look`]).
+    #[allow(dead_code)]
+    pub(super) fn kind(&self) -> GemKind {
+        self.kind
     }
 }
 
 /// Where `def` is listed for battleground `map`, so another machine finds the same creature:
 /// `(0, i)` the roster's i-th, `(1, i)` its i-th boss, `(2, i)` the clock's i-th boss, `(3, 0)` the
-/// finale, `(4, 0)` the reaper.
+/// finale, `(4, 0)` the reaper, `(5, i)` the i-th of the zone's extras (a boss's adds, its rares
+/// and its bonus boss, [`data::extras`]).
 #[cfg_attr(not(all(feature = "coop", not(target_arch = "wasm32"))), allow(dead_code))]
 pub(super) fn def_ref(map: usize, def: &'static EnemyDef) -> Option<(u8, u16)> {
     let roster = data::roster(map);
@@ -162,6 +164,9 @@ pub(super) fn def_ref(map: usize, def: &'static EnemyDef) -> Option<(u8, u16)> {
     if std::ptr::eq(super::finale::reaper(), def) {
         return Some((4, 0));
     }
+    if let Some(i) = find(data::extras(map)) {
+        return Some((5, i));
+    }
     None
 }
 
@@ -177,6 +182,7 @@ pub(super) fn def_at(map: usize, r: (u8, u16)) -> Option<&'static EnemyDef> {
         2 => plan.timed.get(i),
         3 => Some(&plan.finale),
         4 => Some(super::finale::reaper()),
+        5 => data::extras(map).get(i),
         _ => None,
     }
 }
@@ -388,7 +394,8 @@ pub(super) fn spawn_enemies(
     probe: SpawnProbe,
     hero: Query<&Transform, With<Hero>>,
     peers: Query<(&Transform, &HeroState), (With<Peer>, Without<Hero>)>,
-    enemies: Query<(&Enemy, Has<Elite>)>,
+    // A guard at its post or a charging boss is not part of the horde ([`Steered`]).
+    enemies: Query<(&Enemy, Has<Elite>), Without<Steered>>,
     world: WorldPoint,
     mut chat: MessageWriter<ChatLine>,
     mut turn: Local<usize>,
@@ -555,7 +562,7 @@ pub(super) fn move_enemies(
     hero: Query<(Entity, &Transform), (With<Hero>, Without<Enemy>)>,
     mut peers: Query<(Entity, &Transform, &mut HeroState), (With<Peer>, Without<Hero>, Without<Enemy>)>,
     mut enemies: Query<
-        (Entity, &mut Transform, &mut Enemy, &mut MovementState),
+        (Entity, &mut Transform, &mut Enemy, &mut MovementState, Has<Steered>),
         (Without<Hero>, Without<Peer>),
     >,
     mut fx: Fx,
@@ -591,8 +598,8 @@ pub(super) fn move_enemies(
     const CELL: f32 = 3.0;
     let bodies: Vec<(Entity, Vec3, f32)> = enemies
         .iter()
-        .filter(|(_, _, e, _)| !e.dead)
-        .map(|(ent, tf, e, _)| (ent, tf.translation, e.radius))
+        .filter(|(_, _, e, _, _)| !e.dead)
+        .map(|(ent, tf, e, _, _)| (ent, tf.translation, e.radius))
         .collect();
     let key = |p: Vec3| ((p.x / CELL).floor() as i32, (p.z / CELL).floor() as i32);
     let mut grid: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
@@ -627,7 +634,7 @@ pub(super) fn move_enemies(
         push.insert(ent, acc);
     }
 
-    for (ent, mut tf, mut e, mut mv) in &mut enemies {
+    for (ent, mut tf, mut e, mut mv, steered) in &mut enemies {
         let e = &mut *e;
         if e.dead {
             if mv.speed != 0.0 || mv.flags != 0 {
@@ -651,6 +658,10 @@ pub(super) fn move_enemies(
         }
         if e.weaken_t <= 0.0 {
             e.weaken = 1.0;
+        }
+        // Another module walks it ([`Steered`]); it still stands in the others' way.
+        if steered {
+            continue;
         }
         let pos = tf.translation;
         // The nearest standing hero this enemy can see; under Fade a hero is lost to all but the
@@ -898,7 +909,7 @@ pub(super) fn drop_loot(
 }
 
 fn spawn_gem(commands: &mut Commands, serial: u64, pos: Vec3, kind: GemKind) {
-    let (display, scale) = look_for(kind);
+    let (display, scale) = super::dropart::gem_look(kind);
     // Wisps and the turkey leg hover; a heap of coins lies on the ground.
     let lift = if matches!(kind, GemKind::Gold(_)) {
         0.1
@@ -1069,7 +1080,8 @@ mod tests {
                 .chain(&roster.bosses)
                 .chain(&plan.timed)
                 .chain(std::iter::once(&plan.finale))
-                .chain(std::iter::once(super::super::finale::reaper()));
+                .chain(std::iter::once(super::super::finale::reaper()))
+                .chain(data::extras(map));
             for def in all {
                 let r = def_ref(map, def).expect("listed");
                 let back = def_at(map, r).expect("found");

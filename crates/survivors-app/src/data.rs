@@ -2290,6 +2290,45 @@ pub(crate) fn roster(map: usize) -> &'static Roster {
     &ROSTERS[map.min(ROSTERS.len() - 1)]
 }
 
+/// The creatures a battleground has beyond its roster, in this fixed order: the adds its boss
+/// scripts call ([`super::bosses::adds_for`]), its rares ([`super::rares::rares_for`]) and its
+/// bonus boss ([`super::rares::bonus_for`]). Co-op finds them again as `(5, i)`
+/// ([`super::enemies::def_ref`]), so the order is part of the protocol.
+static EXTRAS: LazyLock<Vec<Vec<EnemyDef>>> = LazyLock::new(|| {
+    (0..MAPS.len())
+        .map(|map| {
+            let mut all = super::bosses::adds_for(map);
+            all.extend(super::rares::rares_for(map));
+            all.extend(super::rares::bonus_for(map));
+            all
+        })
+        .collect()
+});
+
+pub(crate) fn extras(map: usize) -> &'static [EnemyDef] {
+    &EXTRAS[map.min(EXTRAS.len() - 1)]
+}
+
+/// The numbers (health, damage, experience) of battleground `map`'s horde at `at` along its
+/// ladder, 0 its first creature and 1 its last, mixed between the two creatures either side; the
+/// rest (name, look, speed, level) is the lower one's, and it fights in melee. Adds and rares
+/// take their numbers from here so they fit the zone, and set their own name and look.
+#[allow(dead_code)]
+pub(crate) fn rung(map: usize, at: f32) -> EnemyDef {
+    let foes = &roster(map).enemies;
+    let t = at.clamp(0.0, 1.0) * foes.len().saturating_sub(1) as f32;
+    let (lo, hi) = (&foes[t.floor() as usize], &foes[t.ceil() as usize]);
+    let k = t.fract();
+    let mix = |a: f32, b: f32| (a + (b - a) * k).round();
+    EnemyDef {
+        hp: mix(lo.hp, hi.hp),
+        damage: mix(lo.damage, hi.damage),
+        xp: mix(lo.xp as f32, hi.xp as f32) as u32,
+        ranged: None,
+        ..*lo
+    }
+}
+
 /// Number a roster off a tuned ladder: each creature takes the health, damage and experience at
 /// its own place along it, from the ladder's running peak so no later tier comes out softer.
 /// With `casters`, the creatures whose names make them casters or archers throw missiles
@@ -2337,4 +2376,22 @@ fn ladder(foes: &[Foe], tuned: &[EnemyDef], casters: bool) -> Vec<EnemyDef> {
             }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_rung_lies_within_its_ladder() {
+        for (map, def) in MAPS.iter().enumerate() {
+            let foes = &roster(map).enemies;
+            let (first, last) = (rung(map, 0.0), rung(map, 1.0));
+            assert_eq!(first.hp, foes[0].hp, "{}", def.name);
+            assert_eq!(last.hp, foes[foes.len() - 1].hp, "{}", def.name);
+            let mid = rung(map, 0.5);
+            assert!(mid.hp >= first.hp && mid.hp <= last.hp, "{}", def.name);
+            assert!(mid.ranged.is_none());
+        }
+    }
 }

@@ -288,7 +288,6 @@ fn sim_app(setup: Setup) -> App {
         .add_systems(Update, choose.run_if(in_state(Phase::LevelUp)));
     super::items::sim_init(&mut app);
     threats::sim_init(&mut app);
-    super::pickups::sim_init(&mut app);
     super::worldbuffs::sim_init(&mut app);
     app.init_resource::<Assets<Mesh>>()
         .init_resource::<Assets<StandardMaterial>>();
