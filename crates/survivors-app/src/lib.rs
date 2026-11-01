@@ -63,6 +63,7 @@ mod records;
 mod trainer;
 mod surge;
 mod units;
+mod vfx;
 mod worldbuffs;
 
 use benilla_world::schedule::WorldStage;
@@ -89,7 +90,7 @@ impl Plugin for SurvivorsPlugin {
             .add_plugins((grade::plugin, kit::plugin, dmgmeter::plugin))
             .add_plugins((collection::plugin, loottables::plugin, achievements::plugin))
             .add_plugins((modding::plugin, questlog::plugin, threats::plugin, framerate::plugin))
-            .add_plugins((antialias::plugin, gfxpresets::plugin))
+            .add_plugins((antialias::plugin, gfxpresets::plugin, vfx::plugin))
             .add_plugins((races::plugin, records::plugin, surge::plugin, enrage::plugin, prefs::plugin, textfield::plugin))
             .add_plugins((
                 trainer::plugin,

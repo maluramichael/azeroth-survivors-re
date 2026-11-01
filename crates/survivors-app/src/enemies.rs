@@ -799,15 +799,18 @@ pub(super) fn tick_marks(
     }
 }
 
-/// Corpses fade once their death has played.
+/// Corpses fade once their death has played ([`super::vfx::corpse_hold`] says how long that is;
+/// [`super::vfx`] sinks them while they fade).
 pub(super) fn reap_dead(
     mut commands: Commands,
     time: Res<Time>,
-    mut dying: Query<(Entity, &mut Dying)>,
+    prefs: Res<super::prefs::Prefs>,
+    mut dying: Query<(Entity, &mut Dying, Option<&Enemy>, Has<Elite>)>,
 ) {
-    for (e, mut d) in &mut dying {
+    for (e, mut d, enemy, elite) in &mut dying {
         d.0 += time.delta_secs();
-        if d.0 > 2.5 {
+        let boss = enemy.is_some_and(|en| en.boss);
+        if d.0 > super::vfx::corpse_hold(prefs.death_fade, boss, elite) {
             commands
                 .entity(e)
                 .remove::<Dying>()
