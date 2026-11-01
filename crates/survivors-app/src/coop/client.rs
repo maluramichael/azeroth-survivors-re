@@ -20,6 +20,7 @@ use crate::hero::Hero;
 use crate::minimap::MapMarker;
 use crate::profile::Profile;
 use crate::threats::{self, Canvas, Seen};
+use crate::worldmap::MapPin;
 use crate::units::{self, area_bundle, chest_bundle, object_bundle, unit_bundle, AreaLook, Fx, Marks, ObjLook};
 use crate::{NetRole, Owned, Phase, Run, RunEntity, Selection, data, hud};
 use benilla_app::survivors_host::net::{FieldChanged, Guid, ObjectStore};
@@ -454,6 +455,10 @@ fn build_bodies(
             // The replicated entity belongs to replicon, not to the run: the run's cleanup must
             // not despawn it.
             .remove::<RunEntity>();
+        // Another hero of the party is a mark on the world map.
+        if hero.is_some() {
+            entity.insert(MapPin::Ally);
+        }
         if let Some(auras) = auras {
             entity.insert(if auras.buffs { Marks::buffs() } else { Marks::debuffs() });
         }

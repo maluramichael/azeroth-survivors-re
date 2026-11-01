@@ -1306,6 +1306,11 @@ pub(super) fn keys(
         Res<super::NetRole>,
         Res<super::questlog::QuestLogUi>,
     ),
+    // The run's map and the hub's: each closes on its own Esc, and Enter waits behind the hub's.
+    maps: (
+        Res<super::worldmap::WorldMapUi>,
+        Res<super::worldmap::HubMapUi>,
+    ),
     mut next: ResMut<NextState<Phase>>,
 ) {
     match phase.get() {
@@ -1320,6 +1325,7 @@ pub(super) fn keys(
                 && !windows.2.open
                 && !windows.3.as_ref().is_some_and(|c| c.open)
                 && !windows.5.open
+                && !maps.1.open
                 && *windows.4 != super::NetRole::Client
                 && start_run(&mut run, &mut selection, &profile)
             {
@@ -1327,13 +1333,15 @@ pub(super) fn keys(
             }
         }
         Phase::Playing => {
-            if keys.just_pressed(KeyCode::Escape) {
+            // In co-op the map is open over a running world; its Esc closes it.
+            if keys.just_pressed(KeyCode::Escape) && !maps.0.open {
                 next.set(Phase::Paused);
             }
         }
         Phase::Paused => {
-            // With the options open Esc closes them, not the pause.
-            if keys.just_pressed(KeyCode::Escape) && !options.open {
+            // With the options open Esc closes them, not the pause; with the map open (alone it
+            // pauses the run) Esc closes the map, which resumes by itself.
+            if keys.just_pressed(KeyCode::Escape) && !options.open && !maps.0.open {
                 next.set(Phase::Playing);
             }
         }
@@ -2541,6 +2549,8 @@ pub(super) fn icon_tooltip(
 
 pub(super) fn show_panels(
     phase: Res<State<Phase>>,
+    // The map pauses a run alone without the pause menu over it.
+    map: Res<super::worldmap::WorldMapUi>,
     mut roots: ParamSet<(
         Query<(&mut Visibility, &mut Node), With<MenuRoot>>,
         Query<(&mut Visibility, &mut Node), With<HudRoot>>,
@@ -2575,7 +2585,7 @@ pub(super) fn show_panels(
         set(root, p == Phase::LevelUp);
     }
     for root in &mut roots.p3() {
-        set(root, p == Phase::Paused);
+        set(root, p == Phase::Paused && !map.open);
     }
     for root in &mut roots.p4() {
         set(root, p == Phase::GameOver);

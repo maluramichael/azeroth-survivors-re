@@ -70,6 +70,7 @@ mod surge;
 mod units;
 mod vfx;
 mod worldbuffs;
+mod worldmap;
 
 use benilla_world::schedule::WorldStage;
 use bevy::prelude::*;
@@ -92,7 +93,7 @@ impl Plugin for SurvivorsPlugin {
         #[cfg(not(target_arch = "wasm32"))]
         app.add_plugins(shots::plugin);
         app.insert_resource(benilla_app::survivors_host::run_mode::CaptureMode)
-            .add_plugins((grade::plugin, kit::plugin, dmgmeter::plugin))
+            .add_plugins((grade::plugin, kit::plugin, dmgmeter::plugin, worldmap::plugin))
             .add_plugins((collection::plugin, loottables::plugin, achievements::plugin))
             .add_plugins((modding::plugin, questlog::plugin, threats::plugin, framerate::plugin))
             .add_plugins((antialias::plugin, gfxpresets::plugin, vfx::plugin))

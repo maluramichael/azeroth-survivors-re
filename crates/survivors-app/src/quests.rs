@@ -16,6 +16,7 @@ use super::enemies::Loot;
 use super::hero::{Hero, Peer};
 use super::hud::{HudFont, GOLD_TONE};
 use super::units::{self, flat};
+use super::worldmap::MapPin;
 use super::{GuestMail, HeroState, Mail, Phase, Rng, Run, Selection};
 
 const QUESTS: usize = 3;
@@ -280,7 +281,9 @@ fn count_kills(
                 let at = d.pos + Vec3::new(a.cos(), 0.0, a.sin()) * 0.6 + Vec3::Y * 0.5;
                 let serial = run.guid();
                 let e = units::spawn_object(&mut commands, serial, ITEM_DISPLAY, ITEM_SCALE, at);
-                commands.entity(e).insert(QuestItem { quest: i, age: 0.0 });
+                commands
+                    .entity(e)
+                    .insert((QuestItem { quest: i, age: 0.0 }, MapPin::QuestItem));
             }
         }
     }

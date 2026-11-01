@@ -140,6 +140,8 @@ enum MenuTab {
     Collection,
     Loot,
     Achievements,
+    /// The continent map to pick the zone on ([`super::worldmap`]).
+    WorldMap,
     /// The quest log ([`super::questlog`]).
     Quests,
     /// The co-op window ([`super::coop`]); the tab exists only in a build with co-op.
@@ -339,6 +341,7 @@ fn top_bar(ui: &mut ChildSpawnerCommands, fonts: &KitFonts) {
                 (MenuTab::Collection, "Collection"),
                 (MenuTab::Loot, "Loot Tables"),
                 (MenuTab::Achievements, "Achievements"),
+                (MenuTab::WorldMap, "World Map"),
                 (MenuTab::Quests, "Quest Log"),
                 (MenuTab::Coop, "Co-op"),
                 (MenuTab::Options, "Options"),
@@ -756,12 +759,7 @@ pub(super) fn menu_clicks(
         .map(|&(_, r, s)| (r, s));
     let (race, sex) = (cur.map(|c| c.0), cur.map_or(0, |c| c.1));
     match action {
-        MenuAction::Map(i) => {
-            if selection.map != i {
-                selection.map = i;
-                selection.version += 1;
-            }
-        }
+        MenuAction::Map(i) => pick_map(&mut selection, i),
         // A co-op guest enters the host's run when the host starts it ([`super::coop`]).
         MenuAction::Enter if *role == super::NetRole::Client => {}
         MenuAction::Enter => {
@@ -918,14 +916,24 @@ pub(super) fn plugin(app: &mut App) {
     );
 }
 
+/// Pick the battleground `i` (an index into `data::MAPS`), as its button in the zone list does:
+/// a locked one too, which leaves Enter World off. The world map's pins pick through here.
+pub(super) fn pick_map(selection: &mut Selection, i: usize) {
+    if selection.map != i {
+        selection.map = i;
+        selection.version += 1;
+        save_pick(selection);
+    }
+}
+
 /// Whether the selected class's character is kept out of `map`, by its level or its quest. False
 /// with no class or profile.
-fn zone_locked(selection: &Selection, profile: Option<&Profile>, map: usize) -> bool {
+pub(super) fn zone_locked(selection: &Selection, profile: Option<&Profile>, map: usize) -> bool {
     zone_lock(selection, profile, map).is_some()
 }
 
 /// What keeps the selected class out of `map`, `None` when it may enter.
-fn zone_lock(
+pub(super) fn zone_lock(
     selection: &Selection,
     profile: Option<&Profile>,
     map: usize,
@@ -945,6 +953,7 @@ fn tab_clicks(
     mut achievements: ResMut<super::achievements::AchievementsUi>,
     mut questlog: ResMut<super::questlog::QuestLogUi>,
     mut coop: Option<ResMut<super::CoopUi>>,
+    mut worldmap: ResMut<super::worldmap::HubMapUi>,
 ) {
     let Some(tab) = tabs
         .iter()
@@ -961,6 +970,7 @@ fn tab_clicks(
         MenuTab::Loot => loot.open = true,
         MenuTab::Achievements => achievements.open = true,
         MenuTab::Quests => questlog.open = true,
+        MenuTab::WorldMap => worldmap.open = true,
         MenuTab::Coop => {
             if let Some(coop) = coop.as_mut() {
                 coop.open = true;

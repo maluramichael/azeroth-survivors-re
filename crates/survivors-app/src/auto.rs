@@ -47,7 +47,7 @@ pub(super) struct Auto {
 const PAUSE_AT: f32 = 20.0;
 
 /// The hub's windows the tour opens, in order, and the screenshot each gives.
-const TOUR: [&str; 7] = [
+const TOUR: [&str; 8] = [
     "achievements",
     "collection",
     "loot",
@@ -55,6 +55,7 @@ const TOUR: [&str; 7] = [
     "options",
     "coop",
     "questlog",
+    "worldmap",
 ];
 
 impl Auto {
@@ -214,7 +215,7 @@ pub(super) fn drive(
     mut talents: ResMut<super::talents::TalentsUi>,
     heroes: Query<(), With<Hero>>,
     enemies: Query<&Enemy>,
-    role: Res<super::NetRole>,
+    (role, map): (Res<super::NetRole>, Res<super::worldmap::WorldMapUi>),
     mut options: ResMut<super::options::OptionsUi>,
 ) {
     let dt = time.delta_secs();
@@ -293,8 +294,11 @@ pub(super) fn drive(
             auto.wait = 0.0;
         }
         Phase::Paused => {
-            // The pause screen, then the Options window's Graphics tab over the live run.
-            if auto.wait > 1.0 && auto.wait < 2.0 {
+            // The pause screen, then the Options window's Graphics tab over the live run. A map
+            // opened by a script holds the pause until the script closes it, for its screenshot.
+            if map.open {
+                auto.wait = 0.0;
+            } else if auto.wait > 1.0 && auto.wait < 2.0 {
                 auto.capture_once(&mut commands, "pause".into());
             } else if auto.wait >= 2.0 && auto.wait < 3.5 {
                 options.open = true;
@@ -379,6 +383,7 @@ type Windows<'w> = (
     // Present only in a build with co-op.
     Option<ResMut<'w, super::CoopUi>>,
     ResMut<'w, super::questlog::QuestLogUi>,
+    ResMut<'w, super::worldmap::HubMapUi>,
 );
 
 /// `WOW_SURVIVORS_WINDOWS`: at the menu, open each of [`TOUR`]'s windows alone, photograph it
@@ -419,6 +424,7 @@ pub(super) fn tour(
             coop.open = on == Some(5);
         }
         w.6.open = on == Some(6);
+        w.7.open = on == Some(7);
     };
     open(&mut windows, Some(step));
     if *wait > 2.5 {

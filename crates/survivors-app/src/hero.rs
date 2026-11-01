@@ -7,6 +7,7 @@ use bevy::prelude::*;
 
 use super::data::{self, ClassDef};
 use super::units::{self, flat, wow_to_bevy, yaw_toward, Fx, Marks, UnitSpec};
+use super::worldmap::MapPin;
 use super::{HeroState, Phase, Run, Selection};
 use benilla_app::survivors_host::creature_anim::{move_flags, MovementState};
 use benilla_app::survivors_host::net::{FieldChanged, Guid, ObjectStore};
@@ -241,7 +242,9 @@ pub(super) fn spawn_peer(
     player: u8,
 ) -> Entity {
     let e = units::spawn_unit(commands, &hero_spec(class, display, race, sex, serial), pos, 0.0);
-    commands.entity(e).insert((Peer { player }, Marks::buffs()));
+    commands
+        .entity(e)
+        .insert((Peer { player }, Marks::buffs(), MapPin::Ally));
     e
 }
 
