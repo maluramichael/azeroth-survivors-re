@@ -1262,6 +1262,7 @@ pub(super) fn buttons(
     mut next: ResMut<NextState<Phase>>,
     mut exit: MessageWriter<AppExit>,
     phase: Res<State<Phase>>,
+    mut run: ResMut<Run>,
 ) {
     for (interaction, action, base, mut bg) in &mut presses {
         match interaction {
@@ -1271,7 +1272,12 @@ pub(super) fn buttons(
                 bg.0 = BUTTON_HOT;
                 match (*action, *phase.get()) {
                     (UiAction::Resume, Phase::Paused) => next.set(Phase::Playing),
-                    (UiAction::MainMenu, Phase::Paused | Phase::GameOver) => next.set(Phase::Menu),
+                    // Abandon run: the results first, so the run pays out as if it had ended.
+                    (UiAction::MainMenu, Phase::Paused) => {
+                        run.abandoned = true;
+                        next.set(Phase::GameOver);
+                    }
+                    (UiAction::MainMenu, Phase::GameOver) => next.set(Phase::Menu),
                     (UiAction::Quit, Phase::Paused | Phase::GameOver) => {
                         exit.write(AppExit::Success);
                     }
@@ -1574,6 +1580,8 @@ pub(super) fn refresh_hud(
         "Victory!"
     } else if run.host_gone {
         "The host is gone"
+    } else if run.abandoned {
+        "Run abandoned"
     } else if *role != super::NetRole::Solo {
         "Your party has fallen"
     } else {
@@ -1951,6 +1959,8 @@ pub(super) fn refresh_results(
         selection.map_def().victory
     } else if run.host_gone {
         "The run ended when the host left. What you earned is yours."
+    } else if run.abandoned {
+        "You left the run. What you earned is yours."
     } else {
         "The horde was too much this time."
     };

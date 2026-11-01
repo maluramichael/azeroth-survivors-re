@@ -409,6 +409,9 @@ pub(crate) struct Run {
     pub party_down: bool,
     /// A co-op guest's run ended because its host went away ([`coop`]), not by a fall.
     pub host_gone: bool,
+    /// The player left from the pause screen: the run ends as a loss and still pays out what it
+    /// earned ([`profile::award_run`]).
+    pub abandoned: bool,
     /// This machine's hero.
     pub me: HeroState,
 }
@@ -485,6 +488,7 @@ impl Default for Run {
             party: 1,
             party_down: false,
             host_gone: false,
+            abandoned: false,
             me: HeroState::default(),
         }
     }

@@ -382,6 +382,8 @@ pub(super) fn award_run(
         chat.write(ChatLine::system("Victory!"));
     } else if run.host_gone {
         chat.write(ChatLine::system("The host left; the run is over."));
+    } else if run.abandoned {
+        chat.write(ChatLine::system("You left the run."));
     } else if *role != super::NetRole::Solo {
         chat.write(ChatLine::text(ChatKind::Combat, "Your party has fallen."));
     } else {
