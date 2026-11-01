@@ -30,6 +30,7 @@ mod evolutions;
 mod fill;
 mod finale;
 mod focus;
+mod framerate;
 mod frames;
 mod grade;
 mod hero;
@@ -39,6 +40,7 @@ mod kit;
 mod loottables;
 mod menu;
 mod minimap;
+mod modding;
 mod mobility;
 mod mods;
 mod nav;
@@ -47,9 +49,11 @@ mod pickups;
 mod plates;
 mod prefs;
 mod talents;
+mod threats;
 mod textfield;
 mod profile;
 mod quests;
+mod questlog;
 mod races;
 #[cfg(not(target_arch = "wasm32"))]
 mod shots;
@@ -82,6 +86,7 @@ impl Plugin for SurvivorsPlugin {
         app.insert_resource(benilla_app::survivors_host::run_mode::CaptureMode)
             .add_plugins((grade::plugin, kit::plugin, dmgmeter::plugin))
             .add_plugins((collection::plugin, loottables::plugin, achievements::plugin))
+            .add_plugins((modding::plugin, questlog::plugin, threats::plugin, framerate::plugin))
             .add_plugins((races::plugin, records::plugin, surge::plugin, enrage::plugin, prefs::plugin, textfield::plugin))
             .add_plugins((
                 trainer::plugin,
