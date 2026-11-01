@@ -9,6 +9,12 @@
 //! field is a distance field over a window around the hero, rebuilt a few times a second; an
 //! enemy reads it by walking a few cells downhill and heading for the farthest one it can see.
 //!
+//! On a route (the Undying Run) the grid is no fixed battleground but a window that walks with the
+//! hero: [`WINDOW`] cells a side, moved in whole [`SHIFT_CELLS`] steps once the hero is more than
+//! [`FOLLOW_YD`] off its middle, keeping the cells it still covers. It is scanned without waiting
+//! for the colliders to settle (they never do on the road): the cells never probed first, nearest
+//! the hero outward, then a slow lap over everything. On a zone nothing of this applies.
+//!
 //! A spawn does not trust the mask alone, which reads free where the scan has not been yet or
 //! where colliders streamed in after it: [`SpawnProbe`] asks the world right at the spot, and the
 //! field says whether the spot is joined to the hero, so nothing is set down inside a trunk, a
@@ -26,6 +32,7 @@ use bevy::platform::time::Instant;
 use bevy::prelude::*;
 
 use super::hero::{arena, Hero};
+use super::route::route_of;
 use super::units::flat;
 use super::{RunEntity, Selection};
 
@@ -51,6 +58,16 @@ const SETTLE_FRAMES: u32 = 30;
 /// many times that may happen on one battleground.
 const REFRESH_QUIET: u32 = 120;
 const MAX_REFRESHES: u32 = 4;
+
+/// A route's window: cells a side, the cells it moves at a time, and how far (yards) the hero may
+/// stand from its middle before it does.
+const WINDOW: i32 = 192;
+const SHIFT_CELLS: i32 = 8;
+const FOLLOW_YD: f32 = 24.0;
+/// Most the slow lap over a window spends in a frame, and the cells the hero may walk before the
+/// near-first rings start over around it.
+const CYCLE_BUDGET: Duration = Duration::from_micros(500);
+const NEAR_RESTART: i32 = 4;
 
 /// Half the field's window, in cells: past it the horde heads straight for the hero.
 const FIELD_RADIUS: i32 = 64;
@@ -83,13 +100,20 @@ const NEIGHBOURS: [(i32, i32, u32); 8] = [
     (-1, -1, DIAGONAL),
 ];
 
+/// What a grid was made for: a zone's battleground, fixed, or a route's window on the hero.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum GridKey {
+    Zone(usize),
+    Route(usize),
+}
+
 /// The battleground as a grid in the ground plane (Bevy X and Z), which cells are solid, and the
 /// field toward the hero. A cell is solid when a body standing at its centre would touch the
 /// world; anything off the grid, or not probed yet, reads as free.
 #[derive(Resource, Default)]
 pub(super) struct NavGrid {
-    /// The [`Selection::stage`] this grid was made for.
-    stage: Option<usize>,
+    /// The [`Selection::stage`] this grid was made for, and as what.
+    stage: Option<GridKey>,
     /// The arena centre and the radius of the circle probed, in yards.
     center: Vec2,
     radius: f32,
@@ -100,6 +124,8 @@ pub(super) struct NavGrid {
     h: i32,
     half: i32,
     solid: Vec<bool>,
+    /// Which cells the scan has probed at least once; the rest read free.
+    probed: Vec<bool>,
     /// Bumped whenever a cell flips, so the field notices the mask moved.
     version: u32,
     field: Field,
@@ -128,6 +154,16 @@ struct Field {
 }
 
 impl Field {
+    /// Forgets the window, for a grid that moved under it: the next track rebuilds it at once.
+    fn invalidate(&mut self) {
+        self.source = None;
+        self.reached = 0;
+        self.w = 0;
+        self.h = 0;
+        self.dist.clear();
+        self.age = FLOW_EVERY;
+    }
+
     /// The distance at a grid cell, `None` off the window or where the field did not reach.
     fn dist(&self, c: IVec2) -> Option<u16> {
         let l = c - self.min;
@@ -156,7 +192,7 @@ impl NavGrid {
     /// An open grid of `w` by `h` cells with cell (0, 0) at `origin`.
     fn new(stage: usize, origin: Vec2, w: i32, h: i32) -> Self {
         Self {
-            stage: Some(stage),
+            stage: Some(GridKey::Zone(stage)),
             center: origin + Vec2::new(w as f32, h as f32) * 0.5 * CELL,
             radius: f32::MAX,
             origin,
@@ -164,8 +200,59 @@ impl NavGrid {
             h,
             half: w / 2,
             solid: vec![false; (w * h) as usize],
+            probed: vec![false; (w * h) as usize],
             ..default()
         }
+    }
+
+    /// A route's window of [`WINDOW`] cells a side with cell (0, 0) at `origin`.
+    fn window(stage: usize, origin: Vec2) -> Self {
+        Self {
+            stage: Some(GridKey::Route(stage)),
+            ..Self::new(stage, origin, WINDOW, WINDOW)
+        }
+    }
+
+    /// Moves the grid so cell (0, 0) lies at `origin` (to the nearest whole cell). The cells both
+    /// positions cover keep their mask and their probed flag; the band that comes in reads free
+    /// and unprobed. The fields, which count in grid cells, are forgotten.
+    fn shift(&mut self, origin: Vec2) {
+        let d = ((origin - self.origin) / CELL).round().as_ivec2();
+        if d == IVec2::ZERO {
+            return;
+        }
+        let mut solid = vec![false; self.solid.len()];
+        let mut probed = vec![false; self.probed.len()];
+        // New cell (x, y) is old cell (x + d.x, y + d.y).
+        let (lo, hi) = ((-d.x).max(0), (self.w - d.x).min(self.w));
+        if lo < hi {
+            for y in 0..self.h {
+                let sy = y + d.y;
+                if sy < 0 || sy >= self.h {
+                    continue;
+                }
+                let to = (y * self.w + lo) as usize;
+                let from = (sy * self.w + d.x + lo) as usize;
+                let n = (hi - lo) as usize;
+                solid[to..to + n].copy_from_slice(&self.solid[from..from + n]);
+                probed[to..to + n].copy_from_slice(&self.probed[from..from + n]);
+            }
+        }
+        self.solid = solid;
+        self.probed = probed;
+        self.origin += d.as_vec2() * CELL;
+        self.center = self.origin + Vec2::new(self.w as f32, self.h as f32) * 0.5 * CELL;
+        self.version = self.version.wrapping_add(1);
+        self.field.invalidate();
+        for (_, f) in &mut self.others {
+            f.invalidate();
+        }
+    }
+
+    /// Notes that the scan has been to a cell.
+    fn mark(&mut self, c: IVec2) {
+        let i = self.at(c);
+        self.probed[i] = true;
     }
 
     /// The grid cell holding a world position.
@@ -609,6 +696,42 @@ struct Scan {
     /// The ring and the cell in it the scan is at.
     ring: i32,
     k: i32,
+    /// On a route: the cell the near-first rings are around, whether they have run out, and where
+    /// the slow lap over the whole window is (a cell index).
+    near: IVec2,
+    near_done: bool,
+    cycle: i32,
+}
+
+impl Scan {
+    /// Starts the near-first rings over around `c`.
+    fn restart_near(&mut self, c: IVec2) {
+        self.near = c;
+        self.near_done = false;
+        self.ring = 0;
+        self.k = 0;
+    }
+}
+
+/// The window's corner for a hero at `hero` (ground plane), on the [`SHIFT_CELLS`] lattice.
+fn snapped_origin(hero: Vec2) -> Vec2 {
+    let step = SHIFT_CELLS as f32 * CELL;
+    ((hero - Vec2::splat(WINDOW as f32 * CELL * 0.5)) / step).round() * step
+}
+
+/// Where a window at `origin` moves to follow a hero at `hero`: per axis, whole [`SHIFT_CELLS`]
+/// steps toward it once it is more than [`FOLLOW_YD`] off the middle, else where it was.
+fn follow_origin(origin: Vec2, hero: Vec2) -> Vec2 {
+    let step = SHIFT_CELLS as f32 * CELL;
+    let mid = origin + Vec2::splat(WINDOW as f32 * CELL * 0.5);
+    let mut o = origin;
+    for axis in 0..2 {
+        let d = hero[axis] - mid[axis];
+        if d.abs() > FOLLOW_YD {
+            o[axis] += (d / step).round() * step;
+        }
+    }
+    o
 }
 
 /// The probe: a capsule the size of a walker, centred on [`BODY_MID`].
@@ -669,10 +792,15 @@ fn scan_world(
     world: WorldPoint,
     spatial: SpatialQuery,
     run_entities: Query<(), With<RunEntity>>,
+    hero: Query<&Transform, With<Hero>>,
     mut grid: ResMut<NavGrid>,
     mut scan: Local<Scan>,
 ) {
-    if grid.stage != Some(selection.stage) {
+    if route_of(selection.stage).is_some() {
+        scan_window(&selection, &loading, &progress, &world, &spatial, &run_entities, &hero, &mut grid, &mut scan);
+        return;
+    }
+    if grid.stage != Some(GridKey::Zone(selection.stage)) {
         let map = selection.stage_def();
         let radius = map.leash + MARGIN;
         let c = arena(map);
@@ -751,6 +879,112 @@ fn scan_world(
             Vec3::new(at.x, ground + BODY_MID, at.z),
         );
         grid.set(c, solid);
+        grid.mark(c);
+    }
+}
+
+/// Probes one cell of the grid against the world into the mask. `false` where there is no
+/// terrain to stand on yet (not streamed, or a hole): the cell is left as it was.
+fn probe_cell(
+    grid: &mut NavGrid,
+    c: IVec2,
+    world: &WorldPoint,
+    spatial: &SpatialQuery,
+    run: &Query<(), With<RunEntity>>,
+    probe: &Collider,
+    filter: &SpatialQueryFilter,
+) -> bool {
+    let at = grid.center_of(c);
+    let Some(ground) = world.terrain_height_under(at) else {
+        return false;
+    };
+    let solid = solid_at(spatial, run, probe, filter, Vec3::new(at.x, ground + BODY_MID, at.z));
+    grid.set(c, solid);
+    grid.mark(c);
+    true
+}
+
+/// [`scan_world`] on a route: the window follows the hero and is probed without waiting for the
+/// colliders to hold still. First the cells never probed, in rings out from the hero, with the
+/// zone scan's budget; then a lap over every cell again, on a smaller one, so what streamed in
+/// since is seen too.
+#[allow(clippy::too_many_arguments)]
+fn scan_window(
+    selection: &Selection,
+    loading: &benilla_app::survivors_host::loading_screen::LoadingScreen,
+    progress: &WorldLoadProgress,
+    world: &WorldPoint,
+    spatial: &SpatialQuery,
+    run_entities: &Query<(), With<RunEntity>>,
+    hero: &Query<&Transform, With<Hero>>,
+    grid: &mut NavGrid,
+    scan: &mut Scan,
+) {
+    let Ok(h) = hero.single() else { return };
+    let at = h.translation;
+    let flat_at = Vec2::new(at.x, at.z);
+    if grid.stage != Some(GridKey::Route(selection.stage)) {
+        *grid = NavGrid::window(selection.stage, snapped_origin(flat_at));
+        *scan = Scan::default();
+        scan.restart_near(grid.cell(at));
+    } else {
+        let want = follow_origin(grid.origin, flat_at);
+        if want != grid.origin {
+            grid.shift(want);
+            scan.restart_near(grid.cell(at));
+        }
+    }
+    if loading.covering() || !progress.presentable() || !progress.focus_resident {
+        return;
+    }
+    let here = grid.cell(at);
+    if (here - scan.near).abs().max_element() > NEAR_RESTART {
+        scan.restart_near(here);
+    }
+
+    let probe = body_probe();
+    let filter = WorldCollision::body_filter();
+    let started = Instant::now();
+    let mut probes = 0u32;
+    // The farthest ring that still holds a cell of the grid.
+    let reach = scan
+        .near
+        .x
+        .max(grid.w - 1 - scan.near.x)
+        .max(scan.near.y)
+        .max(grid.h - 1 - scan.near.y);
+    while !scan.near_done {
+        if scan.ring > reach {
+            scan.near_done = true;
+            break;
+        }
+        let c = scan.near + ring_cell(scan.ring, scan.k);
+        scan.k += 1;
+        if scan.k >= ring_len(scan.ring) {
+            scan.ring += 1;
+            scan.k = 0;
+        }
+        if !grid.inside(c) || grid.probed[grid.at(c)] {
+            continue;
+        }
+        probe_cell(grid, c, world, spatial, run_entities, &probe, &filter);
+        probes += 1;
+        if probes.is_multiple_of(16) && started.elapsed() >= SCAN_BUDGET {
+            return;
+        }
+    }
+
+    // The slow lap: at most one pass over the window a frame.
+    let started = Instant::now();
+    let cells = grid.w * grid.h;
+    for _ in 0..cells {
+        let c = IVec2::new(scan.cycle % grid.w, scan.cycle / grid.w);
+        scan.cycle = (scan.cycle + 1) % cells;
+        probe_cell(grid, c, world, spatial, run_entities, &probe, &filter);
+        probes += 1;
+        if probes.is_multiple_of(16) && started.elapsed() >= CYCLE_BUDGET {
+            break;
+        }
     }
 }
 
@@ -1053,5 +1287,94 @@ mod tests {
             }
         }
         assert_eq!(seen.len(), 11 * 11);
+    }
+
+    /// Every cell of `g` marked probed.
+    fn probe_all(g: &mut NavGrid) {
+        g.probed.iter_mut().for_each(|p| *p = true);
+    }
+
+    #[test]
+    fn a_moved_grid_keeps_the_cells_it_still_covers() {
+        let mut g = grid(40, 40);
+        wall(&mut g, 10, 0, 40);
+        g.set(IVec2::new(12, 30), true);
+        probe_all(&mut g);
+        // Eight cells on: the world position x = 10 is cell 2 now.
+        g.shift(Vec2::new(8.0, 0.0));
+        assert_eq!(g.origin, Vec2::new(8.0, 0.0));
+        assert!(g.blocked(at(10.5, 5.5)));
+        assert!(g.blocked(at(10.5, 39.5)));
+        assert!(!g.blocked(at(9.5, 5.5)));
+        assert!(g.blocked(at(12.5, 30.5)), "the lone block stayed where the world has it");
+        assert!(!g.blocked(at(13.5, 30.5)));
+        // Back the other way and up: the wall is still where the world has it.
+        g.shift(Vec2::new(0.0, -5.0));
+        assert!(g.blocked(at(10.5, 5.5)));
+        assert!(!g.blocked(at(10.5, -2.5)), "the band that came in reads free");
+        // A jump past the whole window keeps nothing.
+        g.shift(Vec2::new(500.0, 500.0));
+        assert!(g.solid.iter().all(|s| !s));
+        assert!(g.probed.iter().all(|p| !p));
+    }
+
+    #[test]
+    fn a_moved_grid_scans_only_what_it_has_not_seen() {
+        for d in [IVec2::new(8, 0), IVec2::new(-8, 0), IVec2::new(0, 8), IVec2::new(3, -5)] {
+            let mut g = grid(40, 40);
+            probe_all(&mut g);
+            g.shift(d.as_vec2());
+            for y in 0..40 {
+                for x in 0..40 {
+                    // Still covered when the old cell it was lies on the old grid.
+                    let old = IVec2::new(x, y) + d;
+                    let kept = (0..40).contains(&old.x) && (0..40).contains(&old.y);
+                    assert_eq!(g.probed[g.at(IVec2::new(x, y))], kept, "cell ({x}, {y}) after {d}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_moved_grid_forgets_its_fields_and_the_chase_goes_straight() {
+        let mut g = grid(60, 60);
+        wall(&mut g, 30, 0, 50);
+        g.track(at(45.5, 10.5), 1.0);
+        let puppet = Entity::from_raw_u32(7).unwrap();
+        g.track_others(&[(puppet, at(45.5, 12.5))], 1.0);
+        assert!(g.field.source.is_some() && g.others[0].1.source.is_some());
+        g.shift(Vec2::new(8.0, 0.0));
+        assert!(g.field.source.is_none() && g.others[0].1.source.is_none());
+        assert_eq!(g.flow(at(15.5, 10.5)), None);
+        // The next track rebuilds it at once, at the hero's new cell.
+        g.track(at(45.5, 10.5), 0.0);
+        assert_eq!(g.field.source, Some(g.cell(at(45.5, 10.5))));
+    }
+
+    #[test]
+    fn the_route_grid_follows_the_hero() {
+        let g = NavGrid::window(3, Vec2::ZERO);
+        assert_eq!((g.w, g.h), (WINDOW, WINDOW));
+        assert_eq!(g.stage, Some(GridKey::Route(3)));
+        let mid = Vec2::splat(WINDOW as f32 * 0.5);
+        // Near the middle it stays.
+        assert_eq!(follow_origin(g.origin, mid + Vec2::new(20.0, -23.0)), g.origin);
+        // 30 yd off along x: four steps of eight cells, and the hero is back near the middle.
+        let o = follow_origin(g.origin, mid + Vec2::new(30.0, 0.0));
+        assert_eq!(o, Vec2::new(32.0, 0.0));
+        // Far off on both axes, backwards: whole steps, each axis on its own.
+        for hero in [mid + Vec2::new(-90.0, 41.0), mid + Vec2::new(0.0, -36.0), mid + Vec2::new(500.0, 500.0)] {
+            let o = follow_origin(g.origin, hero);
+            assert_eq!(o.x % 8.0, 0.0);
+            assert_eq!(o.y % 8.0, 0.0);
+            let left = hero - (o + Vec2::splat(WINDOW as f32 * 0.5));
+            assert!(left.abs().max_element() <= SHIFT_CELLS as f32 * 0.5, "{left:?}");
+        }
+        // The first window is centred on the hero on the same lattice.
+        let o = snapped_origin(Vec2::new(-1234.5, 777.7));
+        assert_eq!(o.x % 8.0, 0.0);
+        assert_eq!(o.y % 8.0, 0.0);
+        let left = Vec2::new(-1234.5, 777.7) - (o + Vec2::splat(WINDOW as f32 * 0.5));
+        assert!(left.abs().max_element() <= 4.0, "{left:?}");
     }
 }
