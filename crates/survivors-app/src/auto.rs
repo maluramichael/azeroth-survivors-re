@@ -311,7 +311,6 @@ pub(super) fn drive(
                 auto.wait = 0.0;
             }
         }
-        _ => auto.wait = 0.0,
     }
 
     auto.log_t -= dt;
