@@ -334,7 +334,10 @@ pub(crate) static ABILITIES: &[AbilityDef] = &[
         Melee {
             damage: 15.0,
             cooldown: 0.85,
-            range: 5.5
+            range: 5.5,
+            // Two targets: a rogue's only answer to a crowd early on (the warrior's Cleave hits
+            // three); measured with the balance simulator.
+            count: 2
         }
     ),
     ability!(
@@ -350,9 +353,10 @@ pub(crate) static ABILITIES: &[AbilityDef] = &[
         "blade_flurry",
         13877,
         Nova {
-            damage: 11.0,
-            cooldown: 3.0,
-            radius: 6.0
+            // On a par with Whirlwind: the rogue pool's one area spell.
+            damage: 16.0,
+            cooldown: 2.5,
+            radius: 7.0
         }
     ),
     ability!(
