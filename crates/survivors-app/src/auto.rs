@@ -12,6 +12,7 @@ use bevy::render::view::screenshot::{save_to_disk, Screenshot};
 use super::enemies::{Enemy, Gem};
 use super::hero::Hero;
 use super::hud::{self, Offer};
+use super::route::{self, RouteRun};
 use super::units::flat;
 use super::{data, Phase, Rng, Run, Selection};
 
@@ -40,6 +41,54 @@ pub(super) struct Auto {
     tour: Option<usize>,
     /// The run's one look at the pause menu, [`PAUSE_AT`] seconds in, is behind it.
     paused_once: bool,
+    /// On a route, how the walk to the next point is going ([`Watch`]).
+    watch: Watch,
+}
+
+/// Seconds of pushing toward a road point after which the pilot checks it got somewhere.
+const STUCK_SECS: f32 = 4.0;
+/// The yards of progress toward the point that [`STUCK_SECS`] of pushing must bring.
+const STUCK_YARDS: f32 = 3.0;
+/// On a route the pilot only goes for a gem this near; the road comes first.
+const ROUTE_GEM_REACH: f32 = 12.0;
+
+/// The pilot's watch on its walk down a route's road: where the current window began and how many
+/// seconds it has pushed toward the point since, so a cliff or a wall in the straight line shows
+/// up as a logged position ([`Watch::step`]) for a road point to be set there.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct Watch {
+    /// The point the window is on; a new one starts a new window.
+    point: usize,
+    /// How far the point was when the window began.
+    from: f32,
+    /// Seconds spent steering toward the point in the window.
+    pushed: f32,
+}
+
+impl Watch {
+    /// One frame: `point` is `dist` yards off, and `pushing` says the pilot steers toward it
+    /// (not away from a crowd or toward a gem). True when a window of [`STUCK_SECS`] pushing ended
+    /// with less than [`STUCK_YARDS`] gained; the next window begins then.
+    fn step(&mut self, point: usize, dist: f32, pushing: bool, dt: f32) -> bool {
+        if self.point != point {
+            *self = Watch {
+                point,
+                from: dist,
+                pushed: 0.0,
+            };
+            return false;
+        }
+        if pushing {
+            self.pushed += dt;
+        }
+        if self.pushed < STUCK_SECS {
+            return false;
+        }
+        let stuck = self.from - dist < STUCK_YARDS;
+        self.from = dist;
+        self.pushed = 0.0;
+        stuck
+    }
 }
 
 /// How far into a run the autopilot opens the pause menu once and photographs it (`pause.png`),
@@ -109,6 +158,7 @@ pub(super) fn from_env() -> Option<Auto> {
         seen: Vec::new(),
         tour: benilla_app::survivors_host::webenv::var("WOW_SURVIVORS_WINDOWS").map(|_| 0),
         paused_once: false,
+        watch: Watch::default(),
     })
 }
 
@@ -131,6 +181,7 @@ pub(super) fn pilot(class: usize, map: usize) -> Auto {
         seen: Vec::new(),
         tour: None,
         paused_once: true,
+        watch: Watch::default(),
     }
 }
 
@@ -141,11 +192,16 @@ pub(super) fn steer(auto: &Auto) -> Vec3 {
 
 /// Toward the nearest gem, pushed off by every enemy close enough to bite, drifting home when
 /// there is nothing to pick up. A co-op host first goes to a fallen guest and stays beside it
-/// until it is back up.
+/// until it is back up. On a route's road it walks to the next point instead of circling, leaving
+/// it only for a gem close by, and logs where it sticks.
 pub(super) fn plan(
     time: Res<Time<Real>>,
     mut auto: ResMut<Auto>,
     bounds: Res<super::route::Bounds>,
+    selection: Res<Selection>,
+    route_run: Res<RouteRun>,
+    phase: Res<State<Phase>>,
+    loading: Option<Res<benilla_app::survivors_host::loading_screen::LoadingScreen>>,
     hero: Query<&Transform, With<Hero>>,
     gems: Query<&Transform, (With<Gem>, Without<Hero>)>,
     foes: Query<(&Transform, &Enemy), Without<Hero>>,
@@ -169,19 +225,36 @@ pub(super) fn plan(
         };
         return;
     }
+    // The road: the heading to the next point while the route is under way.
+    let road = route::route_of(selection.stage)
+        .filter(|_| route_run.placed && !route_run.arrived)
+        .and_then(|def| route::heading(def, &route_run, at));
+    let reach = if road.is_some() {
+        ROUTE_GEM_REACH
+    } else {
+        30.0
+    };
     let mut want = gems
         .iter()
         .map(|t| flat(t.translation - at))
-        .filter(|d| d.length() < 30.0)
+        .filter(|d| d.length() < reach)
         .min_by(|a, b| a.length().total_cmp(&b.length()))
         .map_or(Vec3::ZERO, |d| d.normalize_or_zero());
+    let mut road_dir = Vec3::ZERO;
+    if let Some(a) = road {
+        road_dir = Vec3::new(a.cos(), 0.0, a.sin());
+    }
     if want == Vec3::ZERO {
-        let a = time.elapsed_secs() * 0.35;
-        want = Vec3::new(a.cos(), 0.0, a.sin()) * 0.5;
-        // Circle near the centre; on a route's open road there is none.
-        let home = flat(bounds.centre - at);
-        if bounds.fenced && home.length() > (bounds.leash * 0.5).min(40.0) {
-            want += home.normalize();
+        if road.is_some() {
+            want = road_dir;
+        } else {
+            let a = time.elapsed_secs() * 0.35;
+            want = Vec3::new(a.cos(), 0.0, a.sin()) * 0.5;
+            // Circle near the centre; on a route's open road there is none.
+            let home = flat(bounds.centre - at);
+            if bounds.fenced && home.length() > (bounds.leash * 0.5).min(40.0) {
+                want += home.normalize();
+            }
         }
     }
     let mut away = Vec3::ZERO;
@@ -196,7 +269,38 @@ pub(super) fn plan(
             away += d / len * (reach - len) / reach * 3.0;
         }
     }
+    // On the road the horde mostly comes from ahead: step aside from it, never back, or the
+    // pilot is pushed home and never reaches a station.
+    if road.is_some() {
+        let back = away.dot(road_dir);
+        if back < 0.0 {
+            away -= road_dir * back;
+        }
+    }
     auto.dir = (want + away).normalize_or_zero();
+
+    // Watch the walk: standing still against a cliff shows as pushing without getting nearer.
+    // Only a running game counts (a card pick, the pause or a loading screen stand still too).
+    let covered = loading.is_some_and(|l| l.covering());
+    let next = route::route_of(selection.stage)
+        .filter(|_| road.is_some() && *phase.get() == Phase::Playing && !covered)
+        .and_then(|def| def.points().get(route_run.next));
+    let Some(next) = next else {
+        auto.watch = Watch::default();
+        return;
+    };
+    let dist = flat(next.at - at).length();
+    let pushing = auto.dir.dot(road_dir) > 0.5;
+    if auto
+        .watch
+        .step(route_run.next, dist, pushing, time.delta_secs())
+    {
+        let wow = benilla_assets::coords::bevy_to_wow(at);
+        info!(
+            "survivors route: stuck at wow ({:.0}, {:.0}) toward point {}",
+            wow[0], wow[1], route_run.next
+        );
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -213,9 +317,13 @@ pub(super) fn drive(
     mut rng: ResMut<Rng>,
     loading: Res<benilla_app::survivors_host::loading_screen::LoadingScreen>,
     mut talents: ResMut<super::talents::TalentsUi>,
-    heroes: Query<(), With<Hero>>,
+    heroes: Query<&Transform, With<Hero>>,
     enemies: Query<&Enemy>,
-    (role, map): (Res<super::NetRole>, Res<super::worldmap::WorldMapUi>),
+    (role, map, route_run): (
+        Res<super::NetRole>,
+        Res<super::worldmap::WorldMapUi>,
+        Res<RouteRun>,
+    ),
     mut options: ResMut<super::options::OptionsUi>,
 ) {
     let dt = time.delta_secs();
@@ -348,8 +456,24 @@ pub(super) fn drive(
             .map(|o| format!("{}:{}", o.def.key, o.level))
             .chain(run.passives.iter().map(|(p, l)| format!("{}:{}", p.key, l)))
             .collect();
+        // On a route: the stations reached, the point under way and how far off it is.
+        let road = route::route_of(selection.stage).map_or(String::new(), |def| {
+            let left = heroes.single().ok().and_then(|h| {
+                def.points()
+                    .get(route_run.next)
+                    .map(|p| flat(p.at - h.translation).length())
+            });
+            format!(
+                " route=[stop {}/{} next {} left {} frac {:.2}]",
+                route_run.stop,
+                def.stations.len(),
+                route_run.next,
+                left.map_or("-".to_string(), |d| format!("{d:.0}yd")),
+                run.route_frac
+            )
+        });
         info!(
-            "survivors auto: {:?} t={:.0}s fps={fps:.0} alive={alive} level={} hp={:.0} kills={} damage={:.0} build=[{}]",
+            "survivors auto: {:?} t={:.0}s fps={fps:.0} alive={alive} level={} hp={:.0} kills={} damage={:.0} build=[{}]{road}",
             phase.get(),
             run.elapsed,
             run.level,
@@ -436,5 +560,58 @@ pub(super) fn tour(
         if step + 1 == TOUR.len() {
             open(&mut windows, None);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Push toward point 1 for `secs`, getting `gain` yards nearer each second from `start`.
+    fn push(w: &mut Watch, start: f32, gain: f32, secs: u32) -> Vec<bool> {
+        (1..=secs)
+            .map(|t| w.step(1, start - gain * t as f32, true, 1.0))
+            .collect()
+    }
+
+    #[test]
+    fn a_pilot_that_gets_nowhere_is_stuck_after_four_seconds_of_pushing() {
+        let mut w = Watch::default();
+        assert!(
+            !w.step(1, 300.0, true, 1.0),
+            "the first frame only opens the window"
+        );
+        let calls = push(&mut w, 300.0, 0.2, 8);
+        // The next window begins at once: stuck again four seconds later.
+        let at: Vec<usize> = (0..calls.len()).filter(|&i| calls[i]).collect();
+        assert_eq!(at, [3, 7], "{calls:?}");
+    }
+
+    #[test]
+    fn a_pilot_that_closes_in_is_never_stuck() {
+        let mut w = Watch::default();
+        w.step(1, 300.0, true, 1.0);
+        assert!(push(&mut w, 300.0, 5.0, 20).iter().all(|&s| !s));
+    }
+
+    #[test]
+    fn dodging_and_gems_do_not_count_as_pushing() {
+        let mut w = Watch::default();
+        w.step(1, 300.0, true, 1.0);
+        for _ in 0..30 {
+            assert!(!w.step(1, 300.0, false, 1.0));
+        }
+    }
+
+    #[test]
+    fn a_new_point_begins_a_new_window() {
+        let mut w = Watch::default();
+        w.step(1, 300.0, true, 1.0);
+        for _ in 0..3 {
+            w.step(1, 300.0, true, 1.0);
+        }
+        assert!(!w.step(2, 500.0, true, 1.0));
+        assert_eq!(w.pushed, 0.0);
+        assert_eq!(w.from, 500.0);
     }
 }

@@ -11,9 +11,11 @@
 //! seeds each, and prints one line per run and one per class. Environment knobs:
 //!
 //! - `SIM_CLASSES=mage,warrior` (default: all)
-//! - `SIM_ZONES=barrens,3` (default: The Barrens)
+//! - `SIM_ZONES=barrens,3` (default: The Barrens); `undying` is the Undying Run across the
+//!   Eastern Kingdoms ([`super::route`]), played along its road
 //! - `SIM_SEEDS=5` runs per class and zone (default 3)
-//! - `SIM_SECS=300` the most seconds a run plays (default: the win, plus a minute)
+//! - `SIM_SECS=300` the most seconds a run plays (default: the win, plus a minute; twice the win
+//!   on a route, which has no clock to win on)
 //! - `SIM_LEVEL=20` the characters' level, for the meta bonus (default 1)
 //! - `SIM_DIFFICULTY=heroic` (default normal)
 //! - `SIM_NO_THREATS=1` has the shooters ([`super::threats`]) stand off without shooting and leaves
@@ -22,7 +24,8 @@
 //!   it steps aside of most, as a player does
 //! - `SIM_TRACE=1` also prints each run's timeline: every 30 seconds the level, the spells and
 //!   talents held, the enemies spawned and alive, the encircling waves, surges and bosses so far,
-//!   the kills and the hero's health.
+//!   the kills and the hero's health; on a route also the station the run has reached and a
+//!   table of when each was, and how much of the horde came from ahead.
 //!
 //! In the suite, [`the_run_keeps_its_rhythm`] plays a few classes for five minutes and holds the
 //! timeline to the game's rhythm (enemies come, waves and bosses arrive on time, the hero levels
@@ -38,8 +41,9 @@ use bevy::time::TimeUpdateStrategy;
 
 use super::enemies::{Dying, Enemy};
 use super::hero::Hero;
+use super::route::{self, RouteRun};
 use super::units::flat;
-use super::{abilities, auto, data, enemies, enrage, finale, hero, hud, surge, threats};
+use super::{abilities, auto, data, enemies, enrage, finale, hero, hud, route_run, surge, threats};
 use super::{HeroState, NetRole, Phase, Rng, Run, Selection};
 
 /// The simulation's step: a 20 fps game.
@@ -68,6 +72,18 @@ struct Report {
     timeline: Vec<Check>,
     /// The last [`LAST_SECS`] seconds, one point a second: how the run ended.
     last: Vec<Moment>,
+    /// On a route: the stations reached, the start counted (0 off a route).
+    stops: usize,
+    /// On a route: when each of them was reached, the start at 0.
+    stop_secs: Vec<f32>,
+    /// On a route: when the last station was reached, if it was.
+    arrived: Option<f32>,
+    /// On a route: the horde topped up out of sight, and how much of it came from ahead.
+    topped: u32,
+    ahead: u32,
+    /// On a route: the most gems and the most heals of the road lying at once.
+    most_gems: usize,
+    most_road_heals: usize,
 }
 
 /// Seconds of a run's end [`Report::last`] keeps.
@@ -116,6 +132,8 @@ struct Check {
     taken: f32,
     by_boss: f32,
     crowd: usize,
+    /// The route's stations reached so far (0 off a route).
+    stop: usize,
 }
 
 /// A hit taken with a boss this near counts as the boss's, roughly.
@@ -156,17 +174,48 @@ struct Tally {
     elites: u32,
     surges: u32,
     surging: bool,
+    /// On a route: the horde topped up on the ring out of sight, and the part of it within
+    /// [`route::AHEAD_CONE`] of the heading.
+    topped: u32,
+    ahead: u32,
 }
 
-/// Count the enemies as they come, and the surges as they begin.
+/// Whether `to` lies within [`route::AHEAD_CONE`] radians of `heading` (as `atan2(z, x)`) seen
+/// from `from`, a hair over for the edge.
+fn leans_ahead(heading: f32, from: Vec3, to: Vec3) -> bool {
+    let d = flat(to - from);
+    let off = (d.z.atan2(d.x) - heading + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU)
+        - std::f32::consts::PI;
+    off.abs() <= route::AHEAD_CONE + 0.05
+}
+
+/// Count the enemies as they come, and the surges as they begin. On a route's road also where the
+/// horde topped up on the ring comes from.
 fn tally(
     mut tally: ResMut<Tally>,
     surge: Res<surge::Surge>,
-    new: Query<Has<enemies::Elite>, Added<Enemy>>,
+    selection: Res<Selection>,
+    route_run: Res<RouteRun>,
+    hero: Query<&Transform, With<Hero>>,
+    new: Query<(&Transform, &Enemy, Has<enemies::Elite>), Added<Enemy>>,
 ) {
-    for elite in &new {
+    let road = route::route_of(selection.stage)
+        .filter(|_| route_run.placed && !route_run.arrived)
+        .zip(hero.single().ok())
+        .and_then(|(def, h)| {
+            route::heading(def, &route_run, h.translation).map(|a| (a, h.translation))
+        });
+    for (tf, e, elite) in &new {
         tally.spawned += 1;
         tally.elites += u32::from(elite);
+        // The encircling waves (26 yd) and the bosses (30) stand closer than the ring the horde
+        // is topped up on (34 to 42).
+        if let Some((heading, at)) = road {
+            if !e.boss && flat(tf.translation - at).length() >= enemies::SPAWN_NEAR - 1.0 {
+                tally.topped += 1;
+                tally.ahead += u32::from(leans_ahead(heading, at, tf.translation));
+            }
+        }
     }
     if surge.active && !tally.surging {
         tally.surges += 1;
@@ -207,6 +256,14 @@ fn race_for(class: &data::ClassDef) -> u8 {
 
 /// A headless app that plays one run of `setup`, its hero standing at the arena's centre.
 fn sim_app(setup: Setup) -> App {
+    // A route's run starts as the game's does once the hero is set down: at the first station,
+    // the second point next.
+    let route_run = route::route_of(setup.map).map_or_else(RouteRun::default, |_| RouteRun {
+        next: 1,
+        stop: 1,
+        arrived: false,
+        placed: true,
+    });
     let mut app = App::new();
     app.add_plugins((MinimalPlugins, StatesPlugin))
         .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f32(
@@ -222,8 +279,8 @@ fn sim_app(setup: Setup) -> App {
             ..Selection::default()
         })
         .init_resource::<NetRole>()
-        .insert_resource(super::route::bounds_for(setup.map, &super::route::RouteRun::default()))
-        .init_resource::<super::route::RouteRun>()
+        .insert_resource(route::bounds_for(setup.map, &route_run))
+        .insert_resource(route_run)
         .init_resource::<Tally>()
         .init_resource::<super::GuestMail>()
         .init_resource::<enemies::Spawner>()
@@ -255,9 +312,11 @@ fn sim_app(setup: Setup) -> App {
                 // The fight, as the game chains it.
                 (
                     clear_fallen,
-                    super::route::update_bounds,
+                    route::update_bounds,
                     auto::plan,
                     fly,
+                    // The stations, the rest at each, the end ring and the horde cut behind.
+                    route_run::sim_systems(),
                     hero::mark_picking,
                     enemies::spawn_enemies,
                     enemies::move_enemies,
@@ -266,6 +325,7 @@ fn sim_app(setup: Setup) -> App {
                     abilities::apply_hits,
                     enemies::tick_marks,
                     enemies::drop_loot,
+                    enemies::road_heals,
                     enemies::collect_gems,
                 )
                     .chain(),
@@ -278,8 +338,7 @@ fn sim_app(setup: Setup) -> App {
                     hero::hero_vitals,
                     surge::tick,
                     enrage::enrage_bosses,
-                    threats::sim_systems()
-                        .run_if(|| std::env::var_os("SIM_NO_THREATS").is_none()),
+                    threats::sim_systems().run_if(|| std::env::var_os("SIM_NO_THREATS").is_none()),
                     super::bosses::sim_systems()
                         .run_if(|| std::env::var_os("SIM_NO_THREATS").is_none()),
                     super::rares::sim_systems(),
@@ -294,6 +353,7 @@ fn sim_app(setup: Setup) -> App {
         .add_systems(OnEnter(Phase::LevelUp), hud::roll_offer)
         .add_systems(Update, choose.run_if(in_state(Phase::LevelUp)));
     super::items::sim_init(&mut app);
+    route_run::sim_init(&mut app);
     threats::sim_init(&mut app);
     super::worldbuffs::sim_init(&mut app);
     app.init_resource::<Assets<Mesh>>()
@@ -350,7 +410,7 @@ fn fly(
     run: Res<Run>,
     pilot: Res<auto::Auto>,
     selection: Res<Selection>,
-    bounds: Res<super::route::Bounds>,
+    bounds: Res<route::Bounds>,
     dodger: threats::Dodger,
     mut hero: Query<&mut Transform, With<Hero>>,
 ) {
@@ -361,9 +421,9 @@ fn fly(
         return;
     }
     let dir = dodger.steer(tf.translation, auto::steer(&pilot));
-    let travel = super::route::travel_speed(&selection);
-    let p = tf.translation
-        + dir * run.stats().speed * run.haste_mult() * travel * time.delta_secs();
+    let travel = route::travel_speed(&selection);
+    let p =
+        tf.translation + dir * run.stats().speed * run.haste_mult() * travel * time.delta_secs();
     tf.translation = bounds.hold(p);
 }
 
@@ -394,6 +454,11 @@ fn play(setup: Setup) -> Report {
     let mut next_moment = 0.0f32;
     let mut next_check = CHECK_EVERY;
     let steps = (setup.secs / DT).ceil() as u32;
+    // On a route: when each station was reached (the start at 0), and the most on the ground.
+    let on_route = route::route_of(setup.map).is_some();
+    let mut stop_secs: Vec<f32> = if on_route { vec![0.0] } else { Vec::new() };
+    let mut arrived: Option<f32> = None;
+    let (mut most_gems, mut most_road_heals) = (0usize, 0usize);
     // Over the current stretch of the timeline.
     let (mut win_taken, mut win_boss, mut win_crowd) = (0.0f32, 0.0f32, 0usize);
     for _ in 0..steps {
@@ -402,6 +467,30 @@ fn play(setup: Setup) -> Report {
         let boss_near = boss.is_some();
         win_crowd = win_crowd.max(crowd);
         let now = app.world().resource::<Run>().elapsed;
+        if on_route {
+            let (stop, done) = {
+                let r = app.world().resource::<RouteRun>();
+                (r.stop, r.arrived)
+            };
+            while stop_secs.len() < stop {
+                stop_secs.push(now);
+            }
+            if done && arrived.is_none() {
+                arrived = Some(now);
+            }
+            let gems = app
+                .world_mut()
+                .query::<&enemies::Gem>()
+                .iter(app.world())
+                .count();
+            let heals = app
+                .world_mut()
+                .query::<&enemies::RoadHeal>()
+                .iter(app.world())
+                .count();
+            most_gems = most_gems.max(gems);
+            most_road_heals = most_road_heals.max(heals);
+        }
         if now >= next_moment {
             next_moment += 1.0;
             let alive = app
@@ -455,6 +544,7 @@ fn play(setup: Setup) -> Report {
     }
     let world = app.world();
     let run = world.resource::<Run>();
+    let tally = world.resource::<Tally>();
     let meter = world.resource::<super::dmgmeter::DamageDone>();
     let mut top: Vec<(&'static str, f32)> = meter.0.values().map(|(d, v)| (d.key, *v)).collect();
     top.sort_by(|a, b| b.1.total_cmp(&a.1));
@@ -475,6 +565,13 @@ fn play(setup: Setup) -> Report {
         top,
         timeline,
         last,
+        stops: stop_secs.len(),
+        stop_secs,
+        arrived,
+        topped: tally.topped,
+        ahead: tally.ahead,
+        most_gems,
+        most_road_heals,
     }
 }
 
@@ -500,6 +597,7 @@ fn check(world: &mut World) -> Check {
         bosses: run.bosses,
         kills: run.kills,
         hp: run.hp.max(0.0) / run.stats().max_hp.max(1.0),
+        stop: world.resource::<RouteRun>().stop,
         ..Check::default()
     }
 }
@@ -508,9 +606,9 @@ fn print_timeline(r: &Report) {
     println!("\n{} at {}, seed {}", r.class, r.zone, r.seed);
     let head = [
         "t", "level", "spells", "talents", "spawned", "elites", "alive", "rings", "surges",
-        "bosses", "kills", "hp", "taken", "by boss", "crowd",
+        "bosses", "kills", "hp", "taken", "by boss", "crowd", "stop",
     ];
-    let widths = [6, 5, 6, 7, 7, 6, 5, 5, 6, 6, 6, 5, 6, 7, 5];
+    let widths = [6, 5, 6, 7, 7, 6, 5, 5, 6, 6, 6, 5, 6, 7, 5, 4];
     let row = |cells: Vec<String>| {
         let line: Vec<String> = cells
             .iter()
@@ -537,6 +635,11 @@ fn print_timeline(r: &Report) {
             format!("{:.0}", c.taken),
             format!("{:.0}", c.by_boss),
             c.crowd.to_string(),
+            if r.stops > 0 {
+                c.stop.to_string()
+            } else {
+                "-".to_string()
+            },
         ]);
     }
 }
@@ -561,6 +664,39 @@ fn print_end(r: &Report) {
             m.level,
             m.rings,
             m.spawned
+        );
+    }
+}
+
+/// One line per route run: the stations reached and when, and how much of the horde came from
+/// ahead.
+fn print_route(reports: &[Report]) {
+    let routes: Vec<&Report> = reports.iter().filter(|r| r.stops > 0).collect();
+    if routes.is_empty() {
+        return;
+    }
+    println!(
+        "\n{:<8} {:<14} {:>4} {:>5} {:>8} {:>6} {:>6} {:>10}  reached at",
+        "class", "route", "seed", "stops", "arrived", "ahead", "gems", "road heals"
+    );
+    for r in routes {
+        let ahead = if r.topped > 0 {
+            format!("{:.0}%", r.ahead as f32 / r.topped as f32 * 100.0)
+        } else {
+            "-".to_string()
+        };
+        let times: Vec<String> = r.stop_secs.iter().map(|&t| mm_ss(t)).collect();
+        println!(
+            "{:<8} {:<14} {:>4} {:>5} {:>8} {:>6} {:>6} {:>10}  {}",
+            r.class,
+            r.zone,
+            r.seed,
+            r.stops,
+            r.arrived.map_or("-".to_string(), mm_ss),
+            ahead,
+            r.most_gems,
+            r.most_road_heals,
+            times.join(" ")
         );
     }
 }
@@ -644,6 +780,7 @@ fn print_table(reports: &[Report]) {
             top.join(", ")
         );
     }
+    print_route(reports);
     println!(
         "\n{:<8} {:>5} {:>8} {:>7} {:>6} {:>7}",
         "class", "runs", "won", "level", "dps", "survived"
@@ -669,6 +806,16 @@ fn print_table(reports: &[Report]) {
     }
 }
 
+/// The most seconds a run on `map` plays unless `SIM_SECS` says: the win and a minute; a route
+/// has no clock to win on (it ends on its last station's finale), so twice that.
+fn default_secs(map: usize) -> f32 {
+    if route::route_of(map).is_some() {
+        data::VICTORY_SECS * 2.0 + 60.0
+    } else {
+        data::VICTORY_SECS + 60.0
+    }
+}
+
 /// `cargo survivors-sim`: every class through whole runs, the table printed.
 #[test]
 #[ignore = "whole runs for every class; `cargo survivors-sim` runs it"]
@@ -678,7 +825,9 @@ fn balance_table() {
     });
     let zones = list("SIM_ZONES", super::debug::map_index, || vec![0]);
     let seeds: u64 = number("SIM_SEEDS", 3);
-    let secs: f32 = number("SIM_SECS", data::VICTORY_SECS + 60.0);
+    let secs: Option<f32> = std::env::var("SIM_SECS")
+        .ok()
+        .and_then(|v| v.trim().parse().ok());
     let level: u32 = number("SIM_LEVEL", 1);
     let difficulty = std::env::var("SIM_DIFFICULTY").map_or(Default::default(), |d| {
         let d = d.trim().to_ascii_lowercase();
@@ -695,7 +844,7 @@ fn balance_table() {
                     class,
                     map,
                     seed,
-                    secs,
+                    secs: secs.unwrap_or_else(|| default_secs(map)),
                     level,
                     difficulty,
                 });
@@ -783,4 +932,84 @@ fn the_run_keeps_its_rhythm() {
             assert!(c.alive <= 400, "{who} at 2:30: {c:?}");
         }
     }
+}
+
+/// The Undying Run's first minutes, walked by a melee class and a caster: the hero is not cut down
+/// early, the first station is reached, the horde comes from ahead, the road heals stay few and
+/// the gems on the ground do not pile up behind. The bounds are the plan's; tune them with the
+/// simulator (`SIM_ZONES=undying SIM_TRACE=1 cargo survivors-sim`) and keep a reserve.
+#[test]
+fn the_route_is_walked() {
+    /// The share of the topped-up horde that must come from ahead (the game aims at
+    /// [`route::AHEAD_SHARE`] plus its part of the rest), and how many spawns it is judged on.
+    const AHEAD_AT_LEAST: f32 = 0.6;
+    const TOPPED_AT_LEAST: u32 = 50;
+
+    let map = super::debug::map_index("undying").expect("the Undying Run is a battleground");
+    assert!(route::route_of(map).is_some());
+    let setups: Vec<Setup> = [0, 6]
+        .into_iter()
+        .map(|class| Setup {
+            class,
+            map,
+            seed: 1,
+            // Measured on 2026-11-01: the second station at 4:34 (warrior) and 7:47 (mage);
+            // 10:30 keeps a third in reserve.
+            secs: 630.0,
+            level: 1,
+            difficulty: Default::default(),
+        })
+        .collect();
+    for r in play_all(setups) {
+        let who = format!("{} on the {}", r.class, r.zone);
+        assert!(
+            r.died.is_none_or(|t| t > 120.0),
+            "{who} fell in the first two minutes: {r:?}"
+        );
+        assert!(
+            r.stops >= 2,
+            "{who} reached no station in 10:30: {:?}",
+            r.stop_secs
+        );
+        assert!(
+            r.topped >= TOPPED_AT_LEAST,
+            "{who}: only {} spawns to judge the lean on",
+            r.topped
+        );
+        let share = r.ahead as f32 / r.topped as f32;
+        assert!(
+            share >= AHEAD_AT_LEAST,
+            "{who}: {:.0}% of the horde came from ahead ({} of {})",
+            share * 100.0,
+            r.ahead,
+            r.topped
+        );
+        assert!(
+            r.most_road_heals <= route::ROAD_HEAL_CAP,
+            "{who}: {} road heals lying at once",
+            r.most_road_heals
+        );
+        // The cap holds the horde's drops; a boss's, the heals and gold may pass it, so this only
+        // checks that the road's leftovers are cut away and never pile up without end.
+        assert!(
+            r.most_gems < enemies::MAX_GEMS * 5 / 4,
+            "{who}: {} gems on the ground",
+            r.most_gems
+        );
+    }
+}
+
+#[test]
+fn the_cone_ahead_wraps_round_the_half_turn() {
+    let at = |a: f32| Vec3::new(a.cos(), 0.0, a.sin()) * 38.0;
+    let from = Vec3::new(5.0, 3.0, -2.0);
+    assert!(leans_ahead(0.0, from, from + at(0.0)));
+    assert!(leans_ahead(0.0, from, from + at(0.9)));
+    assert!(leans_ahead(0.0, from, from + at(-0.9)));
+    assert!(!leans_ahead(0.0, from, from + at(1.2)));
+    assert!(!leans_ahead(0.0, from, from + at(std::f32::consts::PI)));
+    // Across the seam at plus and minus half a turn.
+    let h = std::f32::consts::PI - 0.1;
+    assert!(leans_ahead(h, from, from + at(-std::f32::consts::PI + 0.1)));
+    assert!(!leans_ahead(h, from, from + at(0.0)));
 }

@@ -9,7 +9,9 @@
 //! The keys, debug mode only: F5 holds the waves and the clock, F6 clears the field, F7 toggles
 //! god mode, F8 the overlay, F9 puts the hero at the edge the camera looks at, F10 steps MSAA and
 //! F11 the anti-aliasing (FXAA, SMAA) live; F3 drops the finale ([`super::finale`]) and F4 jumps
-//! to a guard post ([`super::guards`]).
+//! to a guard post ([`super::guards`]). On a route ([`super::route`]) F9 puts the hero a little
+//! short of the next station instead (the road points between are skipped), F1 short of the next
+//! road point, and F2 says where the hero stands in WoW coordinates, to measure the road with.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -22,6 +24,7 @@ use bevy::prelude::*;
 use super::enemies::{self, Enemy};
 use super::hero::{CamRig, Hero};
 use super::kit::{self, KitFonts};
+use super::route::{self, Point, RouteRun};
 use super::units::flat;
 use super::{data, NetRole, Phase, Run, Selection};
 
@@ -92,7 +95,7 @@ pub(super) fn plugin(app: &mut App) {
         return;
     }
     GOD.store(true, Ordering::Relaxed);
-    info!("survivors debug: on (F5 waves, F6 clear, F7 god mode, F8 overlay, F9 to the edge, F3 drop the finale, F4 to a post, F10 MSAA, F11 AA)");
+    info!("survivors debug: on (F5 waves, F6 clear, F7 god mode, F8 overlay, F9 to the edge or the next station, F1 to the next road point, F2 mark the spot, F3 drop the finale, F4 to a post, F10 MSAA, F11 AA)");
     app.insert_resource(DebugMode {
         started: false,
         ready: 0.0,
@@ -193,6 +196,24 @@ fn start_run(
 /// Inside the leash by this many yards when F9 puts the hero at the edge.
 const EDGE_MARGIN: f32 = 3.0;
 
+/// Short of a road point or a station by this many yards when F9 and F1 put the hero there: near
+/// enough to count as reached in the next frame ([`route::STOP_RADIUS`] is 20, the pass radius 25).
+const JUMP_SHORT: f32 = 15.0;
+
+/// Where a jump to `points[idx]` sets the hero: [`JUMP_SHORT`] yards short of it on the leg from
+/// the point before (from `from` when it is the first), at `y = 0`.
+fn short_of(points: &[Point], idx: usize, from: Vec3) -> Vec3 {
+    let to = points[idx].at;
+    let before = idx.checked_sub(1).map_or(from, |i| points[i].at);
+    let dir = flat(to - before).normalize_or_zero();
+    flat(to - dir * JUMP_SHORT)
+}
+
+/// The next station's index in `points` at or after `next`, if one is left.
+fn next_station(points: &[Point], next: usize) -> Option<usize> {
+    (next..points.len()).find(|&i| points[i].station.is_some())
+}
+
 /// The debug keys.
 #[allow(clippy::too_many_arguments)]
 fn keys(
@@ -200,6 +221,7 @@ fn keys(
     mut mode: ResMut<DebugMode>,
     phase: Res<State<Phase>>,
     bounds: Res<super::route::Bounds>,
+    (selection, mut route_run, role): (Res<Selection>, ResMut<RouteRun>, Res<NetRole>),
     rig: Res<CamRig>,
     mut commands: Commands,
     mut hero: Query<&mut Transform, With<Hero>>,
@@ -272,14 +294,68 @@ fn keys(
         }
         say(format!("Debug: {n} enemies cleared."));
     }
-    if keys.just_pressed(KeyCode::F9) {
-        if let Ok(mut tf) = hero.single_mut() {
-            let (sy, cy) = rig.yaw.sin_cos();
-            let ahead = Vec3::new(-sy, 0.0, -cy);
-            let to = bounds.centre + ahead * (bounds.leash - EDGE_MARGIN).max(0.0);
-            // `drive_hero` sets the height from the ground under it.
-            tf.translation.x = to.x;
-            tf.translation.z = to.z;
+    // On a route under way the jumps follow the road; a co-op guest takes the host's run, so it
+    // only moves itself.
+    let road = route::route_of(selection.stage).filter(|_| route_run.placed && !route_run.arrived);
+    let pos = hero.single().map(|tf| tf.translation).ok();
+    if keys.just_pressed(KeyCode::F1) || keys.just_pressed(KeyCode::F9) {
+        if let (Some(def), Some(pos)) = (road, pos) {
+            let points = def.points();
+            let station = keys.just_pressed(KeyCode::F9);
+            let idx = if station {
+                next_station(points, route_run.next)
+            } else {
+                Some(route_run.next).filter(|&i| i < points.len())
+            };
+            if let Some(idx) = idx {
+                let to = short_of(points, idx, pos);
+                if station && *role != NetRole::Client {
+                    // The road points on the way count as passed.
+                    route_run.next = route_run.next.max(idx);
+                }
+                if let Ok(mut tf) = hero.single_mut() {
+                    // `drive_hero` sets the height from the ground under it.
+                    tf.translation.x = to.x;
+                    tf.translation.z = to.z;
+                }
+                let wow = benilla_assets::coords::bevy_to_wow(to);
+                say(format!(
+                    "Debug: to point {idx}{} at wow {:.0}, {:.0}.",
+                    points[idx]
+                        .station
+                        .map_or(String::new(), |s| format!(" ({})", def.stations[s].label)),
+                    wow[0],
+                    wow[1]
+                ));
+            } else {
+                say("Debug: the route has no point left.".to_string());
+            }
+        } else if keys.just_pressed(KeyCode::F9) {
+            if let Ok(mut tf) = hero.single_mut() {
+                let (sy, cy) = rig.yaw.sin_cos();
+                let ahead = Vec3::new(-sy, 0.0, -cy);
+                let to = bounds.centre + ahead * (bounds.leash - EDGE_MARGIN).max(0.0);
+                // `drive_hero` sets the height from the ground under it.
+                tf.translation.x = to.x;
+                tf.translation.z = to.z;
+            }
+        }
+    }
+    // F2: where the hero stands, for placing a road point (the pilot logs where it sticks).
+    if keys.just_pressed(KeyCode::F2) {
+        if let Some(pos) = pos {
+            let wow = benilla_assets::coords::bevy_to_wow(pos);
+            let near = route::route_of(selection.stage).and_then(|def| {
+                def.points()
+                    .get(route_run.next)
+                    .map(|p| (route_run.next, flat(p.at - pos).length()))
+            });
+            let there = near.map_or(String::new(), |(k, d)| format!(", {d:.0} yd to point {k}"));
+            info!(
+                "survivors debug: mark wow ({:.0}, {:.0}){there}",
+                wow[0], wow[1]
+            );
+            say(format!("Debug: wow ({:.0}, {:.0}){there}.", wow[0], wow[1]));
         }
     }
 }
@@ -294,6 +370,7 @@ fn show_text(
     run: Res<Run>,
     selection: Res<Selection>,
     bounds: Res<super::route::Bounds>,
+    route_run: Res<RouteRun>,
     hero: Query<&Transform, With<Hero>>,
     foes: Query<&Enemy>,
     mut panel: Query<(&mut Text, &mut Node), With<DebugText>>,
@@ -341,19 +418,48 @@ fn show_text(
         });
         let alive = foes.iter().filter(|e| !e.dead).count();
         let t = run.elapsed as u32;
+        let pace = run.pace() as u32;
+        // A route: the stop, the point under way, how far off it is, how much is walked and the
+        // pace the difficulty follows; the circle only while it is fenced.
+        let road = route::route_of(selection.stage).map_or(String::new(), |def| {
+            let left = def
+                .points()
+                .get(route_run.next)
+                .zip(hero.single().ok())
+                .map_or("-".to_string(), |(p, tf)| {
+                    format!("{:.0} yd", flat(p.at - tf.translation).length())
+                });
+            format!(
+                "\nroute stop {}/{}  next {}/{}  {left}\nfrac {:.2}  pace {}:{:02}{}",
+                route_run.stop,
+                def.stations.len(),
+                route_run.next,
+                def.points().len(),
+                run.route_frac,
+                pace / 60,
+                pace % 60,
+                if route_run.arrived { "  ARRIVED" } else { "" },
+            )
+        });
+        let circle = if bounds.fenced {
+            format!("centre {from_centre:.0} / {:.0} yd", bounds.leash)
+        } else {
+            "open road".to_string()
+        };
         format!(
             "DEBUG\n\
              F5  waves {}\n\
              F6  clear the field\n\
              F7  god mode {}\n\
              F8  overlay\n\
-             F9  to the edge ahead\n\
+             F9  to the edge ahead / next station\n\
+             F1  next road point  F2 mark the spot\n\
              F3  drop the finale  F4 to a post\n\
              F10 MSAA  F11 AA\n\
              \n\
              {} at {}\n\
              pos {:.1} {:.1} {:.1}\n\
-             centre {:.0} / {:.0} yd\n\
+             {circle}{road}\n\
              alive {alive}  t {}:{:02}  level {}\n\
              \n\
              rings: white {:.0} clear, magenta {:.0} encircle,\n\
@@ -365,8 +471,6 @@ fn show_text(
             pos[0],
             pos[1],
             pos[2],
-            from_centre,
-            bounds.leash,
             t / 60,
             t % 60,
             run.level,
@@ -398,7 +502,11 @@ fn rings(bounds: &super::route::Bounds) -> [(bool, f32, [f32; 4]); 6] {
         (true, enemies::SPAWN_NEAR, [1.0, 0.85, 0.1, 0.7]),
         (true, enemies::SPAWN_FAR, [1.0, 0.85, 0.1, 0.7]),
         // Open bounds have no edge: a ring of no size.
-        (false, if bounds.fenced { bounds.leash } else { 0.0 }, [0.15, 0.6, 1.0, 0.8]),
+        (
+            false,
+            if bounds.fenced { bounds.leash } else { 0.0 },
+            [0.15, 0.6, 1.0, 0.8],
+        ),
     ]
 }
 
@@ -504,5 +612,55 @@ fn show_rings(
             pos[v] = p.to_array();
             pos[v + 1] = (p + Vec3::Y * RING_HEIGHT).to_array();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn road() -> Vec<Point> {
+        let p = |x: f32, z: f32, station| Point {
+            at: Vec3::new(x, 0.0, z),
+            station,
+        };
+        vec![
+            p(0.0, 0.0, Some(0)),
+            p(100.0, 0.0, None),
+            p(100.0, 200.0, Some(1)),
+            p(300.0, 200.0, Some(2)),
+        ]
+    }
+
+    #[test]
+    fn a_jump_lands_short_of_the_point_on_the_leg_that_leads_to_it() {
+        let points = road();
+        let at = short_of(&points, 1, Vec3::ZERO);
+        assert!(
+            (at - Vec3::new(100.0 - JUMP_SHORT, 0.0, 0.0)).length() < 1e-3,
+            "{at}"
+        );
+        let at = short_of(&points, 2, Vec3::ZERO);
+        assert!(
+            (at - Vec3::new(100.0, 0.0, 200.0 - JUMP_SHORT)).length() < 1e-3,
+            "{at}"
+        );
+        // The first point has no leg: short of it as seen from the hero.
+        let at = short_of(&points, 0, Vec3::new(-50.0, 0.0, 0.0));
+        assert!(
+            (at - Vec3::new(-JUMP_SHORT, 0.0, 0.0)).length() < 1e-3,
+            "{at}"
+        );
+        // Near enough to count as reached.
+        const { assert!(JUMP_SHORT < route::STOP_RADIUS && JUMP_SHORT < route::PASS_RADIUS) };
+    }
+
+    #[test]
+    fn a_station_jump_skips_the_road_points() {
+        let points = road();
+        assert_eq!(next_station(&points, 1), Some(2));
+        assert_eq!(next_station(&points, 2), Some(2));
+        assert_eq!(next_station(&points, 3), Some(3));
+        assert_eq!(next_station(&points, 4), None);
     }
 }
