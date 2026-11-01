@@ -38,10 +38,23 @@ pub(super) struct Auto {
     seen: Vec<String>,
     /// `WOW_SURVIVORS_WINDOWS`: the next step of [`TOUR`], until it is done.
     tour: Option<usize>,
+    /// The run's one look at the pause menu, [`PAUSE_AT`] seconds in, is behind it.
+    paused_once: bool,
 }
 
+/// How far into a run the autopilot opens the pause menu once and photographs it (`pause.png`),
+/// with the crowd, its health bars and its damage numbers under the dimmer.
+const PAUSE_AT: f32 = 20.0;
+
 /// The hub's windows the tour opens, in order, and the screenshot each gives.
-const TOUR: [&str; 6] = ["achievements", "collection", "loot", "trainer", "options", "coop"];
+const TOUR: [&str; 6] = [
+    "achievements",
+    "collection",
+    "loot",
+    "trainer",
+    "options",
+    "coop",
+];
 
 impl Auto {
     /// One screenshot named for this screen, the first time it shows.
@@ -105,6 +118,7 @@ pub(super) fn from_env() -> Option<Auto> {
         dir: Vec3::ZERO,
         seen: Vec::new(),
         tour: benilla_app::survivors_host::webenv::var("WOW_SURVIVORS_WINDOWS").map(|_| 0),
+        paused_once: false,
     })
 }
 
@@ -137,7 +151,11 @@ pub(super) fn plan(
         .map(|(t, _)| flat(t.translation - at))
         .min_by(|a, b| a.length().total_cmp(&b.length()))
     {
-        auto.dir = if to.length() > 1.5 { to.normalize_or_zero() } else { Vec3::ZERO };
+        auto.dir = if to.length() > 1.5 {
+            to.normalize_or_zero()
+        } else {
+            Vec3::ZERO
+        };
         return;
     }
     let mut want = gems
@@ -247,6 +265,27 @@ pub(super) fn drive(
                     run.bosses = 3;
                     run.rings = 4;
                 }
+                next.set(Phase::Playing);
+                auto.paused_once = false;
+                auto.wait = 0.0;
+            }
+        }
+        Phase::Playing => {
+            if !auto.paused_once
+                && !auto.idle
+                && *role == super::NetRole::Solo
+                && run.elapsed > PAUSE_AT
+            {
+                auto.paused_once = true;
+                next.set(Phase::Paused);
+            }
+            auto.wait = 0.0;
+        }
+        Phase::Paused => {
+            if auto.wait > 1.0 {
+                auto.capture_once(&mut commands, "pause".into());
+            }
+            if auto.wait > 2.0 {
                 next.set(Phase::Playing);
                 auto.wait = 0.0;
             }
