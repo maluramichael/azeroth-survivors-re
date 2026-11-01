@@ -164,6 +164,22 @@ impl QuestLog {
     }
 }
 
+impl QuestLog {
+    /// The creatures an unfinished quest hunts, by name: the one a killing quest wants slain and
+    /// the one a collecting quest wants dropping its item. The world map marks them.
+    pub(crate) fn hunted(&self) -> Vec<&'static str> {
+        let mut names: Vec<&'static str> = Vec::new();
+        for q in self.quests.iter().filter(|q| !q.done) {
+            if let Goal::Kill { creature } | Goal::Collect { creature, .. } = &q.goal {
+                if !names.contains(creature) {
+                    names.push(*creature);
+                }
+            }
+        }
+        names
+    }
+}
+
 /// A quest item lying on the ground.
 #[derive(Component)]
 struct QuestItem {
