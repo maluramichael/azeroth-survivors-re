@@ -160,7 +160,7 @@ impl Default for Profile {
 
 impl Profile {
     fn path() -> Option<std::path::PathBuf> {
-        benilla_app::survivors_host::local_state::home().map(|h| h.join("survivors-profile.toml"))
+        crate::state_home().map(|h| h.join("survivors-profile.toml"))
     }
 
     /// The saved profile, or a fresh one; a file that does not parse is kept aside as `.bad` so a

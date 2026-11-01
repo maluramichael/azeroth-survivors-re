@@ -67,7 +67,7 @@ impl Default for Prefs {
 
 impl Prefs {
     fn path() -> Option<std::path::PathBuf> {
-        benilla_app::survivors_host::local_state::home().map(|h| h.join("survivors-prefs.toml"))
+        crate::state_home().map(|h| h.join("survivors-prefs.toml"))
     }
 
     /// The saved settings, or the defaults when there are none or they do not parse.

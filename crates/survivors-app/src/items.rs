@@ -636,7 +636,7 @@ fn ephemeral() -> bool {
 }
 
 fn bank_path() -> Option<std::path::PathBuf> {
-    benilla_app::survivors_host::local_state::home().map(|h| h.join("survivors-items.toml"))
+    crate::state_home().map(|h| h.join("survivors-items.toml"))
 }
 
 fn load_bank(mut bank: ResMut<Bank>) {

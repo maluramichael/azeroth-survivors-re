@@ -51,7 +51,7 @@ fn folder() -> Option<std::path::PathBuf> {
     if cfg!(test) {
         return None;
     }
-    benilla_app::survivors_host::local_state::home().map(|h| h.join("mods"))
+    crate::state_home().map(|h| h.join("mods"))
 }
 
 fn read_folder_files() -> Vec<(String, String)> {

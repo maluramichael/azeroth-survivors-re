@@ -376,6 +376,17 @@ pub(crate) fn run_on(phase: Res<State<Phase>>, role: Res<NetRole>) -> bool {
     }
 }
 
+/// The player's state folder (profile, bank, prefs, spellbook, the last pick, mods, shots). A unit
+/// test of this crate gets none unless it pins `$BENILLA_HOME`: the engine's own `cfg!(test)` guard
+/// only holds when the engine itself is under test, and without this the suite saved its fixture
+/// profile (every character at level 60) over the player's.
+pub(crate) fn state_home() -> Option<std::path::PathBuf> {
+    if cfg!(test) && std::env::var_os("BENILLA_HOME").is_none() {
+        return None;
+    }
+    benilla_app::survivors_host::local_state::home()
+}
+
 /// A test run that must not touch the player's progress: an automated run (`WOW_SURVIVORS_AUTO`)
 /// or the debug mode (`WOW_SURVIVORS_DEBUG`). Its profile opens everything and saves nothing.
 pub(crate) fn throwaway() -> bool {

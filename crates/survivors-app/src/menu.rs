@@ -60,7 +60,7 @@ pub(super) struct PickName;
 /// The saved pick, `benilla-config/survivors-pick.txt` (`localStorage` on the page):
 /// `class race sex map`, restored at the menu so a reload keeps the last hero and zone.
 fn pick_path() -> Option<std::path::PathBuf> {
-    benilla_app::survivors_host::local_state::home().map(|h| h.join("survivors-pick.txt"))
+    crate::state_home().map(|h| h.join("survivors-pick.txt"))
 }
 
 fn save_pick(sel: &Selection) {

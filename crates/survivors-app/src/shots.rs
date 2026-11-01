@@ -58,7 +58,7 @@ pub(super) fn plugin(app: &mut App) {
 fn folder() -> Option<PathBuf> {
     std::env::var_os("WOW_SURVIVORS_SHOTS")
         .map(PathBuf::from)
-        .or_else(|| benilla_app::survivors_host::local_state::home().map(|h| h.join("Screenshots")))
+        .or_else(|| crate::state_home().map(|h| h.join("Screenshots")))
 }
 
 /// Save the window to `name` (`.png` added) in [`folder`]; the path, or `None` without one.

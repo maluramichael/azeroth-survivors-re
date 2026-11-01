@@ -81,7 +81,7 @@ pub(super) struct Spellbook {
 
 impl Spellbook {
     fn path() -> Option<std::path::PathBuf> {
-        benilla_app::survivors_host::local_state::home().map(|h| h.join("survivors-spellbook.toml"))
+        crate::state_home().map(|h| h.join("survivors-spellbook.toml"))
     }
 
     fn load() -> Self {
