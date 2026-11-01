@@ -16,6 +16,10 @@
 //! - `SIM_SECS=300` the most seconds a run plays (default: the win, plus a minute)
 //! - `SIM_LEVEL=20` the characters' level, for the meta bonus (default 1)
 //! - `SIM_DIFFICULTY=heroic` (default normal)
+//! - `SIM_NO_THREATS=1` has the shooters ([`super::threats`]) stand off without shooting and leaves
+//!   the boss abilities and elite affixes out, to see what they cost
+//! - `SIM_NO_DODGE=1` has the pilot take every missile and stand in every telegraph; by default
+//!   it steps aside of most, as a player does
 //! - `SIM_TRACE=1` also prints each run's timeline: every 30 seconds the level, the spells and
 //!   talents held, the enemies spawned and alive, the encircling waves, surges and bosses so far,
 //!   the kills and the hero's health.
@@ -35,7 +39,7 @@ use bevy::time::TimeUpdateStrategy;
 use super::enemies::{Dying, Enemy};
 use super::hero::Hero;
 use super::units::flat;
-use super::{abilities, auto, data, enemies, enrage, finale, hero, hud, surge};
+use super::{abilities, auto, data, enemies, enrage, finale, hero, hud, surge, threats};
 use super::{HeroState, NetRole, Phase, Rng, Run, Selection};
 
 /// The simulation's step: a 20 fps game.
@@ -270,6 +274,8 @@ fn sim_app(setup: Setup) -> App {
                     hero::hero_vitals,
                     surge::tick,
                     enrage::enrage_bosses,
+                    threats::sim_systems()
+                        .run_if(|| std::env::var_os("SIM_NO_THREATS").is_none()),
                     (finale::summon, finale::hunt, finale::finale_slain).chain(),
                     tally,
                 )
@@ -281,6 +287,7 @@ fn sim_app(setup: Setup) -> App {
         .add_systems(OnEnter(Phase::LevelUp), hud::roll_offer)
         .add_systems(Update, choose.run_if(in_state(Phase::LevelUp)));
     super::items::sim_init(&mut app);
+    threats::sim_init(&mut app);
     super::pickups::sim_init(&mut app);
     super::worldbuffs::sim_init(&mut app);
     app.init_resource::<Assets<Mesh>>()
@@ -337,6 +344,7 @@ fn fly(
     run: Res<Run>,
     pilot: Res<auto::Auto>,
     selection: Res<Selection>,
+    dodger: threats::Dodger,
     mut hero: Query<&mut Transform, With<Hero>>,
 ) {
     let Ok(mut tf) = hero.single_mut() else {
@@ -345,7 +353,7 @@ fn fly(
     if run.dead_t.is_some() {
         return;
     }
-    let dir = auto::steer(&pilot);
+    let dir = dodger.steer(tf.translation, auto::steer(&pilot));
     let mut p = tf.translation + dir * run.stats().speed * run.haste_mult() * time.delta_secs();
     let map = selection.stage_def();
     let centre = hero::arena(map);

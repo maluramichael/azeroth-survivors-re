@@ -12,6 +12,7 @@ use super::chatlog::ChatLine;
 use super::data::{self, EnemyDef};
 use super::hero::{self, Hero, Peer, HERO_RADIUS};
 use super::nav::{NavGrid, SpawnProbe};
+use super::threats::{self, Stance};
 use super::units::{self, flat, yaw_toward, Fx, Marks, UnitSpec, COLOR_HURT};
 use super::{HeroState, Phase, Rng, Run, Selection};
 use benilla_app::survivors_host::creature_anim::{move_flags, MovementState};
@@ -52,7 +53,7 @@ const ELITE_HP: f32 = 5.0;
 const ELITE_DAMAGE: f32 = 1.4;
 const ELITE_XP: u32 = 6;
 /// The aura an elite wears: Divine Shield's golden bubble.
-const ELITE_AURA: u32 = 642;
+pub(super) const ELITE_AURA: u32 = 642;
 /// Elites alive at once.
 const MAX_ELITES: usize = 8;
 
@@ -433,7 +434,8 @@ pub(super) fn spawn_enemies(
     let due_rings = ((elapsed + data::BOSS_EVERY_SECS / 2.0) / data::BOSS_EVERY_SECS) as u32;
     if run.rings < due_rings {
         run.rings = due_rings;
-        let def = &roster.enemies[pool[0]];
+        // The ring is melee: a ring of shooters would pin the hero from every side.
+        let def = threats::melee_of(&roster.enemies, &pool, pool[0]);
         let hpos = next_anchor();
         let n = 28 + (data::progress(elapsed) * 60.0) as usize;
         for i in 0..n {
@@ -457,6 +459,10 @@ pub(super) fn spawn_enemies(
     spawner.timer = if surge.active { 0.07 } else { 0.12 };
     let alive = enemies.iter().filter(|(e, _)| !e.dead).count();
     let mut elites = enemies.iter().filter(|(e, el)| *el && !e.dead).count();
+    let mut shooters = enemies
+        .iter()
+        .filter(|(e, _)| e.def.ranged.is_some() && !e.dead)
+        .count();
     let mut target = data::target_alive(elapsed);
     if surge.active {
         target = target * 3 / 2;
@@ -468,7 +474,14 @@ pub(super) fn spawn_enemies(
     let batch_cap = if surge.active { 8.0 } else { 4.0 };
     let n = (((target - alive) as f32) / 6.0).ceil().min(batch_cap) as usize;
     for _ in 0..n {
-        let def = &roster.enemies[pool[rng.index(pool.len())]];
+        let pick = pool[rng.index(pool.len())];
+        // Shooters keep their distance and only die when they are chased, so the field holds a
+        // few at a time; past that, the pool's melee creature comes instead.
+        let def = if shooters >= threats::max_shooters(elapsed) {
+            threats::melee_of(&roster.enemies, &pool, pick)
+        } else {
+            &roster.enemies[pick]
+        };
         let hpos = next_anchor();
         let a = rng.range(0.0, std::f32::consts::TAU);
         let r = rng.range(SPAWN_NEAR, SPAWN_FAR);
@@ -480,6 +493,7 @@ pub(super) fn spawn_enemies(
         let elite =
             elites < MAX_ELITES && rng.f32() < elite_chance(elapsed) * super::items::drop_boost();
         elites += usize::from(elite);
+        shooters += usize::from(def.ranged.is_some());
         spawn_enemy(&mut commands, &mut run, def, pos, hpos, false, elite);
     }
 }
@@ -524,7 +538,7 @@ fn decay_knock(knock: Vec3, dt: f32) -> Vec3 {
 }
 
 /// Camera trauma for a swing that took `taken` health off a hero of `max_hp`.
-fn hurt_trauma(taken: f32, max_hp: f32) -> f32 {
+pub(super) fn hurt_trauma(taken: f32, max_hp: f32) -> f32 {
     (taken / max_hp.max(1.0) * HURT_TRAUMA_PER_HP).clamp(HURT_TRAUMA_MIN, HURT_TRAUMA_MAX)
 }
 
@@ -675,17 +689,28 @@ pub(super) fn move_enemies(
         let mut step = Vec3::ZERO;
         let mut speed = 0.0;
         if !held && !hero_down {
-            let dir = if e.fear_t > 0.0 {
+            // A shooter walks in to its range, holds there and backs off from a hero too close.
+            let stance = threats::stance(e.def.ranged.map(|r| r.range), dist);
+            let flee = e.fear_t > 0.0 || stance == Stance::Back;
+            let dir = if flee {
                 -to_hero.normalize_or_zero()
+            } else if stance == Stance::Hold {
+                Vec3::ZERO
             } else {
                 nav.chase_hero(pos, hpos, (!quarry.local).then_some(quarry.e))
             };
-            if !contact || e.fear_t > 0.0 {
+            if (!contact || flee) && stance != Stance::Hold {
                 speed = e.speed * e.slow;
                 step = dir * speed;
             }
-            if dir != Vec3::ZERO {
-                let target = Quat::from_rotation_y(yaw_toward(dir));
+            // Holding its ground or backing off, a shooter keeps its face to the hero.
+            let facing = if stance != Stance::Close && e.fear_t <= 0.0 {
+                to_hero
+            } else {
+                dir
+            };
+            if facing != Vec3::ZERO {
+                let target = Quat::from_rotation_y(yaw_toward(facing));
                 tf.rotation = tf.rotation.slerp(target, (dt * 10.0).min(1.0));
             }
         }

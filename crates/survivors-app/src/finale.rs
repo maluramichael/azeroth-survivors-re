@@ -47,6 +47,7 @@ static REAPER: EnemyDef = EnemyDef {
     xp: 0,
     level: 63,
     big: true,
+    ranged: None,
 };
 
 /// The dungeon boss of the zone; its death wins the run.
@@ -278,6 +279,7 @@ mod tests {
             xp: 10,
             level: 5,
             big: false,
+            ranged: None,
         }
     }
 

@@ -1415,6 +1415,114 @@ pub(crate) struct EnemyDef {
     pub level: u32,
     /// A great beast, which takes more room in the crowd.
     pub big: bool,
+    /// How it fights from afar; `None` runs in and bites ([`super::threats`]).
+    pub ranged: Option<Ranged>,
+}
+
+/// The kind of missile a caster throws: sets its spell, its pace and its colour.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum School {
+    Shadow,
+    Frost,
+    Fire,
+    Nature,
+    /// Arrows and thrown axes: no spell, a plain shot.
+    Arrow,
+}
+
+/// A creature that hurls missiles from a distance instead of closing in. It walks to about
+/// four fifths of `range`, backs off when the hero comes closer than half of it, and every
+/// `cooldown` seconds sends a missile at where the hero stands, which flies straight on and so
+/// can be dodged ([`super::threats`]).
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Ranged {
+    pub school: School,
+    /// Yards at which it starts shooting.
+    pub range: f32,
+    /// A missile's damage as a share of the creature's own melee damage, so the zone ladders
+    /// and the clock's growth scale it too.
+    pub damage: f32,
+    /// Seconds between two shots.
+    pub cooldown: f32,
+    /// Yards per second the missile flies.
+    pub speed: f32,
+    /// The `Spell.dbc` row whose cast the shooter plays (0: none). Assumption, not verified
+    /// against the client's spell data: the creature versions of the common bolts.
+    pub spell: u32,
+}
+
+impl Ranged {
+    pub(crate) const fn of(school: School) -> Self {
+        let (range, damage, cooldown, speed, spell) = match school {
+            // Shadow Bolt.
+            School::Shadow => (13.0, 0.35, 4.2, 11.0, 9613),
+            // Frostbolt.
+            School::Frost => (13.0, 0.35, 4.4, 10.0, 9672),
+            // Fireball.
+            School::Fire => (14.0, 0.4, 4.6, 11.0, 9053),
+            // Lightning Bolt.
+            School::Nature => (13.0, 0.35, 4.2, 12.0, 9532),
+            // Shoot.
+            School::Arrow => (12.0, 0.35, 3.4, 14.0, 6660),
+        };
+        Self {
+            school,
+            range,
+            damage,
+            cooldown,
+            speed,
+            spell,
+        }
+    }
+}
+
+/// `def` as a caster of `school`.
+const fn casting(def: EnemyDef, school: School) -> EnemyDef {
+    EnemyDef {
+        ranged: Some(Ranged::of(school)),
+        ..def
+    }
+}
+
+/// The school of missile a creature of this name throws, if it is a caster or an archer. Read
+/// off the name's words, so a Witchwing Harpy is not a witch and a Ravasaur Hunter not a hunter.
+pub(crate) fn school_of(name: &str) -> Option<School> {
+    const WORDS: &[(&str, School)] = &[
+        ("Mystic", School::Nature),
+        ("Geomancer", School::Nature),
+        ("Shaman", School::Nature),
+        ("Augur", School::Nature),
+        ("Oracle", School::Nature),
+        ("Seer", School::Nature),
+        ("Stormer", School::Nature),
+        ("Stonecaller", School::Nature),
+        ("Priest", School::Shadow),
+        ("Witch", School::Shadow),
+        ("Warlock", School::Shadow),
+        ("Necromancer", School::Shadow),
+        ("Cultist", School::Shadow),
+        ("Bonecaster", School::Shadow),
+        ("Shadowcaster", School::Shadow),
+        ("Summoner", School::Shadow),
+        ("Felsworn", School::Shadow),
+        ("Hexxer", School::Shadow),
+        ("Mage", School::Fire),
+        ("Wizard", School::Fire),
+        ("Elemental", School::Fire),
+        ("Thrower", School::Arrow),
+        ("Archer", School::Arrow),
+        ("Headhunter", School::Arrow),
+        ("Poacher", School::Arrow),
+        ("Marksman", School::Arrow),
+    ];
+    let school = name
+        .split_whitespace()
+        .find_map(|w| WORDS.iter().find(|(k, _)| *k == w).map(|(_, s)| *s));
+    // The Frostmane trolls' seers throw frost, not lightning.
+    match school {
+        Some(School::Nature) if name.contains("Frostmane") => Some(School::Frost),
+        other => other,
+    }
 }
 
 const fn en(
@@ -1436,6 +1544,7 @@ const fn en(
         xp,
         level,
         big: false,
+        ranged: None,
     }
 }
 
@@ -1444,21 +1553,21 @@ pub(crate) static ENEMIES: &[EnemyDef] = &[
     en("Fleeting Plainstrider", 1284, 8.0, 3.6, 2.0, 1, 10),
     en("Zhevra Runner", 6087, 10.0, 4.4, 2.0, 1, 11),
     en("Razormane Quilboar", 1218, 16.0, 3.4, 3.0, 2, 12),
-    en("Razormane Hunter", 6094, 18.0, 3.6, 4.0, 2, 12),
+    casting(en("Razormane Hunter", 6094, 18.0, 3.6, 4.0, 2, 12), School::Arrow),
     en("Savannah Huntress", 1056, 22.0, 4.8, 8.0, 2, 13),
     en("Sunscale Lashtail", 1744, 26.0, 4.6, 8.0, 3, 13),
     en("Kolkar Wrangler", 9442, 36.0, 4.0, 10.0, 3, 14),
-    en("Kolkar Stormer", 9443, 40.0, 4.0, 11.0, 3, 14),
+    casting(en("Kolkar Stormer", 9443, 40.0, 4.0, 11.0, 3, 14), School::Nature),
     en("Witchwing Harpy", 3218, 34.0, 5.0, 10.0, 3, 15),
     en("Hecklefang Hyena", 2710, 44.0, 5.2, 12.0, 4, 15),
     en("Razormane Defender", 1253, 70.0, 3.3, 14.0, 5, 16),
-    en("Razormane Mystic", 4643, 55.0, 3.8, 12.0, 4, 16),
+    casting(en("Razormane Mystic", 4643, 55.0, 3.8, 12.0, 4, 16), School::Nature),
     en("Sunscale Screecher", 1747, 60.0, 5.0, 13.0, 4, 17),
     en("Kolkar Bloodcharger", 9447, 85.0, 4.6, 16.0, 5, 18),
     en("Savannah Prowler", 1973, 75.0, 5.4, 15.0, 5, 18),
     en("Thunderhawk Hatchling", 1742, 90.0, 4.2, 16.0, 6, 19),
     en("Witchwing Slayer", 2163, 95.0, 5.0, 18.0, 6, 20),
-    en("Bristleback Geomancer", 6091, 120.0, 3.6, 20.0, 7, 21),
+    casting(en("Bristleback Geomancer", 6091, 120.0, 3.6, 20.0, 7, 21), School::Nature),
     huge(en("Stormsnout", 1537, 150.0, 4.0, 22.0, 8, 22)),
     huge(en("Barrens Kodo", 1453, 220.0, 3.2, 28.0, 12, 23)),
     en("Sunscale Scytheclaw", 4442, 160.0, 5.6, 24.0, 8, 24),
@@ -2169,8 +2278,8 @@ static ROSTERS: std::sync::LazyLock<Vec<Roster>> = std::sync::LazyLock::new(|| {
                 }
             } else {
                 Roster {
-                    enemies: ladder(m.foes, ENEMIES),
-                    bosses: ladder(m.bosses, BOSSES),
+                    enemies: ladder(m.foes, ENEMIES, true),
+                    bosses: ladder(m.bosses, BOSSES, false),
                 }
             }
         })
@@ -2183,7 +2292,9 @@ pub(crate) fn roster(map: usize) -> &'static Roster {
 
 /// Number a roster off a tuned ladder: each creature takes the health, damage and experience at
 /// its own place along it, from the ladder's running peak so no later tier comes out softer.
-fn ladder(foes: &[Foe], tuned: &[EnemyDef]) -> Vec<EnemyDef> {
+/// With `casters`, the creatures whose names make them casters or archers throw missiles
+/// ([`school_of`]); the bosses stay in melee and have their own abilities.
+fn ladder(foes: &[Foe], tuned: &[EnemyDef], casters: bool) -> Vec<EnemyDef> {
     let mut peak = (0.0f32, 0.0f32, 0.0f32);
     let rungs: Vec<(f32, f32, f32)> = tuned
         .iter()
@@ -2218,6 +2329,11 @@ fn ladder(foes: &[Foe], tuned: &[EnemyDef]) -> Vec<EnemyDef> {
                 xp: mix(lo.2, hi.2) as u32,
                 level: f.level,
                 big: f.big,
+                ranged: if casters {
+                    school_of(f.name).map(Ranged::of)
+                } else {
+                    None
+                },
             }
         })
         .collect()

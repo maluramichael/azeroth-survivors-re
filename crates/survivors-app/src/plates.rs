@@ -9,6 +9,7 @@ use bevy::prelude::*;
 
 use super::enemies::{self, Enemy};
 use super::hero::Hero;
+use super::threats::Affix;
 use super::hud::{HudFont, GOLD_TONE};
 use super::profile::Profile;
 use super::{Phase, Selection};
@@ -87,6 +88,8 @@ struct Cand {
     hp: f32,
     name: &'static str,
     level: u32,
+    /// An elite's affix, which its plate names.
+    tag: Option<&'static str>,
 }
 
 /// One bar seated this frame.
@@ -96,6 +99,7 @@ struct Seat {
     hp: f32,
     name: &'static str,
     level: u32,
+    tag: Option<&'static str>,
 }
 
 fn toggle(keys: Res<ButtonInput<KeyCode>>, mut plates: ResMut<Plates>) {
@@ -219,7 +223,7 @@ fn drive(
     hero: Query<&Transform, With<Hero>>,
     (selection, profile): (Res<Selection>, Option<Res<Profile>>),
     cams: Query<(&Camera, &Transform), With<WorldCamera>>,
-    enemies: Query<(Entity, &Enemy, &Transform)>,
+    enemies: Query<(Entity, &Enemy, &Transform, Option<&Affix>)>,
     anchor_q: (
         Query<&benilla_app::survivors_host::entities::BoneAttach>,
         Query<&benilla_world::rig_anim::RigPose>,
@@ -248,7 +252,7 @@ fn drive(
     if plates.shown {
         if let (Ok(h), Some((cam, cam_tf, viewport))) = (hero.single(), view.as_ref()) {
             cands.clear();
-            for (entity, e, tf) in &enemies {
+            for (entity, e, tf, affix) in &enemies {
                 if e.dead {
                     continue;
                 }
@@ -260,6 +264,7 @@ fn drive(
                     hp: (e.hp / e.max_hp.max(1.0)).clamp(0.0, 1.0),
                     name: e.def.name,
                     level: e.def.level,
+                    tag: affix.map(|a| a.label()),
                 });
             }
             // Bosses first, then the nearest; the horde stops at the cap.
@@ -296,6 +301,7 @@ fn drive(
                     hp: c.hp,
                     name: c.name,
                     level: c.level,
+                    tag: c.tag,
                 });
             }
         }
@@ -346,6 +352,7 @@ fn drive(
             hp,
             name,
             level,
+            tag,
         }) = seats.get(i)
         else {
             set(&mut *vis, Visibility::Hidden);
@@ -375,7 +382,7 @@ fn drive(
             set(&mut b.height, Val::Px(ph / 2.0));
             set(
                 &mut *bv,
-                if boss {
+                if boss || tag.is_some() {
                     Visibility::Inherited
                 } else {
                     Visibility::Hidden
@@ -400,10 +407,12 @@ fn drive(
             let [r, g, b, a] = con_color(my_level, level);
             set(&mut color.0, Color::srgba(r, g, b, a));
         }
-        if boss {
+        // A boss's plate names the boss; an elite's names its affix.
+        let shown = if boss { Some(name) } else { tag };
+        if let Some(shown) = shown {
             if let Ok((mut text, mut tf, _)) = texts.get_mut(slot.name) {
-                if text.0 != name {
-                    text.0 = name.to_string();
+                if text.0 != shown {
+                    text.0 = shown.to_string();
                 }
                 set(&mut tf.font_size, text_px(NAME_H * k, basis) / s);
             }
