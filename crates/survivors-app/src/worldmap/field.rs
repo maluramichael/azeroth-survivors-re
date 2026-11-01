@@ -54,8 +54,9 @@ const TICK: f32 = 0.1;
 /// The ground and what it is made of.
 #[derive(Resource, Default)]
 struct Field {
-    /// The battleground the ground was composed for ([`Selection::stage`]).
-    stage: Option<usize>,
+    /// The bounds the ground was composed for ([`crate::route::Bounds::key`]): the battleground,
+    /// and on a route the leg under way.
+    key: Option<(usize, u8)>,
     translate: Option<MinimapTranslate>,
     /// `md5translate.trs` failed to load; it is not tried again.
     translate_failed: bool,
@@ -246,6 +247,18 @@ fn showing(ui: Res<WorldMapUi>) -> bool {
     ui.open && ui.level == MapLevel::Field
 }
 
+/// The view's centre (WoW x, y), its half side and the barrier's radius (infinite where the bounds
+/// are open: no ring, nothing dark): the arena on a zone, the leg under way on a route's road.
+fn framing(bounds: &crate::route::Bounds) -> ((f32, f32), f32, f32) {
+    let [wx, wy, _] = bevy_to_wow(bounds.centre);
+    let ring = if bounds.fenced {
+        bounds.leash
+    } else {
+        f32::INFINITY
+    };
+    ((wx, wy), view_half(bounds.leash), ring)
+}
+
 /// Half the side of the view in yards: the barrier with room around it, but never a postage
 /// stamp over a small arena.
 fn view_half(leash: f32) -> f32 {
@@ -394,12 +407,13 @@ fn paint_ground(
 /// per battleground, not per opening.
 fn compose_ground(
     selection: Res<Selection>,
+    bounds: Res<crate::route::Bounds>,
     assets: Option<ResMut<WorldAssets>>,
     catalog: Option<Res<MapCatalogRes>>,
     mut field: ResMut<Field>,
     mut images: ResMut<Assets<Image>>,
 ) {
-    if field.stage == Some(selection.stage) {
+    if field.key == Some(bounds.key) {
         return;
     }
     let (Some(mut assets), Some(catalog)) = (assets, catalog) else {
@@ -426,8 +440,7 @@ fn compose_ground(
             }
         }
     }
-    let center = (def.center[0], def.center[1]);
-    let half = view_half(def.leash);
+    let (center, half, ring) = framing(&bounds);
     if let Some(translate) = &field.translate {
         let (xs, ys) = view_tiles(center, half);
         for ty in ys {
@@ -441,8 +454,8 @@ fn compose_ground(
             }
         }
     }
-    paint_ground(&mut field.base, center, half, def.leash, &field.tiles);
-    field.stage = Some(selection.stage);
+    paint_ground(&mut field.base, center, half, ring, &field.tiles);
+    field.key = Some(bounds.key);
     // Show it at once; the next tick lays the dots over it.
     let handle = field.handle(&mut images);
     if let Some(data) = images.get_mut(&handle).and_then(|i| i.data.as_mut()) {
@@ -562,7 +575,7 @@ fn dot_rgb(c: Color) -> [u8; 3] {
 #[allow(clippy::too_many_arguments)]
 fn refresh_field(
     ui: Res<WorldMapUi>,
-    selection: Res<Selection>,
+    bounds: Res<crate::route::Bounds>,
     field: Res<Field>,
     time: Res<Time<Real>>,
     mut images: ResMut<Assets<Image>>,
@@ -581,7 +594,7 @@ fn refresh_field(
         *shown = false;
         return;
     }
-    if field.stage != Some(selection.stage) {
+    if field.key != Some(bounds.key) {
         return;
     }
     let now = time.elapsed_secs();
@@ -600,9 +613,7 @@ fn refresh_field(
     }
     data.copy_from_slice(&field.base);
 
-    let def = selection.stage_def();
-    let center = (def.center[0], def.center[1]);
-    let half = view_half(def.leash);
+    let (center, half, _) = framing(&bounds);
     let to_texel = |wx: f32, wy: f32| field_uv(center, half, wx, wy) * FIELD_PX as f32;
     let hunted = log.hunted();
     let (red, yellow) = (

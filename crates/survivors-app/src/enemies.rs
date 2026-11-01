@@ -898,7 +898,11 @@ pub(super) fn drop_loot(
     }
 }
 
-fn spawn_gem(commands: &mut Commands, serial: u64, pos: Vec3, kind: GemKind) {
+/// Heals on a route's road, ahead of the hero ([`super::route`]); nothing off a route. A stub
+/// until the route's horde package fills it in (after [`drop_loot`], before [`collect_gems`]).
+pub(super) fn road_heals() {}
+
+pub(super) fn spawn_gem(commands: &mut Commands, serial: u64, pos: Vec3, kind: GemKind) {
     let (display, scale) = super::dropart::gem_look(kind);
     // Wisps and the turkey leg hover; a heap of coins lies on the ground.
     let lift = if matches!(kind, GemKind::Gold(_)) {

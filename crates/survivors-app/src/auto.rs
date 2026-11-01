@@ -145,7 +145,7 @@ pub(super) fn steer(auto: &Auto) -> Vec3 {
 pub(super) fn plan(
     time: Res<Time<Real>>,
     mut auto: ResMut<Auto>,
-    selection: Res<Selection>,
+    bounds: Res<super::route::Bounds>,
     hero: Query<&Transform, With<Hero>>,
     gems: Query<&Transform, (With<Gem>, Without<Hero>)>,
     foes: Query<(&Transform, &Enemy), Without<Hero>>,
@@ -178,9 +178,9 @@ pub(super) fn plan(
     if want == Vec3::ZERO {
         let a = time.elapsed_secs() * 0.35;
         want = Vec3::new(a.cos(), 0.0, a.sin()) * 0.5;
-        let map = selection.map_def();
-        let home = flat(super::hero::arena(map) - at);
-        if home.length() > (map.leash * 0.5).min(40.0) {
+        // Circle near the centre; on a route's open road there is none.
+        let home = flat(bounds.centre - at);
+        if bounds.fenced && home.length() > (bounds.leash * 0.5).min(40.0) {
             want += home.normalize();
         }
     }

@@ -208,10 +208,13 @@ fn goal_text(goal: Goal) -> String {
     }
 }
 
-/// The zones from easiest to hardest: by the lowest creature level, ties by index.
+/// The zones from easiest to hardest: by the lowest creature level, ties by index. A route
+/// ([`super::route`]) is no link in the chain: it opens with its zones ([`zone_lock`]).
 pub(crate) fn zone_order() -> &'static [usize] {
     static ORDER: LazyLock<Vec<usize>> = LazyLock::new(|| {
-        let mut order: Vec<usize> = (0..data::MAPS.len()).collect();
+        let mut order: Vec<usize> = (0..data::MAPS.len())
+            .filter(|&m| super::route::route_of(m).is_none())
+            .collect();
         order.sort_by_key(|&m| (zone_min_level(m), m));
         order
     });
@@ -384,6 +387,18 @@ pub(crate) fn zone_lock(profile: &Profile, class: usize, map: usize) -> ZoneLock
             level: None,
             quest: None,
         };
+    }
+    // A route is open once every zone on it is: else the first closed one says why.
+    if let Some(route) = super::route::route_of(map) {
+        return route
+            .zones()
+            .into_iter()
+            .map(|zone| zone_lock(profile, class, zone))
+            .find(ZoneLock::is_locked)
+            .unwrap_or(ZoneLock {
+                level: None,
+                quest: None,
+            });
     }
     let need = zone_min_level(map);
     ZoneLock {
@@ -845,7 +860,8 @@ mod tests {
     #[test]
     fn zones_run_easiest_first_and_each_but_the_first_has_a_quest() {
         let order = zone_order();
-        assert_eq!(order.len(), data::MAPS.len());
+        let routes = super::super::route::ROUTES.len();
+        assert_eq!(order.len(), data::MAPS.len() - routes);
         for pair in order.windows(2) {
             assert!(
                 (zone_min_level(pair[0]), pair[0]) < (zone_min_level(pair[1]), pair[1]),
@@ -1025,6 +1041,34 @@ mod tests {
                     }
                 }
             }
+        }
+    }
+
+    #[test]
+    fn routes_stay_out_of_the_zone_chain_and_open_with_their_zones() {
+        use super::super::route;
+        for r in route::ROUTES {
+            let map = map_named(r.map).expect("a route's battleground");
+            assert!(!zone_order().contains(&map), "{} in the chain", r.map);
+            assert!(zone_quest(map).is_none(), "{} has a quest", r.map);
+            // Every zone on it open: the route is too.
+            let mut p = Profile::default();
+            for c in &mut p.characters {
+                c.level = 60;
+            }
+            let zones = route::route_of(map).unwrap().zones();
+            for &z in &zones {
+                p.zones_kept.insert(data::MAPS[z].name.to_string());
+            }
+            assert!(!zone_lock(&p, 0, map).is_locked(), "{}", r.map);
+            assert!(p.zone_unlocked(0, map));
+            // The last zone closed: the route is, for the same reason.
+            let last = *zones.last().unwrap();
+            p.zones_kept.remove(data::MAPS[last].name);
+            let lock = zone_lock(&p, 0, map);
+            assert!(lock.is_locked(), "{}", r.map);
+            assert!(std::ptr::eq(lock.quest.unwrap(), zone_quest(last).unwrap()));
+            assert!(!p.zone_unlocked(0, map));
         }
     }
 

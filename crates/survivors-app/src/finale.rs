@@ -9,6 +9,7 @@
 //! prize; the run stays won either way. Past [`REAPER_AT`] Lord Kazzak hunts the hero and cannot
 //! die.
 
+use std::ops::Range;
 use std::sync::{LazyLock, OnceLock};
 
 use benilla_world::schedule::WorldStage;
@@ -174,14 +175,44 @@ pub(super) struct Plan {
     /// The roster's bosses the clock spawns, in order.
     pub timed: Vec<EnemyDef>,
     pub finale: EnemyDef,
+    /// On a route ([`super::route`]): each zone's [`data::MAPS`] index and its range in `timed`.
+    /// Empty for a zone.
+    #[allow(dead_code)] // Read by the route's horde as it lands.
+    pub segments: Vec<(usize, Range<usize>)>,
 }
 
 static PLANS: LazyLock<Vec<Plan>> = LazyLock::new(|| {
-    data::MAPS
+    // The zones first; a route waits for them.
+    let mut plans: Vec<Option<Plan>> = data::MAPS
         .iter()
         .enumerate()
-        .map(|(i, m)| build(m.name, &data::roster(i).bosses))
-        .collect()
+        .map(|(i, m)| {
+            (super::route::route_of(i).is_none()).then(|| build(m.name, &data::roster(i).bosses))
+        })
+        .collect();
+    // A route's clock spawns its zones' timed bosses in turn, and its finale is its last zone's.
+    // Read from `plans`: calling `plan` here would initialise this lock from inside itself.
+    for i in 0..plans.len() {
+        let Some(route) = super::route::route_of(i) else {
+            continue;
+        };
+        let zones = route.zones();
+        let mut timed = Vec::new();
+        let mut segments = Vec::new();
+        for &zone in &zones {
+            let part = plans[zone].as_ref().expect("a route's zone is no route");
+            segments.push((zone, timed.len()..timed.len() + part.timed.len()));
+            timed.extend_from_slice(&part.timed);
+        }
+        let last = zones.last().copied().expect("a route has zones");
+        let finale = plans[last].as_ref().expect("a route's zone is no route").finale;
+        plans[i] = Some(Plan {
+            timed,
+            finale,
+            segments,
+        });
+    }
+    plans.into_iter().map(|p| p.expect("every plan built")).collect()
 });
 
 /// The plan for the battleground at `map`.
@@ -221,7 +252,11 @@ fn build(map: &str, bosses: &[EnemyDef]) -> Plan {
         scale: look.scale * FINALE_SIZE,
         ..look
     };
-    Plan { timed, finale }
+    Plan {
+        timed,
+        finale,
+        segments: Vec::new(),
+    }
 }
 
 /// When the finale comes; `WOW_SURVIVORS_FINALE=<seconds>` moves it, to photograph it.
@@ -598,6 +633,34 @@ mod tests {
         assert!(p.timed.iter().all(|b| b.name != "Hogger"));
         assert_eq!(p.finale.name, "Hogger");
         assert_eq!(p.finale.hp, 100.0 * FINALE_HP);
+    }
+
+    #[test]
+    fn a_route_plan_ends_on_its_last_zones_finale() {
+        let mut routes = 0;
+        for map in 0..data::MAPS.len() {
+            let Some(route) = super::super::route::route_of(map) else {
+                assert!(plan(map).segments.is_empty());
+                continue;
+            };
+            routes += 1;
+            let p = plan(map);
+            let zones = route.zones();
+            let last = *zones.last().unwrap();
+            assert_eq!(p.finale.name, plan(last).finale.name);
+            assert_eq!(p.finale.hp, plan(last).finale.hp);
+            let mut at = 0;
+            for ((zone, range), &want) in p.segments.iter().zip(&zones) {
+                assert_eq!(*zone, want);
+                assert_eq!(range.start, at, "no gaps");
+                at = range.end;
+                let names: Vec<_> = p.timed[range.clone()].iter().map(|b| b.name).collect();
+                let own: Vec<_> = plan(want).timed.iter().map(|b| b.name).collect();
+                assert_eq!(names, own);
+            }
+            assert_eq!(at, p.timed.len());
+        }
+        assert!(routes > 0);
     }
 
     #[test]

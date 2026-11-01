@@ -115,6 +115,7 @@ pub(super) fn plugin(app: &mut App) {
 // --- The pure parts. ---
 
 /// A pin for every battleground on continent `continent`, as `(data::MAPS index, page fraction)`.
+/// A route ([`crate::route`]) has none: it starts in a zone that has one.
 fn pins(atlas: &Atlas, continent: u32) -> Vec<(usize, Vec2)> {
     let Some((_, page)) = atlas.continent(continent) else {
         return Vec::new();
@@ -122,17 +123,21 @@ fn pins(atlas: &Atlas, continent: u32) -> Vec<(usize, Vec2)> {
     data::MAPS
         .iter()
         .enumerate()
-        .filter(|(_, def)| def.map == continent)
+        .filter(|&(i, def)| def.map == continent && crate::route::route_of(i).is_none())
         .map(|(i, def)| (i, atlas::project(page, def.center[0], def.center[1])))
         .collect()
 }
 
 /// The zone (`AreaTable` id) each battleground's page shows; `None` for one that only has the
-/// continent's page.
+/// continent's page, and for a route, which crosses several.
 fn zone_table(atlas: &Atlas) -> Vec<Option<u32>> {
     data::MAPS
         .iter()
-        .map(|def| {
+        .enumerate()
+        .map(|(i, def)| {
+            if crate::route::route_of(i).is_some() {
+                return None;
+            }
             atlas
                 .page_for(def, None)
                 .map(|(_, page)| page.area_id)
@@ -1031,7 +1036,8 @@ mod tests {
                 listed += 1;
             }
         }
-        assert_eq!(listed, data::MAPS.len(), "a battleground lacks a pin");
+        let routes = crate::route::ROUTES.len();
+        assert_eq!(listed, data::MAPS.len() - routes, "a battleground lacks a pin");
         // Two battlegrounds in one zone would make the zone hover name only the first.
         let zones = zone_table(&atlas);
         for (i, def) in data::MAPS.iter().enumerate() {

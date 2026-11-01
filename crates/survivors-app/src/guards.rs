@@ -487,7 +487,8 @@ fn plant_posts(
     world: WorldPoint,
     hero: Query<(), With<Hero>>,
 ) {
-    if hero.is_empty() {
+    // A route ([`super::route`]) has no arena for the posts to stand round.
+    if hero.is_empty() || super::route::route_of(selection.map).is_some() {
         return;
     }
     let map = selection.map_def();

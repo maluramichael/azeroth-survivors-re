@@ -659,6 +659,7 @@ fn fill_zone(
     ui: Res<WorldMapUi>,
     mut win: ResMut<RunMap>,
     selection: Res<Selection>,
+    bounds: Res<crate::route::Bounds>,
     fonts: Option<Res<KitFonts>>,
     assets: Option<ResMut<WorldAssets>>,
     mut images: ResMut<Assets<Image>>,
@@ -717,7 +718,13 @@ fn fill_zone(
     }
 
     let size = PAGE * PAGE_SCALE;
-    let (center, reach) = circle_on_page(page, def.center, def.leash, size);
+    // The bounds' circle: the arena on a zone, the leg under way on a route's road.
+    let (center, reach) = circle_on_page(
+        page,
+        bevy_to_wow(bounds.centre),
+        bounds.leash,
+        size,
+    );
     let skull = cell_image(assets, images, SKULL_TEXTURE, [0.0, 1.0, 0.0, 1.0]);
     let party = cell_image(assets, images, PARTY_ICON, [0.0, 1.0, 0.0, 1.0]);
     let arrow = cell_image(assets, images, ARROW_TEXTURE, [0.0, 1.0, 0.0, 1.0]);

@@ -473,6 +473,11 @@ mod tests {
     #[test]
     fn every_zone_has_a_bonus_boss() {
         for (map, m) in data::MAPS.iter().enumerate() {
+            // A route has no rares and no portal of its own.
+            if super::super::route::route_of(map).is_some() {
+                assert!(rares_of(map).is_empty() && bonus_of(map).is_none(), "{}", m.name);
+                continue;
+            }
             let bonus = bonus_for(map);
             assert_eq!(bonus.len(), 1, "{}", m.name);
             assert!(bonus_loot(map).is_some(), "{}", m.name);
@@ -527,7 +532,10 @@ mod tests {
     fn the_bonus_outweighs_the_finale() {
         for (map, m) in data::MAPS.iter().enumerate() {
             let finale = &finale::plan(map).finale;
-            let bonus = bonus_of(map).unwrap();
+            let Some(bonus) = bonus_of(map) else {
+                assert!(super::super::route::route_of(map).is_some(), "{}", m.name);
+                continue;
+            };
             assert!(bonus.hp >= finale.hp * BONUS_HP, "{}", m.name);
             assert!(bonus.damage > finale.damage, "{}", m.name);
             assert!(bonus.xp > finale.xp, "{}", m.name);
@@ -538,7 +546,7 @@ mod tests {
 
     #[test]
     fn the_bonus_loot_is_epic() {
-        for map in 0..data::MAPS.len() {
+        for map in (0..data::MAPS.len()).filter(|&m| super::super::route::route_of(m).is_none()) {
             assert_eq!(bonus_loot(map).unwrap().quality, Quality::Epic);
         }
     }

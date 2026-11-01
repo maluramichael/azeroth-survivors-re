@@ -1863,13 +1863,22 @@ mod tests {
     fn every_zone_has_a_few_shooters_among_its_horde_and_none_among_its_bosses() {
         for map in 0..super::super::data::MAPS.len() {
             let roster = super::super::data::roster(map);
-            let shooters = roster.enemies.iter().filter(|e| e.ranged.is_some()).count();
-            assert!(
-                (1..=6).contains(&shooters),
-                "{}: {shooters} shooters of {}",
-                super::super::data::MAPS[map].name,
-                roster.enemies.len()
-            );
+            // A route's roster is its zones' one after the other: each counts on its own.
+            let parts: Vec<_> = if roster.segments.is_empty() {
+                std::iter::once(0..roster.enemies.len()).collect()
+            } else {
+                roster.segments.iter().map(|s| s.enemies.clone()).collect()
+            };
+            for part in parts {
+                let horde = &roster.enemies[part];
+                let shooters = horde.iter().filter(|e| e.ranged.is_some()).count();
+                assert!(
+                    (1..=6).contains(&shooters),
+                    "{}: {shooters} shooters of {}",
+                    super::super::data::MAPS[map].name,
+                    horde.len()
+                );
+            }
             assert!(roster.bosses.iter().all(|b| b.ranged.is_none()));
         }
     }

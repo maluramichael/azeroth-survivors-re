@@ -1,6 +1,7 @@
 //! The mode's tables: classes, abilities, passives, enemies and the wave clock. Spell ids name
 //! `Spell.dbc` rows only for their icon, name and visual chain; every number here is the mode's.
 
+use std::ops::Range;
 use std::sync::LazyLock;
 
 /// A weapon on the hero's virtual item slots: `(slot, display, class, subclass, material, inv,
@@ -2260,34 +2261,93 @@ pub(crate) static MAPS: &[MapDef] = &[
             foe("Kel'Thuzad", 15945, 63, 4.4, 2.1),
         ],
     },
+    // A route, not a zone ([`super::route`]): its horde and bosses are its zones' in turn. Last
+    // in the list, so the indices saved before it hold.
+    MapDef {
+        name: "Undying Run",
+        zone: "Eastern Kingdoms",
+        map: 0,
+        // The start: Westfall's centre.
+        center: [-10252.2, 1483.5, 41.6],
+        // The radius of the end ring ([`super::route::END_RING`]).
+        leash: 40.0,
+        victory: "You crossed the Eastern Kingdoms.",
+        foes: &[],
+        bosses: &[],
+    },
 ];
 
 /// A battleground's horde and bosses with their numbers.
+#[derive(Default)]
 pub(crate) struct Roster {
     pub enemies: Vec<EnemyDef>,
     pub bosses: Vec<EnemyDef>,
+    /// On a route ([`super::route`]), where each zone's part lies; empty for a zone.
+    pub segments: Vec<Segment>,
 }
 
-static ROSTERS: std::sync::LazyLock<Vec<Roster>> = std::sync::LazyLock::new(|| {
-    MAPS.iter()
-        .map(|m| {
-            if m.foes.is_empty() {
+/// One zone's part of a route's roster: its [`MAPS`] index and its ranges in the route's
+/// `enemies` and `bosses`.
+#[allow(dead_code)] // Read by the route's horde as it lands.
+pub(crate) struct Segment {
+    pub map: usize,
+    pub enemies: Range<usize>,
+    pub bosses: Range<usize>,
+}
+
+static ROSTERS: LazyLock<Vec<Roster>> = LazyLock::new(|| {
+    // The zones first; a route is left empty here.
+    let mut all: Vec<Roster> = MAPS
+        .iter()
+        .enumerate()
+        .map(|(i, m)| {
+            if super::route::route_of(i).is_some() {
+                Roster::default()
+            } else if m.foes.is_empty() {
                 Roster {
                     enemies: ENEMIES.to_vec(),
                     bosses: BOSSES.to_vec(),
+                    segments: Vec::new(),
                 }
             } else {
                 Roster {
                     enemies: ladder(m.foes, ENEMIES, true),
                     bosses: ladder(m.bosses, BOSSES, false),
+                    segments: Vec::new(),
                 }
             }
         })
-        .collect()
+        .collect();
+    // Then each route, from copies of its zones' numbered creatures. Read from `all`: calling
+    // `roster` here would initialise this lock from inside itself.
+    for i in 0..MAPS.len() {
+        let Some(route) = super::route::route_of(i) else {
+            continue;
+        };
+        let mut joined = Roster::default();
+        for zone in route.zones() {
+            let part = &all[zone];
+            joined.segments.push(Segment {
+                map: zone,
+                enemies: joined.enemies.len()..joined.enemies.len() + part.enemies.len(),
+                bosses: joined.bosses.len()..joined.bosses.len() + part.bosses.len(),
+            });
+            joined.enemies.extend_from_slice(&part.enemies);
+            joined.bosses.extend_from_slice(&part.bosses);
+        }
+        all[i] = joined;
+    }
+    all
 });
 
 pub(crate) fn roster(map: usize) -> &'static Roster {
     &ROSTERS[map.min(ROSTERS.len() - 1)]
+}
+
+/// Zone `zone`'s part of battleground `map`'s roster, when `map` is a route through it.
+#[allow(dead_code)] // Read by the route's horde as it lands.
+pub(crate) fn segment(map: usize, zone: usize) -> Option<&'static Segment> {
+    roster(map).segments.iter().find(|s| s.map == zone)
 }
 
 /// The creatures a battleground has beyond its roster, in this fixed order: the adds its boss
@@ -2297,6 +2357,11 @@ pub(crate) fn roster(map: usize) -> &'static Roster {
 static EXTRAS: LazyLock<Vec<Vec<EnemyDef>>> = LazyLock::new(|| {
     (0..MAPS.len())
         .map(|map| {
+            // A route's boss scripts call the adds of the zone each boss comes from; it has no
+            // rares and no bonus boss of its own.
+            if let Some(route) = super::route::route_of(map) {
+                return route.zones().into_iter().flat_map(super::bosses::adds_for).collect();
+            }
             let mut all = super::bosses::adds_for(map);
             all.extend(super::rares::rares_for(map));
             all.extend(super::rares::bonus_for(map));
@@ -2392,5 +2457,32 @@ mod tests {
             assert!(mid.hp >= first.hp && mid.hp <= last.hp, "{}", def.name);
             assert!(mid.ranged.is_none());
         }
+    }
+
+    #[test]
+    fn a_route_roster_is_its_zones_in_order() {
+        let mut routes = 0;
+        for (map, def) in MAPS.iter().enumerate() {
+            let Some(route) = super::super::route::route_of(map) else {
+                assert!(roster(map).segments.is_empty(), "{}", def.name);
+                continue;
+            };
+            routes += 1;
+            let r = roster(map);
+            let zones = route.zones();
+            assert_eq!(r.segments.len(), zones.len());
+            let (mut enemies, mut bosses) = (0, 0);
+            for (seg, &zone) in r.segments.iter().zip(&zones) {
+                assert_eq!(seg.map, zone);
+                assert_eq!((seg.enemies.start, seg.bosses.start), (enemies, bosses), "no gaps");
+                (enemies, bosses) = (seg.enemies.end, seg.bosses.end);
+                let names = |l: &[EnemyDef]| l.iter().map(|d| (d.name, d.hp)).collect::<Vec<_>>();
+                assert_eq!(names(&r.enemies[seg.enemies.clone()]), names(&roster(zone).enemies));
+                assert_eq!(names(&r.bosses[seg.bosses.clone()]), names(&roster(zone).bosses));
+                assert!(std::ptr::eq(segment(map, zone).unwrap(), seg));
+            }
+            assert_eq!((enemies, bosses), (r.enemies.len(), r.bosses.len()));
+        }
+        assert!(routes > 0);
     }
 }

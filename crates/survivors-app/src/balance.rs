@@ -222,6 +222,8 @@ fn sim_app(setup: Setup) -> App {
             ..Selection::default()
         })
         .init_resource::<NetRole>()
+        .insert_resource(super::route::bounds_for(setup.map, &super::route::RouteRun::default()))
+        .init_resource::<super::route::RouteRun>()
         .init_resource::<Tally>()
         .init_resource::<super::GuestMail>()
         .init_resource::<enemies::Spawner>()
@@ -253,6 +255,7 @@ fn sim_app(setup: Setup) -> App {
                 // The fight, as the game chains it.
                 (
                     clear_fallen,
+                    super::route::update_bounds,
                     auto::plan,
                     fly,
                     hero::mark_picking,
@@ -340,13 +343,14 @@ fn clear_fallen(mut commands: Commands, fallen: Query<(Entity, Ref<Dying>)>) {
     }
 }
 
-/// Walk the hero where the pilot steers, held inside the leash; the flat world has nothing to
-/// collide with.
+/// Walk the hero where the pilot steers, held inside the battleground's bounds; the flat world
+/// has nothing to collide with.
 fn fly(
     time: Res<Time>,
     run: Res<Run>,
     pilot: Res<auto::Auto>,
     selection: Res<Selection>,
+    bounds: Res<super::route::Bounds>,
     dodger: threats::Dodger,
     mut hero: Query<&mut Transform, With<Hero>>,
 ) {
@@ -357,16 +361,10 @@ fn fly(
         return;
     }
     let dir = dodger.steer(tf.translation, auto::steer(&pilot));
-    let mut p = tf.translation + dir * run.stats().speed * run.haste_mult() * time.delta_secs();
-    let map = selection.stage_def();
-    let centre = hero::arena(map);
-    let off = flat(p - centre);
-    if off.length() > map.leash {
-        let held = centre + off.normalize() * map.leash;
-        p.x = held.x;
-        p.z = held.z;
-    }
-    tf.translation = p;
+    let travel = super::route::travel_speed(&selection);
+    let p = tf.translation
+        + dir * run.stats().speed * run.haste_mult() * travel * time.delta_secs();
+    tf.translation = bounds.hold(p);
 }
 
 /// Take a random card from the hand, as an automated run does.

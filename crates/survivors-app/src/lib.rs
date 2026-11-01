@@ -62,6 +62,9 @@ mod quests;
 mod questlog;
 mod races;
 mod rares;
+mod route;
+mod route_hud;
+mod route_run;
 #[cfg(not(target_arch = "wasm32"))]
 mod shots;
 mod records;
@@ -98,6 +101,7 @@ impl Plugin for SurvivorsPlugin {
             .add_plugins((modding::plugin, questlog::plugin, threats::plugin, framerate::plugin))
             .add_plugins((antialias::plugin, gfxpresets::plugin, vfx::plugin))
             .add_plugins((bosses::plugin, bossbar::plugin, guards::plugin, dropart::plugin, rares::plugin))
+            .add_plugins((route::plugin, route_run::plugin, route_hud::plugin))
             .add_plugins((races::plugin, records::plugin, surge::plugin, enrage::plugin, prefs::plugin, textfield::plugin))
             .add_plugins((
                 trainer::plugin,
@@ -164,6 +168,7 @@ impl Plugin for SurvivorsPlugin {
                     abilities::apply_hits,
                     enemies::tick_marks,
                     enemies::drop_loot,
+                    enemies::road_heals,
                     enemies::collect_gems,
                     hero::hero_vitals,
                     hero::revive,
@@ -433,6 +438,9 @@ pub(crate) struct Run {
     /// A bonus fight past the finale is on ([`rares`]): the bell at [`data::VICTORY_SECS`] waits
     /// for it.
     pub encore: bool,
+    /// The share of a route walked, 0 to 1 ([`route`]); 0 off a route.
+    #[allow(dead_code)] // Read by the route's packages as they land.
+    pub route_frac: f32,
     /// This machine's hero.
     pub me: HeroState,
 }
@@ -511,6 +519,7 @@ impl Default for Run {
             host_gone: false,
             abandoned: false,
             encore: false,
+            route_frac: 0.0,
             me: HeroState::default(),
         }
     }
@@ -623,6 +632,14 @@ impl HeroState {
 }
 
 impl Run {
+    /// How far the run is, in seconds of the clock, for what grows with it (the horde's numbers
+    /// and size, the elites): the clock, or on a route the share walked times
+    /// [`data::VICTORY_SECS`] when that is further. Off a route it is the clock.
+    #[allow(dead_code)] // Read by the route's horde as it lands.
+    pub fn pace(&self) -> f32 {
+        self.elapsed.max(self.route_frac * data::VICTORY_SECS)
+    }
+
     /// A banner for the whole party: a boss coming or falling, the ring closing in.
     pub fn announce(&mut self, text: String, secs: f32) {
         self.party_banner = (self.party_banner.0.wrapping_add(1), text.clone());

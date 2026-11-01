@@ -334,8 +334,9 @@ fn collide_step(
     feet + Vec3::new(out.position.x - from.x, 0.0, out.position.z - from.z)
 }
 
-/// WASD over the terrain within the battleground's leash, and the streaming focus on the hero. The
-/// walk is blocked by the world's colliders ([`collide_step`]), auto mode's too.
+/// WASD over the terrain within the battleground's [`super::route::Bounds`], and the streaming
+/// focus on the hero. The walk is blocked by the world's colliders ([`collide_step`]), auto mode's
+/// too.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn drive_hero(
     time: Res<Time>,
@@ -343,6 +344,7 @@ pub(super) fn drive_hero(
     phase: Res<State<Phase>>,
     run: Res<Run>,
     selection: Res<Selection>,
+    bounds: Res<super::route::Bounds>,
     rig: Res<CamRig>,
     world: WorldPoint,
     collision: benilla_world::collision::WorldCollision,
@@ -386,7 +388,8 @@ pub(super) fn drive_hero(
             let mut pos = tf.translation;
             if dir != Vec3::ZERO && dt > 0.0 {
                 let dir = dir.normalize();
-                let speed = run.stats().speed * run.haste_mult();
+                let speed =
+                    run.stats().speed * run.haste_mult() * super::route::travel_speed(&selection);
                 let body = body.get_or_insert_with(|| {
                     avian3d::prelude::Collider::capsule(
                         BODY_RADIUS,
@@ -403,17 +406,8 @@ pub(super) fn drive_hero(
                 mv.speed = 0.0;
                 mv.flags = 0;
             }
-            let map = selection.stage_def();
-            let center = arena(map);
-            let off = flat(pos - center);
-            if off.length() > map.leash * 2.0 {
-                // Just entered another battleground: start at its centre.
-                pos = center;
-            } else if off.length() > map.leash {
-                let held = center + off.normalize() * map.leash;
-                pos.x = held.x;
-                pos.z = held.z;
-            }
+            // Just entered another battleground: start at its centre; else stay inside.
+            pos = bounds.hold(pos);
             let ground = world.terrain_height_under(pos).unwrap_or(pos.y);
             let playing = *phase.get() == Phase::Playing && run.dead_t.is_none();
             // Space hops: lift off the terrain, then gravity brings the hero back down.
@@ -700,6 +694,7 @@ const DOWN_SECS: f32 = 3.0;
 /// [`DOWN_SECS`].
 pub(super) fn hero_vitals(
     time: Res<Time>,
+    selection: Res<Selection>,
     mut run: ResMut<Run>,
     mut next: ResMut<NextState<Phase>>,
     mut hero: Query<(Entity, &Guid, &mut ObjectStore, &mut Marks), With<Hero>>,
@@ -773,8 +768,12 @@ pub(super) fn hero_vitals(
             return;
         }
     }
-    // A bonus fight past the finale ([`super::Run::encore`]) holds the bell until it ends.
-    if run.elapsed >= data::VICTORY_SECS && !run.encore {
+    // A bonus fight past the finale ([`super::Run::encore`]) holds the bell until it ends. A
+    // route has no bell: it is won at its end ([`super::route`]).
+    if run.elapsed >= data::VICTORY_SECS
+        && !run.encore
+        && super::route::route_of(selection.stage).is_none()
+    {
         run.won = true;
         // A last flourish before the results.
         fx.cast(entity, 642, &[entity], None);

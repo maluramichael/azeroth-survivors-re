@@ -680,20 +680,30 @@ fn run_over(run: Res<Run>, mut over: MessageWriter<ToClients<RunOver>>) {
     });
 }
 
-/// A guest's walk moves its puppet, if the report is sane ([`valid_move`]).
+/// How far from the host's hero a guest may report itself while the bounds are open (a route's
+/// road), yards.
+const OPEN_REACH: f32 = 1500.0;
+
+/// A guest's walk moves its puppet, if the report is sane ([`valid_move`]): inside the bounds,
+/// or near the host's hero while they are open.
 fn apply_moves(
     mut moves: MessageReader<FromClient<MoveInput>>,
     session: Res<Session>,
-    selection: Res<Selection>,
+    bounds: Res<crate::route::Bounds>,
+    host: Query<&Transform, (With<Hero>, Without<Peer>)>,
     mut puppets: Query<(&Peer, &mut Transform, &mut MovementState, &mut HeroState)>,
 ) {
-    let map = selection.stage_def();
-    let centre = hero::arena(map);
+    let (centre, leash) = if bounds.fenced {
+        (bounds.centre, bounds.leash)
+    } else {
+        let at = host.single().map_or(bounds.centre, |t| t.translation);
+        (at, OPEN_REACH - SLACK)
+    };
     for m in moves.read() {
         let ClientId::Client(client) = m.client_id else {
             continue;
         };
-        if !valid_move(&m.message, centre, map.leash) {
+        if !valid_move(&m.message, centre, leash) {
             continue;
         }
         let Some(guest) = session.guests.iter().find(|g| g.client == client) else {

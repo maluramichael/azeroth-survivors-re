@@ -20,7 +20,7 @@ use bevy::mesh::{Indices, PrimitiveTopology, VertexAttributeValues};
 use bevy::prelude::*;
 
 use super::enemies::{self, Enemy};
-use super::hero::{arena, CamRig, Hero};
+use super::hero::{CamRig, Hero};
 use super::kit::{self, KitFonts};
 use super::units::flat;
 use super::{data, NetRole, Phase, Run, Selection};
@@ -199,7 +199,7 @@ fn keys(
     keys: Res<ButtonInput<KeyCode>>,
     mut mode: ResMut<DebugMode>,
     phase: Res<State<Phase>>,
-    selection: Res<Selection>,
+    bounds: Res<super::route::Bounds>,
     rig: Res<CamRig>,
     mut commands: Commands,
     mut hero: Query<&mut Transform, With<Hero>>,
@@ -274,10 +274,9 @@ fn keys(
     }
     if keys.just_pressed(KeyCode::F9) {
         if let Ok(mut tf) = hero.single_mut() {
-            let map = selection.stage_def();
             let (sy, cy) = rig.yaw.sin_cos();
             let ahead = Vec3::new(-sy, 0.0, -cy);
-            let to = arena(map) + ahead * (map.leash - EDGE_MARGIN).max(0.0);
+            let to = bounds.centre + ahead * (bounds.leash - EDGE_MARGIN).max(0.0);
             // `drive_hero` sets the height from the ground under it.
             tf.translation.x = to.x;
             tf.translation.z = to.z;
@@ -294,6 +293,7 @@ fn show_text(
     fonts: Option<Res<KitFonts>>,
     run: Res<Run>,
     selection: Res<Selection>,
+    bounds: Res<super::route::Bounds>,
     hero: Query<&Transform, With<Hero>>,
     foes: Query<&Enemy>,
     mut panel: Query<(&mut Text, &mut Node), With<DebugText>>,
@@ -336,7 +336,7 @@ fn show_text(
         let (pos, from_centre) = hero.single().map_or(([0.0; 3], 0.0), |tf| {
             (
                 benilla_assets::coords::bevy_to_wow(tf.translation),
-                flat(tf.translation - arena(map)).length(),
+                flat(tf.translation - bounds.centre).length(),
             )
         });
         let alive = foes.iter().filter(|e| !e.dead).count();
@@ -366,7 +366,7 @@ fn show_text(
             pos[1],
             pos[2],
             from_centre,
-            map.leash,
+            bounds.leash,
             t / 60,
             t % 60,
             run.level,
@@ -390,14 +390,15 @@ const RING_LIFT: f32 = 0.1;
 
 /// The rings, in their drawing order: around the hero `true`, else around the arena centre;
 /// their radius; their colour (linear RGBA).
-fn rings(map: &data::MapDef) -> [(bool, f32, [f32; 4]); 6] {
+fn rings(bounds: &super::route::Bounds) -> [(bool, f32, [f32; 4]); 6] {
     [
         (true, enemies::SPAWN_CLEAR, [1.0, 1.0, 1.0, 0.6]),
         (true, enemies::RING_RADIUS, [1.0, 0.1, 0.9, 0.75]),
         (true, enemies::BOSS_RADIUS, [1.0, 0.08, 0.05, 0.7]),
         (true, enemies::SPAWN_NEAR, [1.0, 0.85, 0.1, 0.7]),
         (true, enemies::SPAWN_FAR, [1.0, 0.85, 0.1, 0.7]),
-        (false, map.leash, [0.15, 0.6, 1.0, 0.8]),
+        // Open bounds have no edge: a ring of no size.
+        (false, if bounds.fenced { bounds.leash } else { 0.0 }, [0.15, 0.6, 1.0, 0.8]),
     ]
 }
 
@@ -440,15 +441,14 @@ fn show_rings(
     mut commands: Commands,
     mode: Res<DebugMode>,
     phase: Res<State<Phase>>,
-    selection: Res<Selection>,
+    bounds: Res<super::route::Bounds>,
     hero: Query<&Transform, (With<Hero>, Without<DebugRings>)>,
     mut shown: Query<(&Mesh3d, &mut Visibility), With<DebugRings>>,
     world: WorldPoint,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    let map = selection.stage_def();
-    let rings = rings(map);
+    let rings = rings(&bounds);
     let Ok((mesh, mut vis)) = shown.single_mut() else {
         let colors: Vec<[f32; 4]> = rings.iter().map(|r| r.2).collect();
         commands.spawn((
@@ -489,7 +489,7 @@ fn show_rings(
     else {
         return;
     };
-    let centre = arena(map);
+    let centre = bounds.centre;
     let per = (RING_COLUMNS + 1) * 2;
     for (r, (on_hero, radius, _)) in rings.iter().enumerate() {
         let at = if *on_hero { hero } else { centre };

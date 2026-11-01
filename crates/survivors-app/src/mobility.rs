@@ -182,7 +182,7 @@ pub(super) fn cast_mobility(
     world: WorldPoint,
     mut hero: Query<(Entity, &mut Transform), With<Hero>>,
     mut enemies: Query<(Entity, &Transform, &mut Enemy), Without<Hero>>,
-    selection: Res<super::Selection>,
+    bounds: Res<super::route::Bounds>,
     aim: Res<hero::AimPoint>,
     mut fx: Fx,
 ) {
@@ -207,17 +207,8 @@ pub(super) fn cast_mobility(
     // Aimed at the cursor where there is one, else straight ahead.
     let cursor = aim.0.filter(|a| flat(*a - pos).length() > 0.5);
     let toward = cursor.map_or(facing, |a| flat(a - pos).normalize());
-    // Keep any jump inside the battleground's leash.
-    let map = selection.map_def();
-    let center = hero::arena(map);
-    let leash = |p: Vec3| {
-        let off = flat(p - center);
-        if off.length() > map.leash {
-            center + off.normalize() * map.leash
-        } else {
-            p
-        }
-    };
+    // Keep any jump inside the battleground's bounds.
+    let leash = |p: Vec3| bounds.clamp(p);
     let ground = |p: Vec3| world.terrain_height_under(p).unwrap_or(p.y);
     match def.kind {
         Move::Blink(yd) => {
