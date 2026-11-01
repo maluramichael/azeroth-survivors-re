@@ -20,6 +20,12 @@ benilla-formats = { path = "../benilla-formats", default-features = false }
 survivors-app = { path = "../survivors-app", default-features = false }
 clap.workspace = true
 
+# The Windows player build (`player.rs`): Velopack installs and updates it from the GitHub
+# releases, rfd asks for the WoW data folder. Neither is compiled anywhere else.
+[target.'cfg(windows)'.dependencies]
+velopack = "1.2.161"
+rfd = { version = "0.17.2", default-features = false }
+
 [build-dependencies]
 benilla-buildstamp = { path = "../benilla-buildstamp" }
 

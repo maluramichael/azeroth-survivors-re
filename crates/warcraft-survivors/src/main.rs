@@ -1,6 +1,12 @@
 //! The `warcraft-survivors` launcher: the command line, the install check, then the build stamp
 //! handed to the survivors mode.
 
+// The Windows player build has no console; its messages are dialogs (`player.rs`).
+#![cfg_attr(all(windows, not(feature = "dev")), windows_subsystem = "windows")]
+
+#[cfg(all(windows, not(feature = "dev")))]
+mod player;
+
 use std::path::PathBuf;
 
 use benilla_app::{AppExit, BuildId};
@@ -157,6 +163,10 @@ fn prints_and_exits() -> bool {
 }
 
 fn main() -> AppExit {
+    // Velopack's install and update hooks come before everything, the command line included.
+    #[cfg(all(windows, not(feature = "dev")))]
+    player::start();
+
     let cli = Cli::parse();
 
     // Nothing else runs yet, so setting the environment here races no other thread.
@@ -196,6 +206,17 @@ fn main() -> AppExit {
         if let Some(value) = value {
             std::env::set_var(var, value);
         }
+    }
+
+    // The Windows player build: its state in AppData, the data folder asked for once and
+    // remembered, and a newer release fetched in the background (`player.rs`).
+    #[cfg(all(windows, not(feature = "dev")))]
+    {
+        player::use_appdata();
+        if !prints_and_exits() && !player::find_data() {
+            return AppExit::error();
+        }
+        player::check_for_updates();
     }
 
     // The client starts without an install and only logs it, which leaves an empty world; the

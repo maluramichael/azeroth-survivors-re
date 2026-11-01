@@ -1,0 +1,78 @@
+# The Windows player build, on every push to `features`: warcraft-survivors without `dev`, packed
+# by Velopack (a Setup.exe, a portable zip and the update packages) and published as a GitHub
+# release. An installed copy looks for a newer release at start, downloads it in the background and
+# installs it at the next start (crates/warcraft-survivors/src/player.rs).
+#
+# No Blizzard content is packed: the game asks for the player's own WoW 1.12.1 Data folder.
+name: windows-release
+
+on:
+  push:
+    branches: [features]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# One release at a time, in push order: a version number must never be overtaken.
+concurrency:
+  group: windows-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    # Only here: a fork of this repository publishes nothing.
+    if: github.repository == 'maluramichael/azeroth-survivors-re'
+    runs-on: windows-latest
+    timeout-minutes: 180
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_INCREMENTAL: 0
+      REPO_URL: ${{ github.server_url }}/${{ github.repository }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The build stamp runs `git describe --tags` and reads the commit date.
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Toolchain
+        run: |
+          rustup toolchain install
+          rustc -V
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: windows-release
+      # The player build: no `dev` (no instruments, no source path stamped in, and the Windows
+      # player code in player.rs), co-op included.
+      - name: Build
+        run: cargo build --release -p warcraft-survivors --no-default-features --features coop
+      # The workspace's major.minor and this workflow's run number: 0.2.41, rising with every run.
+      - name: Version
+        id: ver
+        run: |
+          $m = (Select-String -Path Cargo.toml -Pattern '^version = "(\d+)\.(\d+)\.\d+"' | Select-Object -First 1).Matches[0]
+          $v = "$($m.Groups[1].Value).$($m.Groups[2].Value).${{ github.run_number }}"
+          "version=$v" >> $env:GITHUB_OUTPUT
+          "version: $v"
+      # The same version as the `velopack` crate in crates/warcraft-survivors/Cargo.toml.
+      - name: Velopack
+        run: dotnet tool install vpk --version 1.2.161 --tool-path tools
+      - name: Files
+        run: |
+          New-Item -ItemType Directory -Force publish | Out-Null
+          Copy-Item target\release\warcraft-survivors.exe, LICENSE-MIT, LICENSE-APACHE, CONTROLS.md publish\
+          Get-ChildItem publish | Format-Table Name, Length
+      # The last release, so the pack can make a delta update from it; none yet on the first run.
+      - name: Last release
+        continue-on-error: true
+        run: tools\vpk download github --repoUrl $env:REPO_URL --token ${{ secrets.GITHUB_TOKEN }} -o Releases
+      - name: Pack
+        run: >-
+          tools\vpk pack -u WarcraftSurvivors -v ${{ steps.ver.outputs.version }} -p publish
+          -e warcraft-survivors.exe --packTitle "Warcraft Survivors" --packAuthors "Michael Malura"
+          -o Releases
+      - name: Publish
+        run: >-
+          tools\vpk upload github --repoUrl $env:REPO_URL --token ${{ secrets.GITHUB_TOKEN }}
+          -o Releases --publish --releaseName "Warcraft Survivors ${{ steps.ver.outputs.version }}"
+          --tag v${{ steps.ver.outputs.version }} --targetCommitish ${{ github.sha }}
