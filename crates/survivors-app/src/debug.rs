@@ -8,7 +8,8 @@
 //!
 //! The keys, debug mode only: F5 holds the waves and the clock, F6 clears the field, F7 toggles
 //! god mode, F8 the overlay, F9 puts the hero at the edge the camera looks at, F10 steps MSAA and
-//! F11 the anti-aliasing (FXAA, SMAA) live.
+//! F11 the anti-aliasing (FXAA, SMAA) live; F3 drops the finale ([`super::finale`]) and F4 jumps
+//! to a guard post ([`super::guards`]).
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -91,7 +92,7 @@ pub(super) fn plugin(app: &mut App) {
         return;
     }
     GOD.store(true, Ordering::Relaxed);
-    info!("survivors debug: on (F5 waves, F6 clear, F7 god mode, F8 overlay, F9 to the edge, F10 MSAA, F11 AA)");
+    info!("survivors debug: on (F5 waves, F6 clear, F7 god mode, F8 overlay, F9 to the edge, F3 drop the finale, F4 to a post, F10 MSAA, F11 AA)");
     app.insert_resource(DebugMode {
         started: false,
         ready: 0.0,
@@ -347,6 +348,7 @@ fn show_text(
              F7  god mode {}\n\
              F8  overlay\n\
              F9  to the edge ahead\n\
+             F3  drop the finale  F4 to a post\n\
              F10 MSAA  F11 AA\n\
              \n\
              {} at {}\n\

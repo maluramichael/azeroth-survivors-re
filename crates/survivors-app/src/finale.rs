@@ -3,8 +3,11 @@
 //!
 //! The finale takes the place of the roster's last timed boss: the clock spawns the other five
 //! ([`Plan::timed`], read by [`super::enemies::spawn_enemies`]) and the finale comes at the sixth
-//! slot, 13:30. Killing it wins the run at once, ahead of the 15:00 bell that wins it anyway.
-//! Past [`REAPER_AT`] Lord Kazzak hunts the hero and cannot die.
+//! slot, 13:30. Killing it wins the run, ahead of the 15:00 bell that wins it anyway, and opens a
+//! portal for [`PORTAL_SECS`] seconds ([`Gate`]): a hero who steps through meets the zone's bonus
+//! boss ([`super::rares::bonus_for`], ticket #1135), a far stronger world boss with a signature
+//! prize; the run stays won either way. Past [`REAPER_AT`] Lord Kazzak hunts the hero and cannot
+//! die.
 
 use std::sync::{LazyLock, OnceLock};
 
@@ -14,11 +17,14 @@ use bevy::prelude::*;
 
 use super::chatlog::{ChatKind, ChatLine};
 use super::data::{self, EnemyDef};
-use super::enemies::{self, Dying, Enemy};
-use super::hero::Hero;
+use super::enemies::{self, Dying, Enemy, Loot};
+use super::hero::{Hero, Peer};
+use super::items::BossDrop;
+use super::minimap::MapMarker;
 use super::nav::{NavGrid, SpawnProbe};
-use super::units::Fx;
-use super::{Phase, Rng, Run, Selection};
+use super::rares;
+use super::units::{self, flat, Fx};
+use super::{HeroState, Mail, Phase, Rng, Run, Selection};
 
 /// The finale comes in the slot of the sixth timed boss.
 const FINALE_AT: f32 = data::BOSS_EVERY_SECS * 6.0;
@@ -35,6 +41,23 @@ const FINALE_SIZE: f32 = 1.2;
 const SUMMON_RANGE: f32 = 30.0;
 /// The flourish of a win: Divine Shield, as the clock's win plays it.
 const SPELL_WIN: u32 = 642;
+/// The bonus boss's portal ([`Gate`]): `InstancePortal_Red.mdx`, no collision hull, a first guess
+/// at its scale (it is about 9 yd wide at 1.0).
+const PORTAL_DISPLAY: u32 = 4711;
+const PORTAL_SCALE: f32 = 0.5;
+/// How far from the hero the portal stands, in yards, in the way the hero faces.
+const PORTAL_RANGE: f32 = 8.0;
+/// How close a standing hero must come to step through.
+const PORTAL_ENTER: f32 = 2.5;
+/// How long the portal stays open once the finale has fallen.
+const PORTAL_SECS: f32 = 20.0;
+/// How long a place for the portal is looked for before the run just ends.
+const PORTAL_TRIES: f32 = 2.0;
+/// How far from the hero who stepped through the bonus boss arrives.
+const BONUS_RANGE: f32 = 25.0;
+/// The gold the bonus boss's fall pays on top of its loot, and the seconds before the results.
+const BONUS_GOLD: u32 = 200;
+const BONUS_END_SECS: f32 = 3.0;
 
 /// Lord Kazzak, hunting: health beyond reach, damage beyond armor, faster than the hero.
 static REAPER: EnemyDef = EnemyDef {
@@ -57,6 +80,59 @@ pub(super) struct Finale;
 /// The unbeatable hunter of the thirtieth minute.
 #[derive(Component)]
 pub(super) struct Reaper;
+
+/// The zone's bonus boss, behind the portal ([`super::rares::bonus_for`]).
+#[derive(Component)]
+struct Bonus;
+
+/// The portal that leads to the bonus boss.
+#[derive(Component)]
+struct Portal;
+
+/// Where the way to the bonus boss stands, from the finale's fall to the results.
+#[derive(Resource, Default, Clone, Copy, Debug, PartialEq)]
+enum Gate {
+    /// The finale still stands, or the zone has no bonus boss.
+    #[default]
+    Closed,
+    /// The finale fell; a place for the portal is looked for, for this many seconds.
+    Opening { left: f32 },
+    /// The portal stands at `at` for `left` more seconds.
+    Open {
+        left: f32,
+        portal: Entity,
+        at: Vec3,
+    },
+    /// A hero stepped through at `at`; the bonus boss comes once a place for it is free.
+    Arriving { at: Vec3 },
+    /// The bonus boss fights.
+    Fight,
+    /// The bonus boss fell; the results come in this many seconds.
+    Done { left: f32 },
+}
+
+/// What a second of the open portal brings.
+#[derive(Debug, PartialEq)]
+enum Step {
+    /// Still open, with this long left.
+    Wait(f32),
+    /// A hero stepped through.
+    Enter,
+    /// The time ran out.
+    Close,
+}
+
+/// The open portal after `dt` seconds with `left` to go, and whether a standing hero is at it.
+/// Stepping through in the last moment still counts.
+fn gate_step(left: f32, dt: f32, entered: bool) -> Step {
+    if entered {
+        Step::Enter
+    } else if left - dt <= 0.0 {
+        Step::Close
+    } else {
+        Step::Wait(left - dt)
+    }
+}
 
 /// Who the finale is, by battleground name.
 enum Pick {
@@ -167,17 +243,27 @@ pub(super) struct Stage {
 
 pub(super) fn plugin(app: &mut App) {
     app.init_resource::<Stage>()
+        .init_resource::<Gate>()
         .add_systems(
             Update,
-            (summon, hunt, finale_slain)
+            (
+                summon,
+                hunt,
+                drop_finale,
+                finale_fallen,
+                open_portal,
+                tick_gate,
+                bonus_slain,
+            )
                 .chain()
                 .after(WorldStage::Input)
                 .run_if(super::run_on)
                 .run_if(super::simulates)
                 .run_if(|l: Res<benilla_app::survivors_host::loading_screen::LoadingScreen>| !l.covering()),
         )
-        .add_systems(OnEnter(Phase::Menu), |mut stage: ResMut<Stage>| {
+        .add_systems(OnEnter(Phase::Menu), |mut stage: ResMut<Stage>, mut gate: ResMut<Gate>| {
             *stage = Stage::default();
+            *gate = Gate::default();
         });
 }
 
@@ -201,7 +287,8 @@ pub(super) fn summon(
     }
     let hpos = h.translation;
     let wants_finale = !stage.finale && run.elapsed >= finale_at();
-    let wants_reaper = !stage.reaper && run.elapsed >= REAPER_AT;
+    // The reaper waits out a bonus fight.
+    let wants_reaper = !stage.reaper && run.elapsed >= REAPER_AT && !run.encore;
     if !wants_finale && !wants_reaper {
         return;
     }
@@ -246,7 +333,9 @@ pub(super) fn hunt(mut reapers: Query<&mut Enemy, With<Reaper>>) {
     }
 }
 
-/// The finale's death wins the run.
+/// The finale's death wins the run, on the spot. This is how the balance simulator plays it (the
+/// bonus fight lies past its clock); the game plays [`finale_fallen`].
+#[cfg(test)]
 pub(super) fn finale_slain(
     mut run: ResMut<Run>,
     mut next: ResMut<NextState<Phase>>,
@@ -262,6 +351,224 @@ pub(super) fn finale_slain(
         fx.cast(hero, SPELL_WIN, &[hero], None);
     }
     next.set(Phase::GameOver);
+}
+
+/// Debug mode's F3 drops the finale where it stands, as a kill without its count, to photograph
+/// the portal and the bonus boss (F4 jumps to a guard post, F10 and F11 step the anti-aliasing,
+/// F12 is the screenshot).
+fn drop_finale(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut commands: Commands,
+    mut run: ResMut<Run>,
+    mut finale: Query<(Entity, &mut Enemy, &Transform), (With<Finale>, Without<Dying>)>,
+    mut loot: MessageWriter<Loot>,
+) {
+    if !keys.just_pressed(KeyCode::F3) || !super::debug::active() {
+        return;
+    }
+    for (e, mut en, tf) in &mut finale {
+        en.dead = true;
+        en.hp = 0.0;
+        en.dots.clear();
+        enemies::mark_dying(&mut commands, e);
+        loot.write(Loot {
+            pos: tf.translation,
+            xp: en.xp,
+            boss: true,
+            level: en.def.level,
+            def: en.def,
+        });
+        run.kills += 1;
+    }
+}
+
+/// The finale's death wins the run and, where the zone has a bonus boss, opens the way to it
+/// ([`open_portal`]); the results wait for the portal to close or the bonus fight to end.
+fn finale_fallen(
+    mut run: ResMut<Run>,
+    mut gate: ResMut<Gate>,
+    mut next: ResMut<NextState<Phase>>,
+    selection: Res<Selection>,
+    slain: Query<(), (With<Finale>, Added<Dying>)>,
+    hero: Query<Entity, With<Hero>>,
+    mut fx: Fx,
+) {
+    if slain.is_empty() || run.party_down {
+        return;
+    }
+    run.won = true;
+    if let Ok(hero) = hero.single() {
+        fx.cast(hero, SPELL_WIN, &[hero], None);
+    }
+    if rares::bonus_of(selection.map).is_some() {
+        *gate = Gate::Opening { left: PORTAL_TRIES };
+    } else {
+        next.set(Phase::GameOver);
+    }
+}
+
+/// Stands the portal [`PORTAL_RANGE`] yards ahead of a standing hero (round a tree if need be) and
+/// holds the 15:00 bell for it ([`Run::encore`]). With no place for it in a moment, or no one
+/// standing, the run just ends.
+#[allow(clippy::too_many_arguments)]
+fn open_portal(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut run: ResMut<Run>,
+    mut gate: ResMut<Gate>,
+    mut next: ResMut<NextState<Phase>>,
+    selection: Res<Selection>,
+    nav: Res<NavGrid>,
+    probe: SpawnProbe,
+    world: WorldPoint,
+    hero: Query<&Transform, With<Hero>>,
+    peers: Query<(&Transform, &HeroState), (With<Peer>, Without<Hero>)>,
+    mut chat: MessageWriter<ChatLine>,
+) {
+    let Gate::Opening { left } = *gate else { return };
+    let left = left - time.delta_secs();
+    let spot = rares::standing(&run, &hero, &peers).first().and_then(|t| {
+        let ahead = flat(t.rotation * Vec3::NEG_Z);
+        let a = ahead.z.atan2(ahead.x);
+        enemies::spawn_spot(&nav, &probe, &world, t.translation, a, PORTAL_RANGE)
+    });
+    let (Some(at), Some(bonus)) = (spot, rares::bonus_of(selection.map)) else {
+        if left <= 0.0 {
+            *gate = Gate::Closed;
+            next.set(Phase::GameOver);
+        } else {
+            *gate = Gate::Opening { left };
+        }
+        return;
+    };
+    let serial = run.guid();
+    let portal = units::spawn_object(&mut commands, serial, PORTAL_DISPLAY, PORTAL_SCALE, at);
+    commands.entity(portal).insert((Portal, MapMarker::Portal));
+    run.encore = true;
+    *gate = Gate::Open {
+        left: PORTAL_SECS,
+        portal,
+        at,
+    };
+    let text = format!(
+        "The way to {} lies open. Step through within {} s.",
+        bonus.name, PORTAL_SECS as u32
+    );
+    run.announce(text.clone(), 5.0);
+    chat.write(ChatLine::text(ChatKind::Boss, text));
+}
+
+/// The open portal waits for a standing hero and closes on time; the bonus boss arrives once a
+/// hero has stepped through; the results come a moment after it falls.
+#[allow(clippy::too_many_arguments)]
+fn tick_gate(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut run: ResMut<Run>,
+    mut gate: ResMut<Gate>,
+    mut next: ResMut<NextState<Phase>>,
+    mut rng: ResMut<Rng>,
+    selection: Res<Selection>,
+    nav: Res<NavGrid>,
+    probe: SpawnProbe,
+    world: WorldPoint,
+    hero: Query<&Transform, With<Hero>>,
+    peers: Query<(&Transform, &HeroState), (With<Peer>, Without<Hero>)>,
+    mut chat: MessageWriter<ChatLine>,
+) {
+    let dt = time.delta_secs();
+    match *gate {
+        Gate::Open { left, portal, at } => {
+            let heroes = rares::standing(&run, &hero, &peers);
+            let through = heroes
+                .iter()
+                .find(|t| flat(t.translation - at).length() <= PORTAL_ENTER);
+            match gate_step(left, dt, through.is_some()) {
+                Step::Wait(left) => *gate = Gate::Open { left, portal, at },
+                Step::Enter => {
+                    commands.entity(portal).despawn();
+                    *gate = Gate::Arriving {
+                        at: through.map_or(at, |t| t.translation),
+                    };
+                }
+                Step::Close => {
+                    commands.entity(portal).despawn();
+                    run.encore = false;
+                    run.announce("The portal closes.".into(), 3.0);
+                    *gate = Gate::Closed;
+                    next.set(Phase::GameOver);
+                }
+            }
+        }
+        Gate::Arriving { at } => {
+            let Some(def) = rares::bonus_of(selection.map) else {
+                *gate = Gate::Closed;
+                run.encore = false;
+                next.set(Phase::GameOver);
+                return;
+            };
+            let a = rng.range(0.0, std::f32::consts::TAU);
+            // No free spot yet: the arrival waits for the next frame.
+            let Some(pos) = enemies::spawn_spot(&nav, &probe, &world, at, a, BONUS_RANGE) else {
+                return;
+            };
+            let e = enemies::spawn_enemy(&mut commands, &mut run, def, pos, at, true, false);
+            commands.entity(e).insert((Bonus, MapMarker::Boss));
+            *gate = Gate::Fight;
+            run.announce(format!("{} is upon you!", def.name), 4.0);
+            chat.write(ChatLine::text(
+                ChatKind::Boss,
+                format!("{} is upon you! Slay it and its treasure is yours.", def.name),
+            ));
+        }
+        Gate::Done { left } => {
+            if left - dt <= 0.0 {
+                *gate = Gate::Closed;
+                run.encore = false;
+                next.set(Phase::GameOver);
+            } else {
+                *gate = Gate::Done { left: left - dt };
+            }
+        }
+        Gate::Closed | Gate::Opening { .. } | Gate::Fight => {}
+    }
+}
+
+/// The bonus boss's fall: its signature piece of loot goes on at once, and a purse of gold; the
+/// run, won already, ends in a moment.
+#[allow(clippy::too_many_arguments)]
+fn bonus_slain(
+    mut run: ResMut<Run>,
+    mut gate: ResMut<Gate>,
+    selection: Res<Selection>,
+    slain: Query<&Transform, (With<Bonus>, Added<Dying>)>,
+    peers: Query<(Entity, &HeroState), (With<Peer>, Without<Hero>)>,
+    mut drops: MessageWriter<BossDrop>,
+    mut chat: MessageWriter<ChatLine>,
+    mut mail: ResMut<super::GuestMail>,
+) {
+    let Some(tf) = slain.iter().next() else { return };
+    if let Some(tpl) = rares::bonus_loot(selection.map) {
+        drops.write(BossDrop {
+            pos: tf.translation,
+            tpl,
+            wear_now: true,
+        });
+    }
+    // The purse is every standing hero's: this machine's and each co-op guest's.
+    if run.dead_t.is_none() {
+        run.me.gold += BONUS_GOLD;
+        chat.write(ChatLine::Gold(BONUS_GOLD));
+    }
+    for (p, state) in &peers {
+        if state.dead_t.is_none() {
+            mail.0.push((p, Mail::Gold(BONUS_GOLD)));
+        }
+    }
+    run.announce("Its treasure is yours!".into(), 4.0);
+    *gate = Gate::Done {
+        left: BONUS_END_SECS,
+    };
 }
 
 #[cfg(test)]
@@ -309,5 +616,36 @@ mod tests {
         let p = build("Nowhere", &bosses);
         assert_eq!(p.timed.len(), 1);
         assert_eq!(p.finale.name, "B");
+    }
+
+    #[test]
+    fn the_portal_waits_then_closes() {
+        assert_eq!(gate_step(PORTAL_SECS, 1.0, false), Step::Wait(PORTAL_SECS - 1.0));
+        assert_eq!(gate_step(1.0, 0.5, false), Step::Wait(0.5));
+        assert_eq!(gate_step(0.5, 0.5, false), Step::Close);
+        assert_eq!(gate_step(0.1, 1.0, false), Step::Close);
+        // Stepping through in the last moment still counts.
+        assert_eq!(gate_step(0.1, 1.0, true), Step::Enter);
+        // The window in frames: open for its twenty seconds, then shut.
+        let (mut left, mut frames) = (PORTAL_SECS, 0u32);
+        loop {
+            match gate_step(left, 1.0 / 60.0, false) {
+                Step::Wait(l) => {
+                    left = l;
+                    frames += 1;
+                }
+                Step::Close => break,
+                Step::Enter => unreachable!("no one is at the portal"),
+            }
+        }
+        assert!((frames as f32 / 60.0 - PORTAL_SECS).abs() < 0.1, "{frames} frames");
+    }
+
+    #[test]
+    fn the_portal_stands_apart_from_the_hero_and_the_bonus_boss_farther() {
+        const { assert!(PORTAL_ENTER < PORTAL_RANGE) };
+        const { assert!(PORTAL_RANGE < BONUS_RANGE) };
+        // The window ends before the 15:00 bell even for the latest finale.
+        const { assert!(FINALE_AT + PORTAL_SECS < data::VICTORY_SECS) };
     }
 }
