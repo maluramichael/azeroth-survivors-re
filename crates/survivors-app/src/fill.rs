@@ -29,6 +29,24 @@ impl UiMaterial for FillMaterial {
     }
 }
 
+/// A transparent 1×1 node with this material that is always drawn, so its one pipeline compiles
+/// behind the loading cover instead of live at the first level-up, a visible stall on macOS
+/// (`benilla_app::pipe_warm`'s tripwire logged it as `pipeline compiled LIVE`).
+pub(super) fn spawn_warm(commands: &mut Commands, fills: &mut Assets<FillMaterial>) {
+    commands.spawn((
+        Name::new("survivors fill warm"),
+        Node {
+            position_type: PositionType::Absolute,
+            width: Val::Px(1.0),
+            height: Val::Px(1.0),
+            ..default()
+        },
+        MaterialNode(fills.add(FillMaterial::clear())),
+        GlobalZIndex(-1),
+        bevy::ui::FocusPolicy::Pass,
+    ));
+}
+
 fn lin(c: Color) -> Vec4 {
     c.to_linear().to_vec4()
 }
@@ -46,6 +64,11 @@ impl FillMaterial {
                 shape: Vec4::new(0.0, 1.0, 0.5, 0.0),
             },
         }
+    }
+
+    /// Draws nothing: every colour is fully transparent. For [`spawn_warm`].
+    fn clear() -> Self {
+        Self::radial(Color::NONE, Color::NONE)
     }
 
     /// Lays an elliptical light over the fill: `color` (its alpha is the peak) at `at` in UV,

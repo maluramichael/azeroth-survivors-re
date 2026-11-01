@@ -445,6 +445,7 @@ pub(super) fn setup_hud(
     commands.insert_resource(HudFont(font.clone()));
     let f = &font;
     let map = MiniMap::new(&mut images);
+    super::fill::spawn_warm(&mut commands, &mut fills);
 
     // --- The in-run HUD. ---
     commands
