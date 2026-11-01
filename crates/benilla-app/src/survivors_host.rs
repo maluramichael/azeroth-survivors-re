@@ -119,3 +119,7 @@ pub mod vplates {
 pub mod webenv {
     pub use crate::webenv::var;
 }
+
+pub mod world_backdrop {
+    pub use crate::world_backdrop::RenderScale;
+}

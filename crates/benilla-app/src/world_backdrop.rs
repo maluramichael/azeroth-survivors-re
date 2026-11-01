@@ -29,8 +29,9 @@ use benilla_world::view::WorldCamera;
 
 /// The render scale, the `renderScale` CVar, not a 1.12 CVar: it scales the 3D and keeps the
 /// interface native. At the default 1.0 [`render_target_for`] returns the window's own numbers.
+/// `pub` so the survivors crate's dynamic scale can steer it ([`crate::survivors_host`]).
 #[derive(Resource, Clone, Copy, PartialEq, Debug)]
-pub(crate) struct RenderScale(pub(crate) f32);
+pub struct RenderScale(pub f32);
 
 /// The settable range of [`RenderScale`], shared by the CVar and `$WOW_RENDER_SCALE`. Past 2 on
 /// purpose: supersampling prices a pixel on a machine whose present is railed at vsync.

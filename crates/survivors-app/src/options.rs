@@ -15,12 +15,17 @@
 //! The camera part (mouse sensitivity, inverted pitch, shake) is not a CVar: it writes
 //! [`Prefs`], which [`super::hero`] reads, and saves `survivors-prefs.toml` when a value is
 //! final (a toggle pressed, a slider let go).
+//!
+//! The performance part (native only) is two stepped sliders and two toggles
+//! ([`super::framerate`]): the frame-rate cap and the dynamic scale and the readout are [`Prefs`],
+//! the render scale is the engine's `renderScale` CVar, which the registry saves itself.
 
 use bevy::prelude::*;
 use bevy::ui::{FocusPolicy, RelativeCursorPosition};
 
 use super::hud::{HudFont, MenuRoot, PauseRoot};
 use super::kit::{self, KitButton, KitCaption, KitStyle};
+use super::framerate::{self, CAPS, SCALES};
 use super::menu::MenuBuilt;
 use super::prefs::Prefs;
 use super::Phase;
@@ -101,11 +106,18 @@ impl Volume {
     }
 }
 
-/// One of the window's sliders: a volume (a CVar) or the mouse sensitivity ([`Prefs`]).
+/// One of the window's sliders: a volume (a CVar), the mouse sensitivity ([`Prefs`]), or one of
+/// the two stepped performance sliders. A stepped slider's value is the index of its stop, in
+/// [`CAPS`] or [`SCALES`].
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 enum Slider {
     Volume(Volume),
     Sensitivity,
+    /// The frame-rate cap ([`Prefs::frame_cap`]).
+    FrameCap,
+    /// The world's render scale (the `renderScale` CVar).
+    RenderScale,
 }
 
 impl Slider {
@@ -113,6 +125,17 @@ impl Slider {
         match self {
             Self::Volume(v) => v.label(),
             Self::Sensitivity => "Mouse sensitivity",
+            Self::FrameCap => "Frame rate cap",
+            Self::RenderScale => "World resolution",
+        }
+    }
+
+    /// The number of stops of a stepped slider.
+    fn stops(self) -> Option<usize> {
+        match self {
+            Self::FrameCap => Some(CAPS.len()),
+            Self::RenderScale => Some(SCALES.len()),
+            Self::Volume(_) | Self::Sensitivity => None,
         }
     }
 
@@ -120,7 +143,7 @@ impl Slider {
     fn label_width(self) -> f32 {
         match self {
             Self::Volume(_) => 76.0,
-            Self::Sensitivity => 128.0,
+            Self::Sensitivity | Self::FrameCap | Self::RenderScale => 128.0,
         }
     }
 
@@ -129,6 +152,8 @@ impl Slider {
         match self {
             Self::Volume(v) => volume(cvars, v),
             Self::Sensitivity => prefs.camera_sensitivity.clamp(SENS_MIN, SENS_MAX),
+            Self::FrameCap => framerate::cap_index(prefs.frame_cap) as f32,
+            Self::RenderScale => framerate::scale_index(chosen_scale(cvars)) as f32,
         }
     }
 
@@ -138,6 +163,9 @@ impl Slider {
         match self {
             Self::Volume(_) => now,
             Self::Sensitivity => (now - SENS_MIN) / (SENS_MAX - SENS_MIN),
+            Self::FrameCap | Self::RenderScale => {
+                now / (self.stops().unwrap_or(2) - 1).max(1) as f32
+            }
         }
     }
 
@@ -151,6 +179,10 @@ impl Slider {
                 // Rounded to two places again, so the saved number has no float dust.
                 ((raw / SENS_STEP).round() * SENS_STEP * 100.0).round() / 100.0
             }
+            Self::FrameCap | Self::RenderScale => {
+                let last = self.stops().unwrap_or(2) - 1;
+                (t * last as f32).round()
+            }
         }
     }
 
@@ -160,8 +192,21 @@ impl Slider {
         match self {
             Self::Volume(_) => format!("{}%", (now * 100.0).round()),
             Self::Sensitivity => format!("{now:.2}x"),
+            Self::FrameCap => framerate::cap_label(CAPS[(now as usize).min(CAPS.len() - 1)]),
+            Self::RenderScale => format!(
+                "{}%",
+                (SCALES[(now as usize).min(SCALES.len() - 1)] * 100.0).round()
+            ),
         }
     }
+}
+
+/// The render scale the player chose: the `renderScale` CVar, 1.0 when it is missing.
+fn chosen_scale(cvars: &Cvars) -> f32 {
+    cvars
+        .num(framerate::SCALE_CVAR)
+        .filter(|v| v.is_finite() && *v > 0.0)
+        .unwrap_or(1.0)
 }
 
 /// A button of the window, on the pick screen or inside it.
@@ -175,6 +220,10 @@ enum OptionsAction {
     InvertPitch,
     /// [`Prefs::camera_shake`].
     CameraShake,
+    /// [`Prefs::dynamic_scale`].
+    DynamicScale,
+    /// [`Prefs::show_fps`].
+    ShowFps,
     Windowed,
     Fullscreen,
 }
@@ -419,6 +468,40 @@ fn panel(commands: &mut Commands, fonts: &kit::KitFonts) -> Entity {
                         .with_children(|row| {
                             row.spawn((Label::Display, kit::body(fonts, "", 12.0, kit::MUTED)));
                         });
+
+                    frame.spawn((
+                        kit::label(fonts, "Performance"),
+                        Node {
+                            margin: UiRect::top(px(6.0)),
+                            ..default()
+                        },
+                    ));
+                    frame
+                        .spawn(kit::inset(Node {
+                            width: Val::Percent(100.0),
+                            flex_direction: FlexDirection::Column,
+                            row_gap: px(10.0),
+                            padding: UiRect::axes(px(14.0), px(12.0)),
+                            ..default()
+                        }))
+                        .with_children(|rows| {
+                            slider_row(rows, fonts, Slider::FrameCap);
+                            slider_row(rows, fonts, Slider::RenderScale);
+                        });
+                    frame
+                        .spawn(Node {
+                            width: Val::Percent(100.0),
+                            justify_content: JustifyContent::SpaceBetween,
+                            ..default()
+                        })
+                        .with_children(|row| {
+                            for (action, caption) in [
+                                (OptionsAction::DynamicScale, "Auto resolution: Off"),
+                                (OptionsAction::ShowFps, "Show FPS: Off"),
+                            ] {
+                                action_button(row, fonts, action, caption, 190.0);
+                            }
+                        });
                 }
 
                 frame
@@ -603,6 +686,14 @@ fn option_clicks(
             prefs.camera_shake = !prefs.camera_shake;
             prefs.save();
         }
+        OptionsAction::DynamicScale => {
+            prefs.dynamic_scale = !prefs.dynamic_scale;
+            prefs.save();
+        }
+        OptionsAction::ShowFps => {
+            prefs.show_fps = !prefs.show_fps;
+            prefs.save();
+        }
         OptionsAction::Windowed | OptionsAction::Fullscreen if !off => {
             set_display(&mut cvars, action == OptionsAction::Fullscreen);
         }
@@ -612,7 +703,8 @@ fn option_clicks(
 
 /// A press or a drag on a track sets its value to where the cursor is, in steps (a volume of one
 /// percent). A pressed node stays pressed until the release, so the drag follows outside the
-/// track too. The sensitivity is saved once the drag has ended, not on every step of it.
+/// track too. The prefs (the sensitivity, the cap) are saved once the drag has ended, not on every
+/// step of it; a render scale is a CVar, which the registry saves when it has been quiet.
 fn drag(
     tracks: Query<(&Track, &Interaction, &RelativeCursorPosition)>,
     mut cvars: ResMut<Cvars>,
@@ -626,7 +718,7 @@ fn drag(
             let (Interaction::Pressed, Some(at)) = (interaction, cursor.normalized) else {
                 continue;
             };
-            held |= *slider == Slider::Sensitivity;
+            held |= matches!(*slider, Slider::Sensitivity | Slider::FrameCap);
             let want = slider.at(at.x + 0.5);
             if (want - slider.current(&cvars, &prefs)).abs() <= 0.004 {
                 continue;
@@ -638,6 +730,14 @@ fn drag(
                 Slider::Sensitivity => {
                     prefs.camera_sensitivity = want;
                     *unsaved = true;
+                }
+                Slider::FrameCap => {
+                    prefs.frame_cap = CAPS[(want as usize).min(CAPS.len() - 1)];
+                    *unsaved = true;
+                }
+                Slider::RenderScale => {
+                    let scale = SCALES[(want as usize).min(SCALES.len() - 1)];
+                    cvars.set(framerate::SCALE_CVAR, &scale.to_string());
                 }
             }
         }
@@ -727,6 +827,24 @@ fn refresh(
                     "Camera shake: On"
                 } else {
                     "Camera shake: Off"
+                }),
+            ),
+            OptionsAction::DynamicScale => (
+                false,
+                prefs.dynamic_scale,
+                Some(if prefs.dynamic_scale {
+                    "Auto resolution: On"
+                } else {
+                    "Auto resolution: Off"
+                }),
+            ),
+            OptionsAction::ShowFps => (
+                false,
+                prefs.show_fps,
+                Some(if prefs.show_fps {
+                    "Show FPS: On"
+                } else {
+                    "Show FPS: Off"
                 }),
             ),
             OptionsAction::Windowed => (launch_owned, !fullscreen, None),

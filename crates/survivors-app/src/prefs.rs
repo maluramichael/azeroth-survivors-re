@@ -1,5 +1,5 @@
-//! The player's own settings beside the CVars: how the camera turns and whether it shakes, kept
-//! in `survivors-prefs.toml` next to the profile. [`Shake`] is the camera's shake for the moment,
+//! The player's own settings beside the CVars: how the camera turns and whether it shakes, the
+//! frame-rate cap and the frame-rate readout, kept in `survivors-prefs.toml` next to the profile. [`Shake`] is the camera's shake for the moment,
 //! raised by hits and read by [`super::hero::place_camera`].
 
 use bevy::prelude::*;
@@ -18,6 +18,12 @@ pub(crate) struct Prefs {
     pub invert_pitch: bool,
     /// Hits shake the camera.
     pub camera_shake: bool,
+    /// The frame-rate cap, frames a second; `0` is no cap ([`super::framerate`]).
+    pub frame_cap: u32,
+    /// The render scale follows the frame times instead of staying at the chosen value.
+    pub dynamic_scale: bool,
+    /// The corner label with the frame rate.
+    pub show_fps: bool,
 }
 
 impl Default for Prefs {
@@ -26,6 +32,9 @@ impl Default for Prefs {
             camera_sensitivity: 1.0,
             invert_pitch: false,
             camera_shake: true,
+            frame_cap: 0,
+            dynamic_scale: false,
+            show_fps: false,
         }
     }
 }
@@ -66,5 +75,34 @@ pub(crate) struct Shake {
 impl Shake {
     pub fn add(&mut self, amount: f32) {
         self.trauma = (self.trauma + amount).min(1.0);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_frame_settings_survive_a_save_and_a_load() {
+        let prefs = Prefs {
+            frame_cap: 144,
+            dynamic_scale: true,
+            show_fps: true,
+            camera_sensitivity: 1.25,
+            ..Prefs::default()
+        };
+        let text = toml::to_string(&prefs).unwrap();
+        let back: Prefs = toml::from_str(&text).unwrap();
+        assert_eq!(back, prefs);
+    }
+
+    #[test]
+    fn a_file_from_before_the_frame_settings_loads_with_their_defaults() {
+        let old = "camera_sensitivity = 0.5\ninvert_pitch = true\ncamera_shake = false\n";
+        let prefs: Prefs = toml::from_str(old).unwrap();
+        assert_eq!(prefs.camera_sensitivity, 0.5);
+        assert!(prefs.invert_pitch && !prefs.camera_shake);
+        assert_eq!(prefs.frame_cap, 0, "no cap unless asked");
+        assert!(!prefs.dynamic_scale && !prefs.show_fps);
     }
 }
