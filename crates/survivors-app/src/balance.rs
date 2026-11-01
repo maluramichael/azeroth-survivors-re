@@ -62,6 +62,27 @@ struct Report {
     top: Vec<(&'static str, f32)>,
     /// Every [`CHECK_EVERY`] seconds, where the run stood.
     timeline: Vec<Check>,
+    /// The last [`LAST_SECS`] seconds, one point a second: how the run ended.
+    last: Vec<Moment>,
+}
+
+/// Seconds of a run's end [`Report::last`] keeps.
+const LAST_SECS: usize = 20;
+
+/// One second of a run's end.
+#[derive(Clone, Debug, Default)]
+struct Moment {
+    t: f32,
+    hp: f32,
+    /// Enemies within [`CROWD_NEAR`] yards, alive in all, and a boss's health share while one
+    /// is within [`BOSS_NEAR`] yards.
+    crowd: usize,
+    alive: usize,
+    boss: Option<f32>,
+    level: u32,
+    /// Encircling waves so far, and enemies spawned in all.
+    rings: u32,
+    spawned: u32,
 }
 
 /// Seconds between two points of a run's timeline.
@@ -86,6 +107,42 @@ struct Check {
     kills: u32,
     /// The hero's health share.
     hp: f32,
+    /// Health lost since the last point, the part of it with a boss within [`BOSS_NEAR`] yards,
+    /// and the most enemies within [`CROWD_NEAR`] yards at once.
+    taken: f32,
+    by_boss: f32,
+    crowd: usize,
+}
+
+/// A hit taken with a boss this near counts as the boss's, roughly.
+const BOSS_NEAR: f32 = 6.0;
+/// The enemies this near the hero are the ones biting.
+const CROWD_NEAR: f32 = 4.0;
+
+/// Where the hero stands against the horde this step: the enemies within [`CROWD_NEAR`] yards,
+/// and the health share of a boss within [`BOSS_NEAR`], if one is.
+fn pressure(world: &mut World) -> (usize, Option<f32>) {
+    let Some(at) = world
+        .query_filtered::<&Transform, With<Hero>>()
+        .iter(world)
+        .next()
+        .map(|t| t.translation)
+    else {
+        return (0, None);
+    };
+    let mut crowd = 0;
+    let mut boss: Option<f32> = None;
+    for (t, e) in world.query::<(&Transform, &Enemy)>().iter(world) {
+        if e.dead {
+            continue;
+        }
+        let d = flat(t.translation - at).length();
+        crowd += usize::from(d <= CROWD_NEAR + e.radius);
+        if e.boss && d <= BOSS_NEAR + e.radius {
+            boss = Some(e.hp / e.max_hp.max(1.0));
+        }
+    }
+    (crowd, boss)
 }
 
 /// What the run's own state does not count.
@@ -324,23 +381,64 @@ fn play(setup: Setup) -> Report {
     let mut low = 1.0f32;
     let mut last_hp: Option<f32> = None;
     let mut timeline = Vec::new();
+    let mut last: Vec<Moment> = Vec::new();
+    let mut next_moment = 0.0f32;
     let mut next_check = CHECK_EVERY;
     let steps = (setup.secs / DT).ceil() as u32;
+    // Over the current stretch of the timeline.
+    let (mut win_taken, mut win_boss, mut win_crowd) = (0.0f32, 0.0f32, 0usize);
     for _ in 0..steps {
         app.update();
-        if app.world().resource::<Run>().elapsed >= next_check {
-            next_check += CHECK_EVERY;
-            timeline.push(check(app.world_mut()));
+        let (crowd, boss) = pressure(app.world_mut());
+        let boss_near = boss.is_some();
+        win_crowd = win_crowd.max(crowd);
+        let now = app.world().resource::<Run>().elapsed;
+        if now >= next_moment {
+            next_moment += 1.0;
+            let alive = app
+                .world_mut()
+                .query::<&Enemy>()
+                .iter(app.world())
+                .filter(|e| !e.dead)
+                .count();
+            let run = app.world().resource::<Run>();
+            last.push(Moment {
+                t: now,
+                hp: run.hp.max(0.0) / run.stats().max_hp.max(1.0),
+                crowd,
+                alive,
+                boss,
+                level: run.level,
+                rings: run.rings,
+                spawned: app.world().resource::<Tally>().spawned,
+            });
+            if last.len() > LAST_SECS {
+                last.remove(0);
+            }
         }
-        let world = app.world();
-        let run = world.resource::<Run>();
-        let hp = run.hp.max(0.0);
+        let hp = app.world().resource::<Run>().hp.max(0.0);
         if let Some(prev) = last_hp {
             if hp < prev {
                 taken += prev - hp;
+                win_taken += prev - hp;
+                if boss_near {
+                    win_boss += prev - hp;
+                }
             }
         }
         last_hp = Some(hp);
+        if app.world().resource::<Run>().elapsed >= next_check {
+            next_check += CHECK_EVERY;
+            timeline.push(Check {
+                taken: win_taken,
+                by_boss: win_boss,
+                crowd: win_crowd,
+                ..check(app.world_mut())
+            });
+            (win_taken, win_boss, win_crowd) = (0.0, 0.0, 0);
+        }
+        let world = app.world();
+        let run = world.resource::<Run>();
         low = low.min(hp / run.stats().max_hp.max(1.0));
         if *world.resource::<State<Phase>>().get() == Phase::GameOver || run.party_down {
             break;
@@ -367,6 +465,7 @@ fn play(setup: Setup) -> Report {
         low,
         top,
         timeline,
+        last,
     }
 }
 
@@ -392,41 +491,67 @@ fn check(world: &mut World) -> Check {
         bosses: run.bosses,
         kills: run.kills,
         hp: run.hp.max(0.0) / run.stats().max_hp.max(1.0),
+        ..Check::default()
     }
 }
 
 fn print_timeline(r: &Report) {
     println!("\n{} at {}, seed {}", r.class, r.zone, r.seed);
-    println!(
-        "{:>6} {:>5} {:>6} {:>7} {:>7} {:>6} {:>5} {:>5} {:>6} {:>6} {:>6} {:>5}",
-        "t",
-        "level",
-        "spells",
-        "talents",
-        "spawned",
-        "elites",
-        "alive",
-        "rings",
-        "surges",
-        "bosses",
-        "kills",
-        "hp"
-    );
+    let head = [
+        "t", "level", "spells", "talents", "spawned", "elites", "alive", "rings", "surges",
+        "bosses", "kills", "hp", "taken", "by boss", "crowd",
+    ];
+    let widths = [6, 5, 6, 7, 7, 6, 5, 5, 6, 6, 6, 5, 6, 7, 5];
+    let row = |cells: Vec<String>| {
+        let line: Vec<String> = cells
+            .iter()
+            .zip(widths)
+            .map(|(c, w)| format!("{c:>w$}"))
+            .collect();
+        println!("{}", line.join(" "));
+    };
+    row(head.iter().map(|h| h.to_string()).collect());
     for c in &r.timeline {
-        println!(
-            "{:>6} {:>5} {:>6} {:>7} {:>7} {:>6} {:>5} {:>5} {:>6} {:>6} {:>6} {:>4.0}%",
+        row(vec![
             mm_ss(c.t),
-            c.level,
-            c.spells,
-            c.talents,
-            c.spawned,
-            c.elites,
-            c.alive,
-            c.rings,
-            c.surges,
-            c.bosses,
-            c.kills,
-            c.hp * 100.0
+            c.level.to_string(),
+            c.spells.to_string(),
+            c.talents.to_string(),
+            c.spawned.to_string(),
+            c.elites.to_string(),
+            c.alive.to_string(),
+            c.rings.to_string(),
+            c.surges.to_string(),
+            c.bosses.to_string(),
+            c.kills.to_string(),
+            format!("{:.0}%", c.hp * 100.0),
+            format!("{:.0}", c.taken),
+            format!("{:.0}", c.by_boss),
+            c.crowd.to_string(),
+        ]);
+    }
+}
+
+fn print_end(r: &Report) {
+    println!("  the last {LAST_SECS} seconds:");
+    println!(
+        "  {:>6} {:>5} {:>5} {:>5} {:>5} {:>5} {:>5} {:>7}",
+        "t", "hp", "crowd", "alive", "boss", "level", "rings", "spawned"
+    );
+    for m in &r.last {
+        let boss = m
+            .boss
+            .map_or("-".to_string(), |b| format!("{:.0}%", b * 100.0));
+        println!(
+            "  {:>6} {:>4.0}% {:>5} {:>5} {:>5} {:>5} {:>5} {:>7}",
+            mm_ss(m.t),
+            m.hp * 100.0,
+            m.crowd,
+            m.alive,
+            boss,
+            m.level,
+            m.rings,
+            m.spawned
         );
     }
 }
@@ -573,6 +698,9 @@ fn balance_table() {
     if std::env::var_os("SIM_TRACE").is_some() {
         for r in &reports {
             print_timeline(r);
+            if r.died.is_some() {
+                print_end(r);
+            }
         }
     }
     print_table(&reports);
